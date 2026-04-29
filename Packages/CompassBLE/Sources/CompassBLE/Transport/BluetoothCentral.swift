@@ -117,9 +117,18 @@ public actor BluetoothCentral {
     /// We use a list because multiple concurrent writes could be queued.
     private var writeReadyContinuations: [CheckedContinuation<Void, Never>] = []
 
+    /// Called after an unexpected BLE disconnect so upper layers can update state.
+    private var disconnectHandler: (@Sendable (Error?) -> Void)?
+
     // MARK: - Init
 
     public init() {}
+
+    /// Register a handler that fires when the BLE link drops unexpectedly.
+    /// Pass `nil` to unregister (e.g., before a clean `disconnect()` call).
+    public func setDisconnectHandler(_ handler: (@Sendable (Error?) -> Void)?) {
+        disconnectHandler = handler
+    }
 
     // MARK: - Internal: Ensure Central Manager
 
@@ -475,6 +484,7 @@ public actor BluetoothCentral {
         let waiters = writeReadyContinuations
         writeReadyContinuations.removeAll()
         for c in waiters { c.resume() }
+        disconnectHandler?(error)
     }
 
     func didDiscoverServices(error: Error?) {

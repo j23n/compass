@@ -43,4 +43,8 @@ public protocol DeviceManagerProtocol: Sendable {
 
     /// Whether a device is currently connected and authenticated.
     var isConnected: Bool { get async }
+
+    /// A stream that emits a new value whenever the connection state changes.
+    /// Callers subscribe once and observe for the lifetime of the session.
+    func connectionStateStream() -> AsyncStream<ConnectionState>
 }

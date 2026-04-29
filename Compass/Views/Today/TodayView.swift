@@ -125,6 +125,10 @@ struct TodayView: View {
             }
             .onAppear {
                 AppLogger.ui.debug("TodayView appeared — hasDevice: \(self.hasDevice), activities: \(self.allActivities.count), sleep: \(self.allSleepSessions.count), HR samples: \(self.allHeartRateSamples.count)")
+                if let device = connectedDevices.first,
+                   case .disconnected = syncCoordinator.connectionState {
+                    Task { await syncCoordinator.reconnect(device: device) }
+                }
             }
         }
     }
@@ -135,6 +139,7 @@ struct TodayView: View {
     private var dashboardContent: some View {
         ScrollView {
             LazyVStack(spacing: 20) {
+                connectionPill
                 heroSection
                 heartRateSection
                 sleepSection
@@ -147,6 +152,38 @@ struct TodayView: View {
         .refreshable {
             AppLogger.ui.debug("Pull-to-refresh triggered")
             await syncCoordinator.sync(context: modelContext)
+        }
+    }
+
+    // MARK: - Connection Pill
+
+    @ViewBuilder
+    private var connectionPill: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(connectionDotColor)
+                .frame(width: 8, height: 8)
+            Text(connectionLabel)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    private var connectionDotColor: Color {
+        switch syncCoordinator.connectionState {
+        case .connected: .green
+        case .connecting: .orange
+        case .disconnected, .failed: .gray
+        }
+    }
+
+    private var connectionLabel: String {
+        switch syncCoordinator.connectionState {
+        case .connected(let name): "Connected to \(name)"
+        case .connecting: "Connecting..."
+        case .disconnected: "Watch not connected"
+        case .failed: "Connection failed"
         }
     }
 

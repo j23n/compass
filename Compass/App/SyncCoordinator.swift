@@ -39,6 +39,10 @@ final class SyncCoordinator {
     var discoveredDevices: [DiscoveredDevice] = []
     var showPairingSheet = false
 
+    // MARK: - Connection State
+
+    var connectionState: ConnectionState = .disconnected
+
     // MARK: - Sync State
 
     var state: SyncState = .idle
@@ -47,11 +51,26 @@ final class SyncCoordinator {
 
     let deviceManager: any DeviceManagerProtocol
 
+    /// The last device we successfully connected to, kept for auto-reconnect.
+    private var lastConnectedDevice: PairedDevice?
     private var discoveryTask: Task<Void, Never>?
+    private var connectionMonitorTask: Task<Void, Never>?
+    private var reconnectRetryTask: Task<Void, Never>?
 
     init(deviceManager: any DeviceManagerProtocol) {
         self.deviceManager = deviceManager
         AppLogger.sync.debug("SyncCoordinator initialized with \(String(describing: type(of: deviceManager)))")
+        // Monitor unexpected BLE drops and kick off auto-reconnect immediately
+        // so CoreBluetooth re-establishes the link as soon as the watch is
+        // reachable again (no polling delay for the common case).
+        connectionMonitorTask = Task { [self] in
+            for await state in deviceManager.connectionStateStream() {
+                connectionState = state
+                if case .disconnected = state {
+                    startAutoReconnect()
+                }
+            }
+        }
     }
 
     // MARK: - Pairing
@@ -112,12 +131,15 @@ final class SyncCoordinator {
                 name: pairedDevice.name,
                 model: pairedDevice.model ?? "Unknown",
                 lastSyncedAt: nil,
-                fitFileCursor: 0
+                fitFileCursor: 0,
+                peripheralIdentifier: pairedDevice.identifier
             )
             context.insert(connectedDevice)
             try? context.save()
             AppLogger.pairing.debug("Saved ConnectedDevice to SwiftData")
 
+            lastConnectedDevice = pairedDevice
+            connectionState = .connected(deviceName: pairedDevice.name)
             pairingState = .paired
             showPairingSheet = false
 
@@ -129,6 +151,72 @@ final class SyncCoordinator {
             AppLogger.pairing.error("Pairing failed: \(error.localizedDescription)")
             pairingState = .failed(error.localizedDescription)
         }
+    }
+
+    // MARK: - Reconnect / Remove
+
+    /// Reconnect to a previously paired device on app launch.
+    /// No-ops if already connecting or connected, or if the peripheral UUID was never stored.
+    func reconnect(device: ConnectedDevice) async {
+        guard case .disconnected = connectionState else { return }
+        guard let peripheralID = device.peripheralIdentifier else {
+            AppLogger.sync.warning("Cannot reconnect — no peripheral ID stored. Re-pair the device.")
+            return
+        }
+        let paired = PairedDevice(identifier: peripheralID, name: device.name, model: device.model)
+        lastConnectedDevice = paired
+        await attemptConnect(paired)
+    }
+
+    /// Kick off a background reconnect loop that retries whenever the link is down.
+    /// First attempt is immediate (0-delay) so CoreBluetooth can re-establish as
+    /// soon as the watch becomes reachable; subsequent attempts back off to 15 s.
+    private func startAutoReconnect() {
+        guard lastConnectedDevice != nil else { return }
+        reconnectRetryTask?.cancel()
+        reconnectRetryTask = Task { [self] in
+            var delay: Duration = .seconds(0)
+            while !Task.isCancelled {
+                if delay > .zero {
+                    try? await Task.sleep(for: delay)
+                }
+                guard !Task.isCancelled else { break }
+                guard case .disconnected = connectionState else { break }
+                guard let device = lastConnectedDevice else { break }
+                await attemptConnect(device)
+                // If still disconnected after the attempt, back off before the next try.
+                if case .disconnected = connectionState {
+                    delay = .seconds(15)
+                } else {
+                    break
+                }
+            }
+        }
+    }
+
+    /// Single connection attempt: sets connectionState and handles errors.
+    private func attemptConnect(_ device: PairedDevice) async {
+        AppLogger.sync.info("Connecting to \(device.name)")
+        connectionState = .connecting
+        do {
+            try await deviceManager.connect(device)
+            connectionState = .connected(deviceName: device.name)
+        } catch {
+            AppLogger.sync.error("Connect failed: \(error.localizedDescription)")
+            connectionState = .disconnected
+        }
+    }
+
+    /// Disconnect and delete the paired device record from SwiftData.
+    func removeDevice(_ device: ConnectedDevice, context: ModelContext) async {
+        AppLogger.pairing.info("Removing paired device: \(device.name)")
+        reconnectRetryTask?.cancel()
+        reconnectRetryTask = nil
+        lastConnectedDevice = nil
+        await deviceManager.disconnect()
+        connectionState = .disconnected
+        context.delete(device)
+        try? context.save()
     }
 
     // MARK: - Sync

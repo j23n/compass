@@ -357,9 +357,8 @@ but exists for future expansion.
    status fields instead of bare 9-byte ACK.
 3. ✅ **Send empty `MusicControlCapabilities` reply** — zero-command list stops
    the 1-Hz `0x13B2` retransmits.
-4. ⏳ **Verify `SETUP_WIZARD_SKIPPED` workaround on real watch** — code sends
-   eventType=15 (SKIPPED); needs a live test. If wizard still stays, try
-   SETUP_WIZARD_COMPLETE (14) per Gadgetbridge's default.
+4. ✅ **Verify `SETUP_WIZARD_SKIPPED` workaround on real watch** — confirmed
+   on Instinct Solar 1: watch exits setup wizard correctly with eventType=15.
 5. **Stub `WEATHER_REQUEST` reply** — bare ACK already suppresses retransmits;
    full weather payload deferred.
 6. Then file sync.

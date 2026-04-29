@@ -266,6 +266,10 @@ public actor MockGarminDevice: DeviceManagerProtocol {
         _isConnected
     }
 
+    public nonisolated func connectionStateStream() -> AsyncStream<ConnectionState> {
+        AsyncStream { _ in }
+    }
+
     // MARK: - Synthetic FIT Generation
 
     /// Generate a minimal synthetic FIT file.

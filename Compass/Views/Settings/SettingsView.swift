@@ -21,6 +21,31 @@ struct SettingsView: View {
         return false
     }
 
+    private var connectionDotColor: Color {
+        switch syncCoordinator.connectionState {
+        case .connected: .green
+        case .connecting: .orange
+        case .disconnected, .failed: .gray
+        }
+    }
+
+    private var connectionStatusLabel: String {
+        switch syncCoordinator.connectionState {
+        case .connected: "Connected"
+        case .connecting: "Connecting..."
+        case .disconnected: "Not connected"
+        case .failed: "Connection failed"
+        }
+    }
+
+    private var connectionStatusColor: Color {
+        switch syncCoordinator.connectionState {
+        case .connected: .green
+        case .connecting: .orange
+        case .disconnected, .failed: .secondary
+        }
+    }
+
     var body: some View {
         @Bindable var coordinator = syncCoordinator
 
@@ -72,15 +97,23 @@ struct SettingsView: View {
                             .font(.body)
                             .fontWeight(.medium)
 
-                        Text(device.model)
+                        Text(connectionStatusLabel)
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(connectionStatusColor)
                     }
 
                     Spacer()
 
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
+                    Circle()
+                        .fill(connectionDotColor)
+                        .frame(width: 10, height: 10)
+                }
+                .swipeActions(edge: .trailing) {
+                    Button(role: .destructive) {
+                        Task { await syncCoordinator.removeDevice(device, context: modelContext) }
+                    } label: {
+                        Label("Remove", systemImage: "trash")
+                    }
                 }
 
                 if let lastSync = device.lastSyncedAt {

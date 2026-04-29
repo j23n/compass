@@ -25,6 +25,7 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
 
     private var _isConnected: Bool = false
     private var _connectedDevice: PairedDevice?
+    private var connectionStateContinuation: AsyncStream<ConnectionState>.Continuation?
 
     public init() {
         let central = BluetoothCentral()
@@ -32,6 +33,33 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
         self.central = central
         self.transport = transport
         self.gfdiClient = GFDIClient(transport: transport)
+    }
+
+    // MARK: - Connection State Stream
+
+    public nonisolated func connectionStateStream() -> AsyncStream<ConnectionState> {
+        AsyncStream { continuation in
+            Task { await self.storeConnectionStateContinuation(continuation) }
+            continuation.onTermination = { @Sendable _ in
+                Task { await self.clearConnectionStateContinuation() }
+            }
+        }
+    }
+
+    private func storeConnectionStateContinuation(_ cont: AsyncStream<ConnectionState>.Continuation) {
+        connectionStateContinuation = cont
+    }
+
+    private func clearConnectionStateContinuation() {
+        connectionStateContinuation = nil
+    }
+
+    private func handleUnexpectedDisconnect(_ error: Error?) {
+        guard _isConnected else { return }
+        _isConnected = false
+        _connectedDevice = nil
+        BLELogger.transport.info("Unexpected BLE disconnect: \(error?.localizedDescription ?? "unknown")")
+        connectionStateContinuation?.yield(.disconnected)
     }
 
     // MARK: - Discovery
@@ -65,6 +93,10 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
         try await central.connect(identifier: device.identifier)
         try await central.discoverServices()
 
+        await central.setDisconnectHandler { [self] error in
+            Task { await self.handleUnexpectedDisconnect(error) }
+        }
+
         let mtu = await central.negotiatedMTU
         await transport.setMaxWriteSize(mtu)
         BLELogger.auth.debug("Negotiated MTU: \(mtu)")
@@ -92,6 +124,7 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
                 model: info.deviceModel.isEmpty ? nil : info.deviceModel
             )
             _connectedDevice = paired
+            connectionStateContinuation?.yield(.connected(deviceName: paired.name))
             BLELogger.auth.info("Pairing complete: \(paired.name)")
             return paired
         } catch {
@@ -289,27 +322,41 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
         try await central.connect(identifier: device.identifier)
         try await central.discoverServices()
 
+        await central.setDisconnectHandler { [self] error in
+            Task { await self.handleUnexpectedDisconnect(error) }
+        }
+
         let mtu = await central.negotiatedMTU
         await transport.setMaxWriteSize(mtu)
 
         try await transport.initializeGFDI(timeout: .seconds(10))
         await gfdiClient.startReceiving()
 
+        let client = gfdiClient
+        await gfdiClient.setUnsolicitedHandler { msg in
+            Task { await Self.handleUnsolicited(msg, via: client) }
+        }
+
         _ = try await runHandshake()
         _isConnected = true
         _connectedDevice = device
+        connectionStateContinuation?.yield(.connected(deviceName: device.name))
         BLELogger.transport.info("Reconnected to: \(device.name)")
     }
 
     public func disconnect() async {
         BLELogger.transport.info("Disconnecting")
+        // Mark as disconnected and clear the handler before tearing down BLE
+        // so the CoreBluetooth didDisconnect callback doesn't double-fire.
+        _isConnected = false
+        _connectedDevice = nil
+        connectionStateContinuation?.yield(.disconnected)
+        await central.setDisconnectHandler(nil)
         await gfdiClient.stopReceiving()
         // Release the watch's GFDI handle before tearing down BLE so its
         // ML handle pool stays clean across reconnects.
         await transport.gracefulShutdown()
         await central.disconnect()
-        _isConnected = false
-        _connectedDevice = nil
     }
 
     // MARK: - File Sync (not yet implemented)
