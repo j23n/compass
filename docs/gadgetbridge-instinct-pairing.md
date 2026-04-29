@@ -37,6 +37,7 @@ pairing flow.
 14. [iOS / CoreBluetooth Pairing & Bonding](#14-ios--corebluetooth-pairing--bonding)
 15. [Differences vs `Packages/CompassBLE/`](#15-differences-vs-packagescompassble)
 16. [Known Unknowns](#16-known-unknowns)
+17. [Post-Pair Protobuf Exchange](#17-post-pair-protobuf-exchange)
 
 ---
 
@@ -1722,6 +1723,119 @@ line-by-line against the GB reference above:
   CONFIGURATION (5050)** — no public dump in the GB tree. Any handshake
   bug that depends on a specific capability bit being on/off will need a
   HCI snoop log to confirm.
+
+---
+
+## 17. Post-Pair Protobuf Exchange
+
+After `completeInitialization()` the watch enters an onboarding loop and
+sends several `PROTOBUF_REQUEST (0x13B3)` messages. This section documents
+the wire format and correct host responses, verified against
+`ProtobufMessage.java` and `ProtocolBufferHandler.java`.
+
+### 17.1 PROTOBUF_REQUEST payload layout
+
+All `PROTOBUF_REQUEST (0x13B3)` and `PROTOBUF_RESPONSE (0x13B4)` GFDI
+message payloads share a fixed 14-byte header before the proto bytes:
+
+```
+[requestId: UInt16 LE]          2 bytes — identifier for this RPC exchange
+[dataOffset: UInt32 LE]         4 bytes — byte offset (0 for non-chunked)
+[totalProtobufLength: UInt32 LE] 4 bytes — full proto payload size
+[protobufDataLength: UInt32 LE]  4 bytes — bytes in this fragment
+[protoBytes: N bytes]            N bytes — serialized Smart proto message
+```
+
+Reference: `ProtobufMessage.parseIncoming` and `generateOutgoing`
+(`service/devices/garmin/messages/ProtobufMessage.java`).
+
+### 17.2 Correct ACK for PROTOBUF_REQUEST
+
+Gadgetbridge does **not** send a `PROTOBUF_RESPONSE (0x13B4)` in reply to
+the watch's `initRequest`. It sends a `RESPONSE (0x1388)` with extended
+ProtobufStatusMessage fields:
+
+```
+GFDI type: RESPONSE (0x1388)
+Payload:
+  [originalType: UInt16 LE]   = 0x13B3 (PROTOBUF_REQUEST)
+  [status: UInt8]             = 0x00 (ACK)
+  [requestId: UInt16 LE]      = echoed from incoming PROTOBUF_REQUEST header
+  [dataOffset: UInt32 LE]     = 0x00000000
+  [chunkStatus: UInt8]        = 0x00 (KEPT)
+  [statusCode: UInt8]         = 0x00 (NO_ERROR)
+```
+
+Total GFDI message: `[2: len=17][2: 0x1388][11 bytes][2: CRC]` = 17 bytes.
+
+Our bare 9-byte ACK (`[len=9][0x1388][0x13B3][0x00][CRC]`) was missing the
+last 8 bytes, which may cause the watch to consider the request unacknowledged.
+
+Reference: `ProtobufStatusMessage.generateOutgoing`
+(`service/devices/garmin/messages/status/ProtobufStatusMessage.java`).
+
+### 17.3 GdiSmartProto message wrapper (field numbers)
+
+The protobuf payload is a serialized `Smart` message (`gdi_smart_proto.proto`).
+Relevant field numbers verified from the proto source:
+
+| Field | Number | Type |
+|---|---|---|
+| `calendar_service` | 1 | CalendarService |
+| `http_service` | 2 | HttpService |
+| `installed_apps_service` | 3 | InstalledAppsService |
+| `app_config_service` | 4 | AppConfigService |
+| `data_transfer_service` | 7 | DataTransferService |
+| `device_status_service` | 8 | DeviceStatusService |
+| `find_my_watch_service` | 12 | FindMyWatchService |
+| `core_service` | 13 | CoreService |
+| `sms_notification_service` | 16 | SmsNotificationService |
+| `authenticationService` | 27 | AuthenticationService |
+| `ecg_service` | 39 | EcgService |
+| **`settings_service`** | **42** | **SettingsService** |
+| `file_sync_service` | 43 | FileSyncService |
+| `notifications_service` | 49 | NotificationsService |
+
+**Note:** `settings_service` is field 42, not 2 — a common off-by-one
+assumption when guessing proto field numbers.
+
+### 17.4 SettingsService field numbers
+
+From `gdi_settings_service.proto`:
+
+| Field | Number | Type |
+|---|---|---|
+| `definitionRequest` | 1 | ScreenDefinitionRequest |
+| `definitionResponse` | 2 | ScreenDefinitionResponse |
+| `stateRequest` | 3 | ScreenStateRequest |
+| `stateResponse` | 4 | ScreenStateResponse |
+| `changeRequest` | 5 | ChangeRequest |
+| `changeResponse` | 6 | ChangeResponse |
+| **`initRequest`** | **8** | InitRequest |
+| **`initResponse`** | **9** | InitResponse |
+
+`InitRequest` carries `language` (field 1, string, e.g. `"en_US"`) and
+`region` (field 2, string, e.g. `"us"`). `InitResponse` has `unk1` (field 1)
+and `unk2` (field 2) — both unknown strings, possibly echoed locale/region.
+Gadgetbridge does not populate `InitResponse`; it sends only the status ACK.
+
+### 17.5 MUSIC_CONTROL_CAPABILITIES (0x13B2) response
+
+The watch sends a single-byte `supportedCapabilities` bitmask. Gadgetbridge
+replies with a `RESPONSE (0x1388)`:
+
+```
+[originalType: 0x13B2 LE]
+[status: 0x00 ACK]
+[commandCount: N]            1 byte — number of supported commands
+[commands: N bytes]          1 byte per GarminMusicControlCommand ordinal
+```
+
+To signal "no music support", send `commandCount = 0` (no command bytes follow).
+The watch stops re-asking once it receives this.
+
+Reference: `MusicControlCapabilitiesMessage.generateOutgoing`
+(`service/devices/garmin/messages/MusicControlCapabilitiesMessage.java`).
 
 ---
 

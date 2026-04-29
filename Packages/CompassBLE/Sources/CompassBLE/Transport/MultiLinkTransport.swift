@@ -53,6 +53,15 @@ public actor MultiLinkTransport {
     private var gfdiHandle: UInt8?
     private let decoder = CobsCodec.Decoder()
 
+    /// Per-message send lock. Without this, a multi-fragment GFDI message
+    /// can be split across the BLE wire by another `sendGFDI` invocation
+    /// (e.g. an unsolicited-message ACK firing concurrently with the
+    /// post-pair burst), leaving the watch unable to reassemble either
+    /// message. The lock guarantees all fragments of a given GFDI message
+    /// reach `BluetoothCentral.write()` contiguously.
+    private var sendInFlight = false
+    private var sendWaiters: [CheckedContinuation<Void, Never>] = []
+
     private var gfdiContinuation: AsyncStream<Data>.Continuation?
 
     /// One outcome value per registration: either a handle or an error.
@@ -106,17 +115,65 @@ public actor MultiLinkTransport {
 
     public func sendGFDI(_ gfdiBytes: Data) async throws {
         guard let handle = gfdiHandle else { throw MLError.unexpectedResponse }
+
+        // Acquire the per-message send lock. If another `sendGFDI` is in
+        // flight, queue up and wait. Without this, our fragment loop could
+        // be preempted by a concurrent caller and the watch would receive
+        // interleaved fragments of two different GFDI messages.
+        while sendInFlight {
+            await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                sendWaiters.append(cont)
+            }
+        }
+        sendInFlight = true
+
         let cobs = CobsCodec.encode(gfdiBytes)
         let chunkSize = maxWriteSize - 1
         var pos = 0
-        while pos < cobs.count {
-            let end = min(pos + chunkSize, cobs.count)
-            var frame = Data(capacity: 1 + (end - pos))
-            frame.append(handle)
-            frame.append(cobs[pos..<end])
-            try await central.write(data: frame)
-            pos = end
+        do {
+            while pos < cobs.count {
+                let end = min(pos + chunkSize, cobs.count)
+                var frame = Data(capacity: 1 + (end - pos))
+                frame.append(handle)
+                frame.append(cobs[pos..<end])
+                try await central.write(data: frame)
+                pos = end
+            }
+        } catch {
+            releaseSendLock()
+            throw error
         }
+        releaseSendLock()
+    }
+
+    /// Wake the next waiter (if any) and clear the send-in-flight flag.
+    private func releaseSendLock() {
+        sendInFlight = false
+        if let next = sendWaiters.first {
+            sendWaiters.removeFirst()
+            next.resume()
+        }
+    }
+
+    /// Asynchronous teardown that explicitly releases the GFDI handle on
+    /// the watch before disconnecting. The Instinct Solar's firmware
+    /// retains registered services across BLE sessions if the host just
+    /// drops the link — eventually its handle pool saturates and new
+    /// `REGISTER_ML_REQ` calls return `status=2` (failed). Sending
+    /// `CLOSE_HANDLE_REQ` mirrors Gadgetbridge's `closeService()` and
+    /// keeps the watch's allocator clean.
+    public func gracefulShutdown() async {
+        if let handle = gfdiHandle {
+            BLELogger.transport.info("ML: sending CLOSE_HANDLE_REQ for GFDI handle=0x\(String(format: "%02X", handle))")
+            var bytes = buildManagementHeader(type: .closeHandleRequest)
+            bytes.appendUInt16LE(Self.gfdiServiceCode)
+            bytes.append(handle)
+            // Best-effort write — if the link is already gone we just
+            // proceed to teardown; the watch will GC the handle on
+            // BLE-supervision-timeout in that case.
+            try? await central.write(data: bytes)
+        }
+        shutdown()
     }
 
     public func shutdown() {
@@ -130,6 +187,13 @@ public actor MultiLinkTransport {
         registerContinuation = nil
         decoder.reset()
         gfdiHandle = nil
+
+        // Wake any tasks blocked on the send lock so they can fail out
+        // cleanly rather than hang waiting for a session that's gone.
+        let waiters = sendWaiters
+        sendWaiters.removeAll()
+        sendInFlight = false
+        for c in waiters { c.resume() }
     }
 
     // MARK: - Internal: pump

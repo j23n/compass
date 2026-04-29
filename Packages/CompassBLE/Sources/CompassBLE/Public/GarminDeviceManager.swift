@@ -97,7 +97,10 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
         } catch {
             BLELogger.auth.error("Pairing failed: \(error.localizedDescription)")
             await gfdiClient.stopReceiving()
-            await transport.shutdown()
+            // Best-effort: ask the watch to release the GFDI handle before
+            // we drop the BLE link, so its handle pool doesn't saturate
+            // across repeated failed pair attempts.
+            await transport.gracefulShutdown()
             await central.disconnect()
             throw error
         }
@@ -126,6 +129,38 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
             BLELogger.gfdi.debug("Unsolicited RESPONSE")
         case .currentTimeRequest:
             await respondToCurrentTimeRequest(msg, via: client)
+        case .protobufRequest:
+            // The watch sends PROTOBUF_REQUEST (0x13B3) for onboarding RPCs
+            // (settings init, locale, contacts, etc.). Gadgetbridge responds
+            // with a RESPONSE (0x1388) carrying extended protobuf-status fields
+            // rather than a PROTOBUF_RESPONSE (0x13B4). The watch accepts this
+            // and advances its setup state machine.
+            // Wire: [originalType LE][status][requestId LE][dataOffset LE][chunkStatus][statusCode]
+            let requestId: UInt16
+            if msg.payload.count >= 2 {
+                requestId = UInt16(msg.payload[0]) | (UInt16(msg.payload[1]) << 8)
+            } else {
+                requestId = 0
+            }
+            BLELogger.gfdi.debug("PROTOBUF_REQUEST #\(requestId) — sending ProtobufStatusMessage ACK")
+            var extra = Data()
+            extra.appendUInt16LE(requestId)
+            extra.appendUInt32LE(0)  // dataOffset = 0
+            extra.append(0)          // chunkStatus = KEPT
+            extra.append(0)          // statusCode = NO_ERROR
+            let pbAck = GFDIResponse(originalType: .protobufRequest, status: .ack, additionalPayload: extra)
+            try? await client.send(message: pbAck.toMessage())
+        case .musicControlCapabilities:
+            // Reply with zero capabilities so the watch stops re-asking every ~1 s.
+            // Payload after ACK: 1 byte = count of supported commands (0 = none).
+            // Matches Gadgetbridge MusicControlCapabilitiesMessage.generateOutgoing.
+            BLELogger.gfdi.debug("MUSIC_CONTROL_CAPABILITIES — replying with no capabilities")
+            let musicAck = GFDIResponse(
+                originalType: .musicControlCapabilities,
+                status: .ack,
+                additionalPayload: Data([0x00])
+            )
+            try? await client.send(message: musicAck.toMessage())
         default:
             // Bare ACK for everything else — without this the watch
             // assumes the host is unresponsive and stays in setup-wizard.
@@ -230,11 +265,18 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
         BLELogger.auth.debug("Sending DEVICE_SETTINGS")
         try await gfdiClient.send(message: SetDeviceSettingsMessage.defaults().toMessage())
 
-        BLELogger.auth.debug("Sending SYNC_READY / PAIR_COMPLETE / SYNC_COMPLETE / SETUP_WIZARD_COMPLETE")
+        // Try `SETUP_WIZARD_SKIPPED` (15) instead of `SETUP_WIZARD_COMPLETE` (14)
+        // as a workaround. We don't yet implement the protobuf RPC layer
+        // (`Smart.GdiSmartProto`) that the watch expects after pair-complete —
+        // it keeps re-asking for settings init / music caps / weather / etc.
+        // and stays in setup-wizard UI until those are answered.
+        // `SKIPPED` may convince the watch's setup state machine to dismiss
+        // the wizard without the protobuf round-trip.
+        BLELogger.auth.debug("Sending SYNC_READY / PAIR_COMPLETE / SYNC_COMPLETE / SETUP_WIZARD_SKIPPED")
         try await gfdiClient.send(message: SystemEventMessage(eventType: .syncReady).toMessage())
         try await gfdiClient.send(message: SystemEventMessage(eventType: .pairComplete).toMessage())
         try await gfdiClient.send(message: SystemEventMessage(eventType: .syncComplete).toMessage())
-        try await gfdiClient.send(message: SystemEventMessage(eventType: .setupWizardComplete).toMessage())
+        try await gfdiClient.send(message: SystemEventMessage(eventType: .setupWizardSkipped).toMessage())
 
         return devInfo
     }
@@ -262,7 +304,9 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
     public func disconnect() async {
         BLELogger.transport.info("Disconnecting")
         await gfdiClient.stopReceiving()
-        await transport.shutdown()
+        // Release the watch's GFDI handle before tearing down BLE so its
+        // ML handle pool stays clean across reconnects.
+        await transport.gracefulShutdown()
         await central.disconnect()
         _isConnected = false
         _connectedDevice = nil

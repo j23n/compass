@@ -92,23 +92,41 @@ public struct CobsCodec {
 
         private func decodeIfReady() {
             guard pending == nil else { return }
-            guard buffer.count >= 4 else { return }
-            // Need a trailing zero byte.
-            guard let lastZero = buffer.lastIndex(of: 0) else { return }
-            // Find the leading zero before that.
-            // The encoded frame is bounded by the leading 0 and the trailing 0.
-            // We expect buffer[0] == 0 (leading) and buffer[lastZero] == 0 (trailing).
-            // If we don't have a leading zero, drop everything up to the first zero.
-            if let firstZero = buffer.firstIndex(of: 0), firstZero > 0 {
-                buffer.removeSubrange(0..<firstZero)
-                return decodeIfReady()
+
+            // Strip junk before the first leading 0x00.
+            if let firstZero = buffer.firstIndex(of: 0) {
+                if firstZero > 0 {
+                    buffer.removeSubrange(0..<firstZero)
+                }
+            } else {
+                return // no zero bytes yet — wait for more data
             }
-            guard buffer.first == 0, lastZero > 0 else { return }
+            guard buffer.first == 0 else { return }
+
+            // The COBS body never contains a 0x00 byte (that's the point of
+            // COBS encoding). So the FIRST 0x00 after the leading is the
+            // trailing terminator. Using `lastIndex(of: 0)` is wrong — when
+            // the BLE link delivers multiple GFDI messages back-to-back the
+            // buffer holds [00 body1 00 00 body2 00 ...] and `lastIndex` picks
+            // the trailing zero of the *last* message, causing the decoder
+            // to merge multiple messages into one corrupted blob.
+            var trailingIndex: Int? = nil
+            for i in 1..<buffer.count {
+                if buffer[i] == 0 {
+                    trailingIndex = i
+                    break
+                }
+            }
+            guard let lastZero = trailingIndex else { return } // incomplete message
 
             // Slice the body between leading and trailing zeros.
             let bodyStart = 1
             let bodyEnd = lastZero
-            guard bodyEnd > bodyStart else { return }
+            guard bodyEnd > bodyStart else {
+                // Empty body (00 00) — junk; drop and try again.
+                buffer.removeSubrange(0...lastZero)
+                return decodeIfReady()
+            }
             let body = buffer[bodyStart..<bodyEnd]
 
             var out = Data()
