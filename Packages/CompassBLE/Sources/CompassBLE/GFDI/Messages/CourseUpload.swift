@@ -144,26 +144,38 @@ public struct UploadRequestMessage: Sendable {
 
 /// The watch's reply to an UploadRequestMessage, wrapped in RESPONSE(5000).
 ///
-/// Wire format (payload after RESPONSE header):
+/// Wire format (payload after RESPONSE header), per Gadgetbridge
+/// `messages/status/UploadRequestStatusMessage.java:19–48`:
 /// ```
-/// [status: UInt8]         0 = success
-/// [uploadStatus: UInt8]   0=OK, 1=INDEX_UNKNOWN, 3=NO_SPACE
-/// [dataOffset: UInt32 LE] must equal 0 if status is OK (ready to start at byte 0)
-/// [maxPacketSize: UInt32 LE] max bytes per chunk including overhead
-/// [crcSeed: UInt16 LE]    CRC seed to use
+/// [status: UInt8]            0 = success
+/// [uploadStatus: UInt8]      0=OK, 1=INDEX_UNKNOWN, 2=INDEX_NOT_WRITEABLE,
+///                            3=NO_SPACE, 4=INVALID, 5=NOT_READY, 6=CRC_INCORRECT
+/// [dataOffset: UInt32 LE]    next byte the watch expects (must equal 0 for fresh upload)
+/// [maxFileSize: UInt32 LE]   max total file size for this slot — NOT the per-chunk size
+/// [crcSeed: UInt16 LE]       CRC seed echo
 /// ```
+///
+/// IMPORTANT: The 4-byte field after `dataOffset` is the **slot's max file
+/// size**, not the per-chunk packet size. The actual chunk size is the
+/// ML-negotiated `maxPacketSize` (defaults to 375), which the caller already
+/// has from device-info exchange. Mistaking these caused large uploads to be
+/// emitted as a single oversized GFDI frame the watch couldn't reassemble.
 public struct UploadRequestStatus: Sendable {
     public enum Status: UInt8, Sendable {
         case ok = 0
         case indexUnknown = 1
+        case indexNotWriteable = 2
         case noSpace = 3
+        case invalid = 4
+        case notReady = 5
+        case crcIncorrect = 6
         case unknown = 255
     }
 
     public let status: UInt8
     public let uploadStatus: Status
     public let dataOffset: UInt32
-    public let maxPacketSize: UInt32
+    public let maxFileSize: UInt32
     public let crcSeed: UInt16
 
     public var canProceed: Bool {
@@ -177,14 +189,14 @@ public struct UploadRequestStatus: Sendable {
         let outerStatus = try reader.readUInt8()
         let rawUploadStatus = try reader.readUInt8()
         let dataOffset = try reader.readUInt32LE()
-        let maxPacketSize = try reader.readUInt32LE()
+        let maxFileSize = try reader.readUInt32LE()
         let crcSeed = try reader.readUInt16LE()
         let uploadStatus = Status(rawValue: rawUploadStatus) ?? .unknown
         return UploadRequestStatus(
             status: outerStatus,
             uploadStatus: uploadStatus,
             dataOffset: dataOffset,
-            maxPacketSize: maxPacketSize,
+            maxFileSize: maxFileSize,
             crcSeed: crcSeed
         )
     }
@@ -198,12 +210,16 @@ public struct UploadRequestStatus: Sendable {
 /// Wire format (payload):
 /// ```
 /// [flags: UInt8]           0x00 = middle chunk, 0x08 = last chunk, 0x0C = abort
-/// [dataOffset: UInt32 LE]  absolute byte offset of this chunk
 /// [chunkCRC: UInt16 LE]    running CRC over bytes sent so far (including this chunk)
+/// [dataOffset: UInt32 LE]  absolute byte offset of this chunk
 /// [data: remaining bytes]  chunk payload
 /// ```
 ///
-/// Note: The `chunkCRC` is the cumulative CRC, computed with `FITCRC.compute(data: chunkData, seed: previousCRC)`.
+/// Field order matches the watch → phone `FileTransferDataMessage` (CRC before
+/// offset). Reversing them causes the watch to parse `dataOffset` as the CRC
+/// and reply with `transferStatus=4 (offsetMismatch), nextDataOffset=0`.
+///
+/// Note: The `chunkCRC` is the cumulative CRC, computed with `CRC16.compute(data: chunkData, seed: previousCRC)`.
 public struct FileTransferDataChunk: Sendable {
     public enum Flags: UInt8, Sendable {
         case middle = 0x00
@@ -226,8 +242,8 @@ public struct FileTransferDataChunk: Sendable {
     public func toMessage() -> GFDIMessage {
         var payload = Data()
         payload.append(flags.rawValue)
-        payload.appendUInt32LE(dataOffset)
         payload.appendUInt16LE(chunkCRC)
+        payload.appendUInt32LE(dataOffset)
         payload.append(data)
         return GFDIMessage(type: .fileTransferData, payload: payload)
     }

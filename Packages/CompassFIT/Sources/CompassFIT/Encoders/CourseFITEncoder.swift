@@ -1,52 +1,86 @@
 import Foundation
 
-/// Simple waypoint structure for FIT encoding
+/// Simple waypoint structure for FIT encoding.
+///
+/// `name` only applies to course points (POIs). Track points along the route
+/// have name = nil and are emitted as `record` messages; named waypoints are
+/// additionally emitted as `course_point` messages so they show as POI markers
+/// on the watch.
 public struct FITCourseWaypoint: Sendable {
     public let latitude: Double
     public let longitude: Double
     public let altitude: Double?
     public let name: String?
     public let distanceFromStart: Double
+    /// FIT `course_point` type enum (0=generic, 1=summit, 2=valley, 3=water, 4=food, 5=danger, 6=left, 7=right, 8=straight, 9=first_aid, …). Only used when `name != nil`.
+    public let coursePointType: UInt8
 
-    public init(latitude: Double, longitude: Double, altitude: Double?, name: String?, distanceFromStart: Double) {
+    public init(
+        latitude: Double,
+        longitude: Double,
+        altitude: Double?,
+        name: String?,
+        distanceFromStart: Double,
+        coursePointType: UInt8 = 0
+    ) {
         self.latitude = latitude
         self.longitude = longitude
         self.altitude = altitude
         self.name = name
         self.distanceFromStart = distanceFromStart
+        self.coursePointType = coursePointType
     }
 }
 
 /// Encodes a course into a binary FIT file suitable for upload to a Garmin device.
+///
+/// All field numbers follow the FIT SDK profile (Profile.xlsx). The watch
+/// parses messages by field number, not order, so wrong field numbers cause
+/// silent metadata loss (no name → fallback filename, no distance, etc.).
 public struct CourseFITEncoder: Sendable {
 
     /// Encodes a course into FIT binary format.
-    public static func encode(name: String, waypoints: [FITCourseWaypoint], totalDistance: Double) -> Data {
+    ///
+    /// - Parameters:
+    ///   - name: Course name. Truncated to 15 ASCII chars + null in the FIT `course.name` field.
+    ///   - sport: FIT `sport` enum value (see FIT SDK). 0=generic, 1=running, 2=cycling, 11=walking, 17=hiking, …
+    ///   - waypoints: Track points along the route. These become FIT `record` messages.
+    ///   - pointsOfInterest: Named POI markers (separate from track points). Each becomes a FIT `course_point`. The watch displays these as POI markers. Track points whose `name != nil` are also emitted as course points for backwards compatibility.
+    ///   - totalDistance: Course total distance in meters.
+    public static func encode(
+        name: String,
+        sport: UInt8,
+        waypoints: [FITCourseWaypoint],
+        pointsOfInterest: [FITCourseWaypoint] = [],
+        totalDistance: Double
+    ) -> Data {
         var body = Data()
 
-        // 1. File ID message
+        // 1. File ID
         encodeFileIDMessage(into: &body)
 
-        // 2. Course message
-        encodeCourseMessage(name: name, into: &body)
+        // 2. Course
+        encodeCourseMessage(name: name, sport: sport, into: &body)
 
-        // 3. Lap message
+        // 3. Lap
         encodeLapMessage(waypoints: waypoints, totalDistance: totalDistance, into: &body)
 
-        // 4. Record messages (one per waypoint)
+        // 4. Records — one per track waypoint
         for waypoint in waypoints {
             encodeRecordMessage(waypoint: waypoint, into: &body)
         }
 
-        // 5. Course point messages (for named waypoints)
-        let namedWaypoints = waypoints.filter { $0.name != nil }
-        for waypoint in namedWaypoints {
-            encodeCoursePointMessage(waypoint: waypoint, into: &body)
+        // 5. Course points (POIs) — emit definition once, then one data msg per point
+        let namedTrackPoints = waypoints.filter { $0.name != nil }
+        let allCoursePoints = namedTrackPoints + pointsOfInterest
+        if !allCoursePoints.isEmpty {
+            encodeCoursePointDefinition(into: &body)
+            for point in allCoursePoints {
+                encodeCoursePointMessage(waypoint: point, into: &body)
+            }
         }
 
-        // Build file with header and CRC
-        let file = buildFITFile(body: body)
-        return file
+        return buildFITFile(body: body)
     }
 
     // MARK: - FIT File Structure
@@ -54,7 +88,7 @@ public struct CourseFITEncoder: Sendable {
     private static func buildFITFile(body: Data) -> Data {
         var file = Data()
 
-        // Header (14 bytes)
+        // Header (14 bytes: 12 fixed fields + 2-byte header CRC)
         let headerSize: UInt8 = 14
         let protocolVersion: UInt8 = 16
         let profileVersion: UInt16 = 2134
@@ -63,6 +97,12 @@ public struct CourseFITEncoder: Sendable {
         file.appendUInt16LE(profileVersion)
         file.appendUInt32LE(UInt32(body.count))
         file.append(contentsOf: Data(".FIT".utf8))  // 4 bytes: 0x2E 0x46 0x49 0x54
+
+        // Header CRC over the 12 preceding bytes. 0x0000 is spec-allowed ("not
+        // computed"), but the watch indexer prefers a real value — it's also
+        // what Garmin's own encoder emits.
+        let headerCRC = computeFITCRC(file)
+        file.appendUInt16LE(headerCRC)
 
         // Body
         file.append(body)
@@ -84,51 +124,55 @@ public struct CourseFITEncoder: Sendable {
         defMsg.appendUInt16LE(0)  // global message type (file_id)
         defMsg.append(5)  // numFields
 
-        // Field 0: type (field num 0, size 1, type 0 = UInt8)
+        // FIT profile: file_id (mesg_num=0)
+        //   0  type           uint8
+        //   1  manufacturer   uint16
+        //   2  product        uint16
+        //   3  serial_number  uint32z
+        //   4  time_created   date_time (uint32)
         defMsg.append(0); defMsg.append(1); defMsg.append(0)
-        // Field 1: manufacturer (field num 1, size 2, type 0x84 = UInt16LE)
         defMsg.append(1); defMsg.append(2); defMsg.append(0x84)
-        // Field 2: product (field num 2, size 2, type 0x84 = UInt16LE)
         defMsg.append(2); defMsg.append(2); defMsg.append(0x84)
-        // Field 3: time_created (field num 3, size 4, type 0x86 = UInt32LE)
-        defMsg.append(3); defMsg.append(4); defMsg.append(0x86)
-        // Field 4: serial_number (field num 4, size 4, type 0x86 = UInt32LE)
+        defMsg.append(3); defMsg.append(4); defMsg.append(0x8C)  // serial_number is uint32z (0x8C)
         defMsg.append(4); defMsg.append(4); defMsg.append(0x86)
 
         encodeDefinitionMessageHeader(&defMsg, localType: 0)
         body.append(defMsg)
 
-        // Data message (local type 0)
+        // Data message (local type 0) — order matches definition: type, mfr, product, serial, time
         var dataMsg = Data()
-        dataMsg.append(6)  // type = COURSE
-        dataMsg.appendUInt16LE(255)  // manufacturer = invalid
-        dataMsg.appendUInt16LE(1)    // product = generic
+        dataMsg.append(6)                           // type = COURSE
+        dataMsg.appendUInt16LE(255)                 // manufacturer = development (255)
+        dataMsg.appendUInt16LE(0)                   // product (0 ok for development manufacturer)
+        dataMsg.appendUInt32LE(0)                   // serial_number = 0 (invalid for uint32z)
         let timestamp = UInt32(Date().timeIntervalSince(FITTimestamp.epoch))
-        dataMsg.appendUInt32LE(timestamp)  // time_created
-        dataMsg.appendUInt32LE(0)    // serial_number
+        dataMsg.appendUInt32LE(timestamp)           // time_created
 
         encodeDataMessageHeader(&dataMsg, localType: 0)
         body.append(dataMsg)
     }
 
-    private static func encodeCourseMessage(name: String, into body: inout Data) {
-        // Definition message (local type 1, global type 31 = course)
+    private static func encodeCourseMessage(name: String, sport: UInt8, into body: inout Data) {
+        // FIT profile: course (mesg_num=31)
+        //   4  sport      enum (uint8)
+        //   5  name       string (16 bytes)
+        //   6  capabilities uint32z
         var defMsg = Data()
         defMsg.append(0)  // reserved
-        defMsg.append(0)  // architecture
+        defMsg.append(0)  // architecture (LE)
         defMsg.appendUInt16LE(31)  // global message type (course)
-        defMsg.append(1)  // numFields
+        defMsg.append(2)  // numFields
 
-        // Field 0: name (field num 0, size 16, type 7 = String)
-        defMsg.append(0); defMsg.append(16); defMsg.append(7)
+        defMsg.append(4); defMsg.append(1); defMsg.append(0)   // sport
+        defMsg.append(5); defMsg.append(16); defMsg.append(7)  // name (string, 16)
 
         encodeDefinitionMessageHeader(&defMsg, localType: 1)
         body.append(defMsg)
 
-        // Data message (local type 1)
+        // Data message (local type 1) — same order: sport, name
         var dataMsg = Data()
-        let nameBytes = padString(name, to: 16)
-        dataMsg.append(contentsOf: nameBytes)
+        dataMsg.append(sport)
+        dataMsg.append(contentsOf: padString(name, to: 16))
 
         encodeDataMessageHeader(&dataMsg, localType: 1)
         body.append(dataMsg)
@@ -142,15 +186,24 @@ public struct CourseFITEncoder: Sendable {
         defMsg.appendUInt16LE(19)  // global message type (lap)
         defMsg.append(8)  // numFields
 
+        // FIT profile: lap (mesg_num=19)
+        //   253 timestamp           date_time
+        //   0   event               enum
+        //   1   event_type          enum
+        //   2   start_time          date_time
+        //   3   start_position_lat  sint32 (semicircles)
+        //   4   start_position_long sint32 (semicircles)
+        //   7   total_elapsed_time  uint32 (scale 1000, units s)
+        //   9   total_distance      uint32 (scale 100,  units m → cm)
         let fields: [(UInt8, UInt8, UInt8)] = [
-            (0, 1, 0),     // event (UInt8)
-            (1, 1, 0),     // event_type (UInt8)
-            (2, 4, 0x86),  // start_time (UInt32LE)
-            (254, 4, 0x86), // timestamp (UInt32LE)
-            (3, 4, 0x85),  // start_position_lat (Int32LE semicircles)
-            (4, 4, 0x85),  // start_position_long (Int32LE semicircles)
-            (7, 4, 0x86),  // total_distance (UInt32LE centimeters)
-            (10, 4, 0x86), // total_elapsed_time (UInt32LE milliseconds)
+            (253, 4, 0x86),  // timestamp
+            (0, 1, 0),       // event
+            (1, 1, 0),       // event_type
+            (2, 4, 0x86),    // start_time
+            (3, 4, 0x85),    // start_position_lat
+            (4, 4, 0x85),    // start_position_long
+            (7, 4, 0x86),    // total_elapsed_time (ms)
+            (9, 4, 0x86),    // total_distance (cm)
         ]
 
         for (fieldNum, size, baseType) in fields {
@@ -162,19 +215,19 @@ public struct CourseFITEncoder: Sendable {
         encodeDefinitionMessageHeader(&defMsg, localType: 2)
         body.append(defMsg)
 
-        // Data message (local type 2)
+        // Data message (local type 2) — order matches definition above
         var dataMsg = Data()
         let timestamp = UInt32(Date().timeIntervalSince(FITTimestamp.epoch))
         let firstWaypoint = waypoints.first
 
-        dataMsg.append(0)  // event = TIMER
-        dataMsg.append(0)  // event_type = START
-        dataMsg.appendUInt32LE(timestamp)  // start_time
-        dataMsg.appendUInt32LE(timestamp)  // timestamp
-        dataMsg.appendInt32LE(degreesToSemicircles(firstWaypoint?.latitude ?? 0))  // start_position_lat
-        dataMsg.appendInt32LE(degreesToSemicircles(firstWaypoint?.longitude ?? 0))  // start_position_long
-        dataMsg.appendUInt32LE(UInt32(totalDistance * 100))  // total_distance (cm)
-        dataMsg.appendUInt32LE(0)  // total_elapsed_time (ms) = 0 for static course
+        dataMsg.appendUInt32LE(timestamp)                                            // timestamp
+        dataMsg.append(0)                                                            // event = TIMER
+        dataMsg.append(0)                                                            // event_type = START
+        dataMsg.appendUInt32LE(timestamp)                                            // start_time
+        dataMsg.appendInt32LE(degreesToSemicircles(firstWaypoint?.latitude ?? 0))    // start_position_lat
+        dataMsg.appendInt32LE(degreesToSemicircles(firstWaypoint?.longitude ?? 0))   // start_position_long
+        dataMsg.appendUInt32LE(0)                                                    // total_elapsed_time (ms) — 0 for static course
+        dataMsg.appendUInt32LE(UInt32(totalDistance * 100))                          // total_distance (cm)
 
         encodeDataMessageHeader(&dataMsg, localType: 2)
         body.append(dataMsg)
@@ -189,13 +242,20 @@ public struct CourseFITEncoder: Sendable {
             defMsg.appendUInt16LE(20)  // global message type (record)
             defMsg.append(6)  // numFields
 
+            // FIT profile: record (mesg_num=20)
+            //   253 timestamp     date_time
+            //   0   position_lat  sint32 (semicircles)
+            //   1   position_long sint32 (semicircles)
+            //   2   altitude      uint16 (scale 5, offset 500, units m)
+            //   4   cadence       uint8
+            //   5   distance      uint32 (scale 100, units m → cm)
             let fields: [(UInt8, UInt8, UInt8)] = [
-                (254, 4, 0x86),  // timestamp (UInt32LE)
-                (0, 4, 0x85),    // position_lat (Int32LE)
-                (1, 4, 0x85),    // position_long (Int32LE)
-                (2, 2, 0x84),    // altitude (UInt16LE)
-                (3, 4, 0x86),    // distance (UInt32LE)
-                (5, 1, 0),       // cadence (UInt8)
+                (253, 4, 0x86),  // timestamp
+                (0, 4, 0x85),    // position_lat
+                (1, 4, 0x85),    // position_long
+                (2, 2, 0x84),    // altitude
+                (4, 1, 0),       // cadence
+                (5, 4, 0x86),    // distance
             ]
 
             for (fieldNum, size, baseType) in fields {
@@ -208,37 +268,42 @@ public struct CourseFITEncoder: Sendable {
             body.append(defMsg)
         }
 
-        // Data message (local type 3)
+        // Data message (local type 3) — order matches definition above
         var dataMsg = Data()
         let timestamp = UInt32(Date().timeIntervalSince(FITTimestamp.epoch))
-        dataMsg.appendUInt32LE(timestamp)  // timestamp
-        dataMsg.appendInt32LE(degreesToSemicircles(waypoint.latitude))  // position_lat
-        dataMsg.appendInt32LE(degreesToSemicircles(waypoint.longitude))  // position_long
-        dataMsg.appendUInt16LE(encodeAltitude(waypoint.altitude ?? 0))  // altitude
-        dataMsg.appendUInt32LE(UInt32(waypoint.distanceFromStart * 100))  // distance (cm)
-        dataMsg.append(0)  // cadence
+        dataMsg.appendUInt32LE(timestamp)                                       // timestamp
+        dataMsg.appendInt32LE(degreesToSemicircles(waypoint.latitude))          // position_lat
+        dataMsg.appendInt32LE(degreesToSemicircles(waypoint.longitude))         // position_long
+        dataMsg.appendUInt16LE(encodeAltitude(waypoint.altitude ?? 0))          // altitude
+        dataMsg.append(0xFF)                                                    // cadence (invalid)
+        dataMsg.appendUInt32LE(UInt32(waypoint.distanceFromStart * 100))        // distance (cm)
 
         encodeDataMessageHeader(&dataMsg, localType: 3)
         body.append(dataMsg)
     }
 
-    private static func encodeCoursePointMessage(waypoint: FITCourseWaypoint, into body: inout Data) {
-        // Definition message only once
+    private static func encodeCoursePointDefinition(into body: inout Data) {
+        // FIT profile: course_point (mesg_num=32)
+        //   253 timestamp     date_time
+        //   1   position_lat  sint32 (semicircles)
+        //   2   position_long sint32 (semicircles)
+        //   3   distance      uint32 (scale 100, units m → cm)
+        //   4   name          string (16)
+        //   5   type          enum (course_point)
         var defMsg = Data()
-        defMsg.append(0)  // reserved
-        defMsg.append(0)  // architecture
-        defMsg.appendUInt16LE(32)  // global message type (course_point)
-        defMsg.append(6)  // numFields
+        defMsg.append(0)
+        defMsg.append(0)
+        defMsg.appendUInt16LE(32)
+        defMsg.append(6)
 
         let fields: [(UInt8, UInt8, UInt8)] = [
-            (254, 4, 0x86),  // timestamp (UInt32LE)
-            (0, 4, 0x85),    // position_lat (Int32LE)
-            (1, 4, 0x85),    // position_long (Int32LE)
-            (2, 4, 0x86),    // distance (UInt32LE)
-            (4, 1, 0),       // type (UInt8)
-            (3, 16, 7),      // name (String)
+            (253, 4, 0x86),  // timestamp
+            (1, 4, 0x85),    // position_lat
+            (2, 4, 0x85),    // position_long
+            (3, 4, 0x86),    // distance
+            (4, 16, 7),      // name
+            (5, 1, 0),       // type
         ]
-
         for (fieldNum, size, baseType) in fields {
             defMsg.append(fieldNum)
             defMsg.append(size)
@@ -247,17 +312,18 @@ public struct CourseFITEncoder: Sendable {
 
         encodeDefinitionMessageHeader(&defMsg, localType: 4)
         body.append(defMsg)
+    }
 
-        // Data message (local type 4)
+    private static func encodeCoursePointMessage(waypoint: FITCourseWaypoint, into body: inout Data) {
+        // Data message (local type 4) — order matches definition above
         var dataMsg = Data()
         let timestamp = UInt32(Date().timeIntervalSince(FITTimestamp.epoch))
-        dataMsg.appendUInt32LE(timestamp)  // timestamp
-        dataMsg.appendInt32LE(degreesToSemicircles(waypoint.latitude))  // position_lat
-        dataMsg.appendInt32LE(degreesToSemicircles(waypoint.longitude))  // position_long
-        dataMsg.appendUInt32LE(UInt32(waypoint.distanceFromStart * 100))  // distance (cm)
-        dataMsg.append(0)  // type = GENERIC
-        let name = padString(waypoint.name ?? "", to: 16)
-        dataMsg.append(contentsOf: name)  // name
+        dataMsg.appendUInt32LE(timestamp)                                       // timestamp
+        dataMsg.appendInt32LE(degreesToSemicircles(waypoint.latitude))          // position_lat
+        dataMsg.appendInt32LE(degreesToSemicircles(waypoint.longitude))         // position_long
+        dataMsg.appendUInt32LE(UInt32(waypoint.distanceFromStart * 100))        // distance (cm)
+        dataMsg.append(contentsOf: padString(waypoint.name ?? "", to: 16))      // name
+        dataMsg.append(waypoint.coursePointType)                                // type
 
         encodeDataMessageHeader(&dataMsg, localType: 4)
         body.append(dataMsg)

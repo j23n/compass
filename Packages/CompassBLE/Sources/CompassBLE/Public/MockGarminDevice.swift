@@ -250,16 +250,17 @@ public actor MockGarminDevice: DeviceManagerProtocol {
         return allURLs
     }
 
-    public func uploadCourse(_ url: URL) async throws {
+    public func uploadCourse(_ url: URL) async throws -> UInt16 {
         BLELogger.sync.info("[Mock] Uploading course: \(url.lastPathComponent)")
-
-        guard _isConnected else {
-            throw PairingError.bluetoothUnavailable
-        }
-
-        // Simulate upload time
+        guard _isConnected else { throw PairingError.bluetoothUnavailable }
         try await Task.sleep(for: .seconds(2))
         BLELogger.sync.info("[Mock] Upload complete")
+        return 1
+    }
+
+    public func listCourseFiles() async throws -> [FileEntry] {
+        guard _isConnected else { throw SyncError.notConnected }
+        return []
     }
 
     public var isConnected: Bool {

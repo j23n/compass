@@ -20,6 +20,8 @@
 		61F53E6DCCDA62783431CF91 /* CompassFIT in Frameworks */ = {isa = PBXBuildFile; productRef = 33C7E21056FE1E458979A9F9 /* CompassFIT */; };
 		67FD8D7E9C0B78A112C06C92 /* ActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D9133A7187508897F34DDF7 /* ActivityView.swift */; };
 		7F66ADDB18893B509DF51C3D /* FITFileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81F4753EEB4B8FFB778FBCFA /* FITFileStore.swift */; };
+		C0F1A1B1C0F1A1B1C0F1A1B1 /* CourseFileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0F1A1B1C0F1A1B1C0F1A1B0 /* CourseFileStore.swift */; };
+		C0F1A1B2C0F1A1B2C0F1A1B2 /* CourseFilesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0F1A1B2C0F1A1B2C0F1A1B1 /* CourseFilesView.swift */; };
 		828D76A8788E378DD151BA9A /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE68E6FEB88696AB9D459324 /* ContentView.swift */; };
 		880E3114FC1EE7EBDA2ACA59 /* HealthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5512F60331520C299D42F604 /* HealthView.swift */; };
 		8B709A7D7D4E459CD7006768 /* TodayViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35B616B28C57B7C5DA43CA6B /* TodayViewModel.swift */; };
@@ -74,6 +76,8 @@
 		7BA0E1E132468A60CCF51A13 /* HealthDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthDetailView.swift; sourceTree = "<group>"; };
 		814FB2742A1BD39FE781D673 /* LogsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogsView.swift; sourceTree = "<group>"; };
 		81F4753EEB4B8FFB778FBCFA /* FITFileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FITFileStore.swift; sourceTree = "<group>"; };
+		C0F1A1B1C0F1A1B1C0F1A1B0 /* CourseFileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseFileStore.swift; sourceTree = "<group>"; };
+		C0F1A1B2C0F1A1B2C0F1A1B1 /* CourseFilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseFilesView.swift; sourceTree = "<group>"; };
 		8E4DAEBEFF28D0FBFC1C9B3A /* CourseDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseDetailView.swift; sourceTree = "<group>"; };
 		922D24C67232B7C668C51066 /* RingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RingView.swift; sourceTree = "<group>"; };
 		93B71F0583278E54AAE879AA /* ActivitiesListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivitiesListView.swift; sourceTree = "<group>"; };
@@ -165,6 +169,7 @@
 		62307A27EEF9FCEB10E09F4F /* Settings */ = {
 			isa = PBXGroup;
 			children = (
+				C0F1A1B2C0F1A1B2C0F1A1B1 /* CourseFilesView.swift */,
 				6A6BD4BAA140A129B9819801 /* FITFilesView.swift */,
 				814FB2742A1BD39FE781D673 /* LogsView.swift */,
 				35A2BA7F0CFC5430A008040A /* SettingsView.swift */,
@@ -217,6 +222,7 @@
 		ADB2995ED2E7797B29B0A965 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				C0F1A1B1C0F1A1B1C0F1A1B0 /* CourseFileStore.swift */,
 				3F895C1DE3D221686BB2BFD7 /* FindMyPhoneService.swift */,
 				81F4753EEB4B8FFB778FBCFA /* FITFileStore.swift */,
 				18F573121C079EF19C621678 /* LogStore.swift */,
@@ -371,6 +377,8 @@
 				E781A0DBAAA0802E09BF7B77 /* CourseDetailView.swift in Sources */,
 				FD655A86C53ED1EFFA26FF2B /* CoursesListView.swift in Sources */,
 				C1A2B3C4D5E6F7A8B9C0D1E2 /* CourseRowView.swift in Sources */,
+				C0F1A1B1C0F1A1B1C0F1A1B1 /* CourseFileStore.swift in Sources */,
+				C0F1A1B2C0F1A1B2C0F1A1B2 /* CourseFilesView.swift in Sources */,
 				EB1A9E08AF60C4721170D17A /* DependencyContainer.swift in Sources */,
 				7F66ADDB18893B509DF51C3D /* FITFileStore.swift in Sources */,
 				E3B7168B2C526978D1F13B4F /* FITFilesView.swift in Sources */,

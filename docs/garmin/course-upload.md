@@ -67,13 +67,22 @@ Once the file is created, the phone sends an UploadRequestMessage to initiate th
 
 ```
 [UInt8]     status            0 = success
-[UInt8]     uploadStatus      0=OK, 1=INDEX_UNKNOWN, 3=NO_SPACE
+[UInt8]     uploadStatus      0=OK, 1=INDEX_UNKNOWN, 2=INDEX_NOT_WRITEABLE,
+                              3=NO_SPACE, 4=INVALID, 5=NOT_READY, 6=CRC_INCORRECT
 [UInt32 LE] dataOffset        Expected next offset (must be 0 if status is OK)
-[UInt32 LE] maxPacketSize     Max bytes per chunk (typically 375–512 for Instinct)
+[UInt32 LE] maxFileSize       Max **total** file size for this slot (NOT per-chunk size)
 [UInt16 LE] crcSeed           Returned CRC seed (confirm against request)
 ```
 
 If `uploadStatus != 0`, abort with a user error.
+
+> ⚠️ **`maxFileSize` is not the chunk size.** Earlier docs called this field
+> `maxPacketSize` and the code reused it for chunking — that's wrong. The
+> per-chunk packet size is the **ML-negotiated `maxPacketSize`** from device
+> info (defaults to 375), not this field. Confusing them sends the entire
+> file as one giant GFDI frame for any file larger than ~360 bytes; the
+> watch can't reassemble it and silently drops the chunk, causing the phone
+> to time out waiting for the ACK.
 
 ---
 
@@ -89,7 +98,7 @@ let subscription = try await gfdiClient.subscribe(awaitType: .response)
 
 ### Step 4: Chunked Upload
 
-The phone splits the FIT file into chunks sized to fit within `maxPacketSize - 13` (13 bytes = overhead of flags, offset, CRC).
+The phone splits the FIT file into chunks sized to fit within `maxPacketSize - 13`, where `maxPacketSize` is the **ML-negotiated** per-frame size from device info (375 by default), **not** the `maxFileSize` from `UploadRequestStatus`. The 13-byte overhead is: size(2) + type(2) + flags(1) + chunkCRC(2) + dataOffset(4) + frameCRC(2).
 
 For each chunk:
 
@@ -97,10 +106,15 @@ For each chunk:
 
 ```
 [UInt8]     flags           0x00 = middle chunk, 0x08 = final chunk, 0x0C = abort
-[UInt32 LE] dataOffset      Byte offset of this chunk in the file
 [UInt16 LE] chunkCRC        Running CRC16 over bytes sent *so far* (inclusive of this chunk)
+[UInt32 LE] dataOffset      Byte offset of this chunk in the file
 [N bytes]   data            Chunk payload (max: maxPacketSize - 13)
 ```
+
+> **Field order matters.** CRC comes *before* offset, matching the watch → phone
+> `FileTransferDataMessage` wire format. Swapping them produces a chunk the watch
+> parses as `dataOffset = chunkCRC bytes`, and it replies with
+> `transferStatus=4 (offsetMismatch), nextDataOffset=0`.
 
 **Encoding Details:**
 - `chunkCRC` is computed by:

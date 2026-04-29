@@ -45,10 +45,14 @@ struct MapRouteView: UIViewRepresentable {
             RouteAnnotation(coordinate: coordinates.last!, kind: .end),
         ])
 
-        map.setRegion(
-            MKCoordinateRegion(routeCoordinates: coordinates, paddingFraction: 0.22),
-            animated: false
-        )
+        let region = MKCoordinateRegion(routeCoordinates: coordinates, paddingFraction: 0.22)
+        // Defer setRegion until after SwiftUI's layout pass has given the map view
+        // its actual frame; calling it with a zero-frame produces "clip: empty path" warnings.
+        if map.frame.isEmpty {
+            DispatchQueue.main.async { map.setRegion(region, animated: false) }
+        } else {
+            map.setRegion(region, animated: false)
+        }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }

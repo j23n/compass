@@ -121,6 +121,18 @@ actor FileSyncSession {
         return downloadedURLs
     }
 
+    // MARK: - Directory listing (read-only, no download or archive)
+
+    /// Download the root directory and return all entries matching `fileType`.
+    /// Does NOT archive files or send SYNC_COMPLETE — safe for read-only presence checks.
+    func listFiles(ofType fileType: FileType) async throws -> [FileEntry] {
+        let entries = try await downloadDirectory(progress: nil)
+        return entries.compactMap { entry in
+            guard let ft = entry.fitFileType, ft == fileType else { return nil }
+            return FileEntry(index: entry.fileIndex, fileType: ft, size: entry.fileSize, date: entry.date)
+        }
+    }
+
     // MARK: - Filter handshake (watch-initiated path only)
 
     private func sendFilterAndWait() async throws {

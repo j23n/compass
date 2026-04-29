@@ -14,6 +14,7 @@ struct CourseDetailView: View {
     @State private var uploadError: String?
     @State private var isRenaming = false
     @State private var draftName = ""
+    @State private var watchPresence: Bool? = nil  // nil=unknown, true=on watch, false=not found
 
     init(course: Course) {
         self.course = course
@@ -67,6 +68,9 @@ struct CourseDetailView: View {
                 }
             }
         }
+        .task {
+            watchPresence = await syncCoordinator.checkCourseOnWatch(course: course)
+        }
         .alert("Rename Course", isPresented: $isRenaming) {
             TextField("Name", text: $draftName)
             Button("Save") {
@@ -102,16 +106,19 @@ struct CourseDetailView: View {
     private var uploadSection: some View {
         VStack(spacing: 12) {
             let isConnected = {
-                if case .connected = syncCoordinator.connectionState {
-                    return true
-                }
+                if case .connected = syncCoordinator.connectionState { return true }
                 return false
             }()
+
+            // Watch presence indicator (shown when we know the state)
+            if course.uploadedToWatch {
+                watchStatusRow(isConnected: isConnected)
+            }
 
             Button(action: performUpload) {
                 HStack {
                     Image(systemName: "arrow.up.doc.fill")
-                    Text("Upload to Watch")
+                    Text(course.uploadedToWatch ? "Re-upload to Watch" : "Upload to Watch")
                 }
                 .frame(maxWidth: .infinity)
                 .padding()
@@ -135,31 +142,63 @@ struct CourseDetailView: View {
                     .frame(maxWidth: .infinity, alignment: .center)
             }
 
-            // Status indicator
             if case .syncing = syncCoordinator.state {
                 HStack(spacing: 8) {
-                    ProgressView()
-                        .scaleEffect(0.8)
+                    ProgressView().scaleEffect(0.8)
                     Text("Uploading...")
                         .font(.caption)
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
             } else if case .completed = syncCoordinator.state {
                 HStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green)
-                    Text("Uploaded")
+                    Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
+                    Text("Uploaded successfully")
                         .font(.caption)
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
+                .onAppear {
+                    watchPresence = true
+                }
             }
         }
+    }
+
+    @ViewBuilder
+    private func watchStatusRow(isConnected: Bool) -> some View {
+        HStack(spacing: 8) {
+            switch watchPresence {
+            case .none:
+                if isConnected {
+                    ProgressView().scaleEffect(0.7)
+                    Text("Checking watch…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Image(systemName: "applewatch").foregroundStyle(.secondary)
+                    if let date = course.lastUploadDate {
+                        Text("Last uploaded \(date.formatted(date: .abbreviated, time: .omitted))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            case .some(true):
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                Text("On your watch")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            case .some(false):
+                Image(systemName: "exclamationmark.circle").foregroundStyle(.orange)
+                Text("Not found on watch")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
     }
 
     private func performUpload() {
         uploadError = nil
 
-        // Convert CourseWaypoint to FITCourseWaypoint
         let fitWaypoints = course.waypoints.sorted { $0.order < $1.order }.map { waypoint in
             FITCourseWaypoint(
                 latitude: waypoint.latitude,
@@ -170,24 +209,45 @@ struct CourseDetailView: View {
             )
         }
 
-        // Encode course to FIT
         let fitData = CourseFITEncoder.encode(
             name: course.name,
+            sport: course.sport.fitSportCode,
             waypoints: fitWaypoints,
             totalDistance: course.totalDistance
         )
 
-        // Write to temp file
-        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "\(course.name.replacingOccurrences(of: " ", with: "_")).fit"
-        )
+        let safeName = sanitizeFilename(course.name)
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("\(safeName).fit")
 
         do {
             try fitData.write(to: tempURL)
-            syncCoordinator.uploadCourse(fitURL: tempURL)
+            watchPresence = nil
+            syncCoordinator.uploadCourse(fitURL: tempURL, fitSize: fitData.count, course: course)
         } catch {
             uploadError = error.localizedDescription
         }
+    }
+
+    /// Build a filesystem-safe filename: keep alphanumerics, collapse runs of
+    /// other chars into a single underscore, trim leading/trailing underscores,
+    /// fall back to "course" if the result is empty.
+    private func sanitizeFilename(_ raw: String) -> String {
+        let allowed = Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-")
+        var out = ""
+        var lastWasUnderscore = false
+        for ch in raw {
+            if allowed.contains(ch) {
+                out.append(ch)
+                lastWasUnderscore = false
+            } else if !lastWasUnderscore {
+                out.append("_")
+                lastWasUnderscore = true
+            }
+        }
+        let trimmed = out.trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+        let capped = String(trimmed.prefix(40))
+        return capped.isEmpty ? "course" : capped
     }
 }
 
@@ -211,6 +271,10 @@ struct StatsGrid: View {
                     value: String(format: "%.1f", course.totalDistance / 1000),
                     unit: "km"
                 )
+                StatCell(
+                    title: "Est. Time",
+                    value: formattedDuration(course.estimatedDuration)
+                )
                 if let ascent = course.totalAscent {
                     StatCell(
                         title: "Ascent",
@@ -224,6 +288,12 @@ struct StatsGrid: View {
                 )
             }
         }
+    }
+
+    private func formattedDuration(_ seconds: TimeInterval) -> String {
+        let h = Int(seconds) / 3600
+        let m = (Int(seconds) % 3600) / 60
+        return h > 0 ? "\(h)h \(m)m" : "\(m)m"
     }
 }
 

@@ -554,7 +554,8 @@ final class SyncCoordinator {
         }
     }
 
-    func uploadCourse(fitURL: URL) {
+    /// - Parameter fitSize: Byte count of the encoded FIT — stored as a stable watch-side identifier.
+    func uploadCourse(fitURL: URL, fitSize: Int, course: Course) {
         guard case .idle = state else {
             AppLogger.sync.warning("Upload requested but already in state: \(String(describing: self.state))")
             return
@@ -563,13 +564,22 @@ final class SyncCoordinator {
         AppLogger.sync.info("Starting course upload")
         state = .syncing(description: "Uploading course...")
 
+        do {
+            let staged = try CourseFileStore.shared.save(from: fitURL)
+            AppLogger.sync.info("Staged course FIT for inspection: \(staged.lastPathComponent)")
+        } catch {
+            AppLogger.sync.warning("Failed to stage course FIT: \(error.localizedDescription)")
+        }
+
         syncTask = Task {
             do {
-                try await deviceManager.uploadCourse(fitURL)
-                AppLogger.sync.info("Course uploaded successfully")
+                let fileIndex = try await deviceManager.uploadCourse(fitURL)
+                AppLogger.sync.info("Course uploaded successfully (fileIndex=\(fileIndex), size=\(fitSize)B)")
+                course.uploadedToWatch = true
+                course.lastUploadDate = Date()
+                course.watchFITSize = fitSize
                 state = .completed(fileCount: 1)
 
-                // Reset to idle after a delay
                 try? await Task.sleep(for: .seconds(3))
                 state = .idle
 
@@ -579,6 +589,23 @@ final class SyncCoordinator {
                 try? await Task.sleep(for: .seconds(5))
                 state = .idle
             }
+        }
+    }
+
+    /// Check whether the course's file is still present on the watch.
+    /// Matches by FIT byte size, which is stable even after the watch renames/reindexes the file.
+    /// Returns `nil` if not connected or the directory query failed.
+    func checkCourseOnWatch(course: Course) async -> Bool? {
+        guard case .connected = connectionState else { return nil }
+        guard let fitSize = course.watchFITSize else { return nil }
+        do {
+            let files = try await deviceManager.listCourseFiles()
+            let found = files.contains { Int($0.size) == fitSize }
+            if !found { course.uploadedToWatch = false }
+            return found
+        } catch {
+            AppLogger.sync.warning("Course presence check failed: \(error.localizedDescription)")
+            return nil
         }
     }
 }

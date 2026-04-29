@@ -39,7 +39,12 @@ public protocol DeviceManagerProtocol: Sendable {
 
     /// Upload a course FIT file to the connected device.
     /// - Parameter url: Local URL of the FIT file to upload.
-    func uploadCourse(_ url: URL) async throws
+    /// - Returns: The file index the watch assigned; store it for later presence checks.
+    func uploadCourse(_ url: URL) async throws -> UInt16
+
+    /// Download the watch's root directory and return all course-file entries.
+    /// Read-only — does not archive files or send SYNC_COMPLETE.
+    func listCourseFiles() async throws -> [FileEntry]
 
     /// Whether a device is currently connected and authenticated.
     var isConnected: Bool { get async }

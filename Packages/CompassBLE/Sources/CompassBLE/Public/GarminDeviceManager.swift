@@ -570,10 +570,20 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
         return try await task.value
     }
 
-    public func uploadCourse(_ url: URL) async throws {
+    public func uploadCourse(_ url: URL) async throws -> UInt16 {
         let data = try Data(contentsOf: url)
-        let session = FileUploadSession(client: gfdiClient, maxPacketSize: 375)
-        try await session.upload(data: data, progress: nil)
+        let session = FileUploadSession(client: gfdiClient, maxPacketSize: maxPacketSize)
+        return try await session.upload(data: data, progress: nil)
+    }
+
+    public func listCourseFiles() async throws -> [FileEntry] {
+        guard _isConnected else { throw SyncError.notConnected }
+        let client = gfdiClient
+        let pktSize = maxPacketSize
+        return try await Task {
+            let session = FileSyncSession(client: client, maxPacketSize: pktSize)
+            return try await session.listFiles(ofType: .course)
+        }.value
     }
 
     // MARK: - Properties

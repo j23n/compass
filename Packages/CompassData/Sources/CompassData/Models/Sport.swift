@@ -20,4 +20,19 @@ public enum Sport: String, Codable, Sendable, CaseIterable {
         case .other:   "figure.mixed.cardio"
         }
     }
+
+    /// FIT SDK `sport` enum value, used in FIT `course` and `session` messages.
+    public var fitSportCode: UInt8 {
+        switch self {
+        case .running:  1
+        case .cycling:  2
+        case .swimming: 5
+        case .walking:  11
+        case .hiking:   17
+        case .strength: 10  // training
+        case .yoga:     43
+        case .cardio:   0   // generic
+        case .other:    0   // generic
+        }
+    }
 }

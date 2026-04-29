@@ -253,6 +253,12 @@ struct SettingsView: View {
             } label: {
                 Label("FIT Files", systemImage: "doc.badge.arrow.up")
             }
+
+            NavigationLink {
+                CourseFilesView()
+            } label: {
+                Label("Course Files", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+            }
         } header: {
             Text("Developer")
         }
