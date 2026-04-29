@@ -1,0 +1,542 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		4A667935CCA7EFCBD4ED46F4 /* RingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 374694B7478BB4C57955778B /* RingsView.swift */; };
+		61A88EF63EA2F637A75C9F9C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = DBEC7B5FBC8872FA5D8327E8 /* Assets.xcassets */; };
+		61F53E6DCCDA62783431CF91 /* CompassFIT in Frameworks */ = {isa = PBXBuildFile; productRef = 33C7E21056FE1E458979A9F9 /* CompassFIT */; };
+		828D76A8788E378DD151BA9A /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE68E6FEB88696AB9D459324 /* ContentView.swift */; };
+		880E3114FC1EE7EBDA2ACA59 /* HealthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5512F60331520C299D42F604 /* HealthView.swift */; };
+		8B709A7D7D4E459CD7006768 /* TodayViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35B616B28C57B7C5DA43CA6B /* TodayViewModel.swift */; };
+		8E75DC4DB5B661073E88C849 /* RingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 922D24C67232B7C668C51066 /* RingView.swift */; };
+		A091498A9A8F5A6160133675 /* StatCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 613CE3D8C070B65F4F40AE6E /* StatCell.swift */; };
+		A2659E0867E505D218C2431A /* HealthDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BA0E1E132468A60CCF51A13 /* HealthDetailView.swift */; };
+		A644476816FC419C0BE661DB /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35A2BA7F0CFC5430A008040A /* SettingsView.swift */; };
+		AF25231DC99F0BBD1F7EC8B4 /* TrendChartView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 054458D3773E3474BBDAAD23 /* TrendChartView.swift */; };
+		BD700844C17010534F502A34 /* SyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D3DBAB5FAC5E338AC5A1FE4 /* SyncCoordinator.swift */; };
+		C02EBFDE143AA0B80CFB0438 /* SleepStageBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F090E1EB465CC11DF2F62948 /* SleepStageBar.swift */; };
+		C50098134F965E6A549044FE /* CompassData in Frameworks */ = {isa = PBXBuildFile; productRef = 9049E5DD8AE098DC4CB2913F /* CompassData */; };
+		C92B21FA835C4672774DF1FC /* ActivityDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B52DC488550FEC3D8883493F /* ActivityDetailView.swift */; };
+		CB75462399EB8A572C07FBB6 /* AppLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE005D595AC07B9BC7ADC5B9 /* AppLogger.swift */; };
+		D2AAFA5DDAEF264231A1C688 /* MetricCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDC2039A1B29236241978E6E /* MetricCard.swift */; };
+		D5579587E78255DF45CB1E4A /* CompassApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63F7DF49430F745E634711B5 /* CompassApp.swift */; };
+		D9D8815C4107DF4474DC2FD4 /* CompassBLE in Frameworks */ = {isa = PBXBuildFile; productRef = 90472CD940C8E4FF9965B26F /* CompassBLE */; };
+		DD4309AD30E777BC4EC503B3 /* SparklineChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0F493523C31C25C4ADDED1A /* SparklineChart.swift */; };
+		EB1A9E08AF60C4721170D17A /* DependencyContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DB74BA52726F9C5ECBDF01D /* DependencyContainer.swift */; };
+		F2DD6E94F0E70496C10671A5 /* TodayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E894DAB2813A23F28CC0DEE /* TodayView.swift */; };
+		F86EEC69C82FF51A684A3CAD /* HealthViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAA923EB4B4F6E0D7F2A0386 /* HealthViewModel.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		054458D3773E3474BBDAAD23 /* TrendChartView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrendChartView.swift; sourceTree = "<group>"; };
+		0DB74BA52726F9C5ECBDF01D /* DependencyContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DependencyContainer.swift; sourceTree = "<group>"; };
+		1BF57BA01F2477CA55BC7407 /* Compass.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Compass.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		2D3DBAB5FAC5E338AC5A1FE4 /* SyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncCoordinator.swift; sourceTree = "<group>"; };
+		35A2BA7F0CFC5430A008040A /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		35B616B28C57B7C5DA43CA6B /* TodayViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayViewModel.swift; sourceTree = "<group>"; };
+		374694B7478BB4C57955778B /* RingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RingsView.swift; sourceTree = "<group>"; };
+		5512F60331520C299D42F604 /* HealthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthView.swift; sourceTree = "<group>"; };
+		613CE3D8C070B65F4F40AE6E /* StatCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatCell.swift; sourceTree = "<group>"; };
+		63F7DF49430F745E634711B5 /* CompassApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompassApp.swift; sourceTree = "<group>"; };
+		6E894DAB2813A23F28CC0DEE /* TodayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayView.swift; sourceTree = "<group>"; };
+		7BA0E1E132468A60CCF51A13 /* HealthDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthDetailView.swift; sourceTree = "<group>"; };
+		922D24C67232B7C668C51066 /* RingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RingView.swift; sourceTree = "<group>"; };
+		97BAF900BBD17FE3F207727E /* CompassFIT */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CompassFIT; path = Packages/CompassFIT; sourceTree = SOURCE_ROOT; };
+		A0F493523C31C25C4ADDED1A /* SparklineChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SparklineChart.swift; sourceTree = "<group>"; };
+		B52DC488550FEC3D8883493F /* ActivityDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityDetailView.swift; sourceTree = "<group>"; };
+		BE005D595AC07B9BC7ADC5B9 /* AppLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLogger.swift; sourceTree = "<group>"; };
+		D4A60816094EBB3079061BCC /* CompassData */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CompassData; path = Packages/CompassData; sourceTree = SOURCE_ROOT; };
+		DBEC7B5FBC8872FA5D8327E8 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		DDC2039A1B29236241978E6E /* MetricCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetricCard.swift; sourceTree = "<group>"; };
+		DE68E6FEB88696AB9D459324 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		EDE0F0D06A2C4BAA19A4E830 /* CompassBLE */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CompassBLE; path = Packages/CompassBLE; sourceTree = SOURCE_ROOT; };
+		F090E1EB465CC11DF2F62948 /* SleepStageBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepStageBar.swift; sourceTree = "<group>"; };
+		FAA923EB4B4F6E0D7F2A0386 /* HealthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthViewModel.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		D6780EEEF1107435F457DF78 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C50098134F965E6A549044FE /* CompassData in Frameworks */,
+				61F53E6DCCDA62783431CF91 /* CompassFIT in Frameworks */,
+				D9D8815C4107DF4474DC2FD4 /* CompassBLE in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		2AD10C11E2ED5A662B5433A6 /* Health */ = {
+			isa = PBXGroup;
+			children = (
+				7BA0E1E132468A60CCF51A13 /* HealthDetailView.swift */,
+				5512F60331520C299D42F604 /* HealthView.swift */,
+			);
+			path = Health;
+			sourceTree = "<group>";
+		};
+		3B4FA5BB15CFFD9C5D747DED /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				DDC2039A1B29236241978E6E /* MetricCard.swift */,
+				374694B7478BB4C57955778B /* RingsView.swift */,
+				922D24C67232B7C668C51066 /* RingView.swift */,
+				A0F493523C31C25C4ADDED1A /* SparklineChart.swift */,
+				054458D3773E3474BBDAAD23 /* TrendChartView.swift */,
+			);
+			path = Components;
+			sourceTree = "<group>";
+		};
+		475DE784CCD6F82F2508AE28 /* Today */ = {
+			isa = PBXGroup;
+			children = (
+				F090E1EB465CC11DF2F62948 /* SleepStageBar.swift */,
+				6E894DAB2813A23F28CC0DEE /* TodayView.swift */,
+			);
+			path = Today;
+			sourceTree = "<group>";
+		};
+		5649145C23C845B9E02D8D72 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				DBEC7B5FBC8872FA5D8327E8 /* Assets.xcassets */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		62307A27EEF9FCEB10E09F4F /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				35A2BA7F0CFC5430A008040A /* SettingsView.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+		8B3D2057885D85B55924CA22 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				BE005D595AC07B9BC7ADC5B9 /* AppLogger.swift */,
+				63F7DF49430F745E634711B5 /* CompassApp.swift */,
+				0DB74BA52726F9C5ECBDF01D /* DependencyContainer.swift */,
+				2D3DBAB5FAC5E338AC5A1FE4 /* SyncCoordinator.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		90D994164E234BBB50FCB627 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				DE68E6FEB88696AB9D459324 /* ContentView.swift */,
+				D918AD50AA9DBC431BC314E4 /* Activity */,
+				2AD10C11E2ED5A662B5433A6 /* Health */,
+				62307A27EEF9FCEB10E09F4F /* Settings */,
+				475DE784CCD6F82F2508AE28 /* Today */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		9CA0E694D868C9C290A7043F /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				FAA923EB4B4F6E0D7F2A0386 /* HealthViewModel.swift */,
+				35B616B28C57B7C5DA43CA6B /* TodayViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		C6DD3C1D2CFB12FABAF3C401 = {
+			isa = PBXGroup;
+			children = (
+				EE7681F47822DC62F5210DDF /* Compass */,
+				F402BF037897FEB15FFE5C17 /* Packages */,
+				FB16DD71CBDF85F8C3F2A524 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		D918AD50AA9DBC431BC314E4 /* Activity */ = {
+			isa = PBXGroup;
+			children = (
+				B52DC488550FEC3D8883493F /* ActivityDetailView.swift */,
+				613CE3D8C070B65F4F40AE6E /* StatCell.swift */,
+			);
+			path = Activity;
+			sourceTree = "<group>";
+		};
+		EE7681F47822DC62F5210DDF /* Compass */ = {
+			isa = PBXGroup;
+			children = (
+				8B3D2057885D85B55924CA22 /* App */,
+				3B4FA5BB15CFFD9C5D747DED /* Components */,
+				5649145C23C845B9E02D8D72 /* Resources */,
+				9CA0E694D868C9C290A7043F /* ViewModels */,
+				90D994164E234BBB50FCB627 /* Views */,
+			);
+			path = Compass;
+			sourceTree = "<group>";
+		};
+		F402BF037897FEB15FFE5C17 /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				EDE0F0D06A2C4BAA19A4E830 /* CompassBLE */,
+				D4A60816094EBB3079061BCC /* CompassData */,
+				97BAF900BBD17FE3F207727E /* CompassFIT */,
+			);
+			path = Packages;
+			sourceTree = "<group>";
+		};
+		FB16DD71CBDF85F8C3F2A524 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				1BF57BA01F2477CA55BC7407 /* Compass.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		5C23284A2EB3EEBECE44ACBF /* Compass */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 736BBCFB300E9B48B77F5B03 /* Build configuration list for PBXNativeTarget "Compass" */;
+			buildPhases = (
+				31AD7BE818A4D574E09F04AD /* Sources */,
+				E8CF93C8F5EF3D33D8F86180 /* Resources */,
+				D6780EEEF1107435F457DF78 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Compass;
+			packageProductDependencies = (
+				9049E5DD8AE098DC4CB2913F /* CompassData */,
+				33C7E21056FE1E458979A9F9 /* CompassFIT */,
+				90472CD940C8E4FF9965B26F /* CompassBLE */,
+			);
+			productName = Compass;
+			productReference = 1BF57BA01F2477CA55BC7407 /* Compass.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		C1B9F3454E75584C81FDDD47 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1620;
+				TargetAttributes = {
+					5C23284A2EB3EEBECE44ACBF = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = BD0E62C7DB2D7B485D93FFA2 /* Build configuration list for PBXProject "Compass" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = C6DD3C1D2CFB12FABAF3C401;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				BA4E47DA80F640975AE997D4 /* XCLocalSwiftPackageReference "Packages/CompassBLE" */,
+				91F06E0D11AEA28514EABB76 /* XCLocalSwiftPackageReference "Packages/CompassData" */,
+				E462AF2864ECD67AEE9D98D3 /* XCLocalSwiftPackageReference "Packages/CompassFIT" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = FB16DD71CBDF85F8C3F2A524 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				5C23284A2EB3EEBECE44ACBF /* Compass */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		E8CF93C8F5EF3D33D8F86180 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				61A88EF63EA2F637A75C9F9C /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		31AD7BE818A4D574E09F04AD /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C92B21FA835C4672774DF1FC /* ActivityDetailView.swift in Sources */,
+				CB75462399EB8A572C07FBB6 /* AppLogger.swift in Sources */,
+				D5579587E78255DF45CB1E4A /* CompassApp.swift in Sources */,
+				828D76A8788E378DD151BA9A /* ContentView.swift in Sources */,
+				EB1A9E08AF60C4721170D17A /* DependencyContainer.swift in Sources */,
+				A2659E0867E505D218C2431A /* HealthDetailView.swift in Sources */,
+				880E3114FC1EE7EBDA2ACA59 /* HealthView.swift in Sources */,
+				F86EEC69C82FF51A684A3CAD /* HealthViewModel.swift in Sources */,
+				D2AAFA5DDAEF264231A1C688 /* MetricCard.swift in Sources */,
+				8E75DC4DB5B661073E88C849 /* RingView.swift in Sources */,
+				4A667935CCA7EFCBD4ED46F4 /* RingsView.swift in Sources */,
+				A644476816FC419C0BE661DB /* SettingsView.swift in Sources */,
+				C02EBFDE143AA0B80CFB0438 /* SleepStageBar.swift in Sources */,
+				DD4309AD30E777BC4EC503B3 /* SparklineChart.swift in Sources */,
+				A091498A9A8F5A6160133675 /* StatCell.swift in Sources */,
+				BD700844C17010534F502A34 /* SyncCoordinator.swift in Sources */,
+				F2DD6E94F0E70496C10671A5 /* TodayView.swift in Sources */,
+				8B709A7D7D4E459CD7006768 /* TodayViewModel.swift in Sources */,
+				AF25231DC99F0BBD1F7EC8B4 /* TrendChartView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		0676F4EAFF050A3C05BB9D57 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		0CB13B12A95D3C57F264CD14 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HN22UT76EY;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Compass;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Compass connects to your fitness watch to sync activity and health data.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UIBackgroundModes = "bluetooth-central";
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.j23n.compass;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		2BBFBFAF960935E7517992A8 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		7B68ABF8F4C9DDD0C6F14DA5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HN22UT76EY;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Compass;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Compass connects to your fitness watch to sync activity and health data.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UIBackgroundModes = "bluetooth-central";
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.j23n.compass;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		736BBCFB300E9B48B77F5B03 /* Build configuration list for PBXNativeTarget "Compass" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7B68ABF8F4C9DDD0C6F14DA5 /* Debug */,
+				0CB13B12A95D3C57F264CD14 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		BD0E62C7DB2D7B485D93FFA2 /* Build configuration list for PBXProject "Compass" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0676F4EAFF050A3C05BB9D57 /* Debug */,
+				2BBFBFAF960935E7517992A8 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		91F06E0D11AEA28514EABB76 /* XCLocalSwiftPackageReference "Packages/CompassData" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/CompassData;
+		};
+		BA4E47DA80F640975AE997D4 /* XCLocalSwiftPackageReference "Packages/CompassBLE" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/CompassBLE;
+		};
+		E462AF2864ECD67AEE9D98D3 /* XCLocalSwiftPackageReference "Packages/CompassFIT" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/CompassFIT;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		33C7E21056FE1E458979A9F9 /* CompassFIT */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CompassFIT;
+		};
+		90472CD940C8E4FF9965B26F /* CompassBLE */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CompassBLE;
+		};
+		9049E5DD8AE098DC4CB2913F /* CompassData */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = CompassData;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = C1B9F3454E75584C81FDDD47 /* Project object */;
+}

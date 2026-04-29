@@ -1,0 +1,70 @@
+{
+  "version": "0.1.0",
+  "source": "HarryOnline Garmin FIT extensions spreadsheet (placeholder values)",
+  "messages": {
+    "140": {
+      "name": "monitoring_hr",
+      "fields": {
+        "253": { "name": "timestamp", "type": "date_time", "units": "s" },
+        "1": { "name": "heart_rate", "type": "uint8", "units": "bpm" }
+      }
+    },
+    "211": {
+      "name": "monitoring_info",
+      "fields": {
+        "253": { "name": "timestamp", "type": "date_time", "units": "s" },
+        "0": { "name": "cycles", "type": "uint32", "units": "cycles" },
+        "3": { "name": "active_calories", "type": "uint16", "units": "kcal" }
+      }
+    },
+    "273": {
+      "name": "sleep_data_info",
+      "fields": {
+        "253": { "name": "timestamp", "type": "date_time", "units": "s" },
+        "0": { "name": "sleep_score", "type": "uint8", "units": "" },
+        "2": { "name": "start_time", "type": "date_time", "units": "s" },
+        "3": { "name": "end_time", "type": "date_time", "units": "s" }
+      }
+    },
+    "275": {
+      "name": "sleep_stage",
+      "fields": {
+        "253": { "name": "timestamp", "type": "date_time", "units": "s" },
+        "0": { "name": "stage", "type": "enum", "units": "" },
+        "1": { "name": "duration", "type": "uint32", "units": "s" }
+      }
+    },
+    "346": {
+      "name": "body_battery",
+      "fields": {
+        "253": { "name": "timestamp", "type": "date_time", "units": "s" },
+        "0": { "name": "level", "type": "uint8", "units": "" },
+        "1": { "name": "charged", "type": "int8", "units": "" },
+        "2": { "name": "drained", "type": "int8", "units": "" }
+      }
+    },
+    "369": {
+      "name": "training_readiness",
+      "fields": {
+        "253": { "name": "timestamp", "type": "date_time", "units": "s" },
+        "0": { "name": "readiness_score", "type": "uint8", "units": "" }
+      }
+    },
+    "382": {
+      "name": "sleep_restless_moments",
+      "fields": {
+        "253": { "name": "timestamp", "type": "date_time", "units": "s" },
+        "0": { "name": "duration", "type": "uint16", "units": "s" }
+      }
+    },
+    "412": {
+      "name": "nap",
+      "fields": {
+        "253": { "name": "timestamp", "type": "date_time", "units": "s" },
+        "0": { "name": "duration", "type": "uint32", "units": "s" },
+        "1": { "name": "start_time", "type": "date_time", "units": "s" },
+        "2": { "name": "end_time", "type": "date_time", "units": "s" }
+      }
+    }
+  }
+}

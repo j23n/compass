@@ -1,0 +1,55 @@
+name: Compass
+options:
+  bundleIdPrefix: com.compass
+  deploymentTarget:
+    iOS: "18.0"
+  xcodeVersion: "16.2"
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+
+packages:
+  CompassData:
+    path: Packages/CompassData
+  CompassFIT:
+    path: Packages/CompassFIT
+  CompassBLE:
+    path: Packages/CompassBLE
+
+targets:
+  Compass:
+    type: application
+    platform: iOS
+    sources:
+      - path: Compass
+        excludes:
+          - "**/.DS_Store"
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Compass
+        INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: "Compass connects to your fitness watch to sync activity and health data."
+        INFOPLIST_KEY_UIBackgroundModes: bluetooth-central
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: 1
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_PREVIEWS: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.compass.app
+      configs:
+        Debug:
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) DEBUG"
+          SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+        Release:
+          SWIFT_COMPILATION_MODE: wholemodule
+    dependencies:
+      - package: CompassData
+      - package: CompassFIT
+      - package: CompassBLE
