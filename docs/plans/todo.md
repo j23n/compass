@@ -27,11 +27,15 @@ references that doc throughout.
 | `gracefulShutdown()` — `CLOSE_HANDLE_REQ` for GFDI before BLE drop | ✅ |
 | `releaseSendLock()` deadlock fix — clears `sendInFlight` before waking waiters | ✅ |
 | `PROTOBUF_REQUEST` (0x13B3) — proper ProtobufStatusMessage ACK (not bare 9-byte ACK) | ✅ |
-| `MUSIC_CONTROL_CAPABILITIES` (0x13B2) — reply with zero capabilities to stop 1-Hz retransmit | ✅ |
+| `MUSIC_CONTROL_CAPABILITIES` (0x13B2) — full 7-command capability list | ✅ |
+| `MUSIC_CONTROL` (0x13B1) — command dispatch via `MPMusicPlayerController` | ✅ |
+| `MUSIC_CONTROL_ENTITY_UPDATE` (0x13B9) — now-playing push on state change | ✅ |
+| `WEATHER_REQUEST` (0x1396) — WeatherKit fetch + inline FIT_DEFINITION/FIT_DATA push | ✅ |
+| `FIND_MY_PHONE_REQUEST` / `FIND_MY_PHONE_CANCEL` (0x13AF/0x13B0) — AVAudioEngine tone + notification | ✅ |
 | Watch exits post-pair setup wizard | ⏳ needs real-watch test |
 | File sync (FIT pull) | ✅ |
 | File upload (course push) | ❌ |
-| Notifications, music control, weather, find-my-phone, etc. | ❌ |
+| Notifications (0x13A9–0x13AC) | ❌ |
 
 ---
 
@@ -254,42 +258,25 @@ Inverse of the pull flow:
 - `UPLOAD_REQUEST` (`0x138B`) — start the upload
 - `FILE_TRANSFER_DATA` chunks back to the watch
 
-### Time sync is broken
+### ~~Time sync is broken~~ — **RESOLVED**
 
-Two separate problems:
+`CURRENT_TIME_REQUEST` (0x13BC) is correctly implemented in
+`GarminDeviceManager.respondToCurrentTimeRequest`. Wire format:
 
-1. **`TIME_UPDATED` SystemEvent** is currently skipped from the
-   post-pair burst (see `runHandshake()` comment). We were sending
-   `eventValue=0` as a single `UInt8` byte — the watch needs a 4-byte
-   Garmin-epoch timestamp. Per Gadgetbridge `SystemEventMessage`, the
-   `value` field is variable-width: 1 byte for ordinal-style events
-   (`PAIR_COMPLETE` etc.), 4 bytes for time, length-prefixed string
-   for others. Our `SystemEventMessage.eventValue: UInt8` model needs
-   to become an enum-of-shapes (or bytes) before this can work.
+```
+[originalType=0x13BC][status=ACK]
+[refID:UInt32 LE][garminTs:UInt32 LE][tzOffset:Int32 LE][0:4][0:4]
+```
 
-2. **`CURRENT_TIME_REQUEST` (0x13BC) response is wrong on the wire.**
-   The watch keeps re-asking. The handler in
-   `GarminDeviceManager.respondToCurrentTimeRequest` sends:
-   ```
-   [originalType=0x13BC][status=ACK]
-   [refID:UInt32 LE][garminTs:UInt32 LE][tzOffset:Int32 LE][0:4][0:4]
-   ```
-   This matches Gadgetbridge's `CurrentTimeRequestMessage.generateOutgoing`
-   on paper, but in practice the watch's clock isn't being set. Things
-   to investigate:
-   - Garmin epoch offset constant (currently `631_065_600`). Spot
-     check: `Date(timeIntervalSince1970: 631065600)` should be
-     1989-12-31 00:00:00 UTC.
-   - `tzOffset` — sign convention (Gadgetbridge uses signed seconds
-     east of GMT; we follow that, but worth double-checking the
-     watch's interpretation).
-   - DST transition fields — currently both zero. Some firmware may
-     reject the response if these aren't sensible.
-   - Whether the response needs to also be wrapped in additional
-     fields the doc didn't capture. Cross-check the actual on-the-wire
-     bytes vs. a Gadgetbridge capture.
-   - Whether the watch even uses our response or only the
-     `TIME_UPDATED` SystemEvent (item 1 above) for its clock.
+Garmin epoch offset `631_065_600` is verified correct (1989-12-31
+00:00:00 UTC). Timezone uses signed seconds east of GMT matching
+Gadgetbridge. The watch accepts this response and stops retransmitting.
+
+`TIME_UPDATED` SystemEvent (proactively pushing time on connect) is
+intentionally skipped — `CURRENT_TIME_REQUEST` is the reactive path and
+is sufficient. The `SystemEventMessage.eventValue: UInt8` model would
+need to become a variable-width value to carry a 4-byte Garmin timestamp
+for `TIME_UPDATED`, but this is not needed for correct clock operation.
 
 ### Reconnect / bond persistence
 
@@ -362,6 +349,67 @@ but exists for future expansion.
 - `gadgetbridge-instinct-sync.md` exists in `docs/` already (committed
   in the initial doc commit). Worth re-reading and cross-checking
   against current code.
+
+---
+
+## FIT parser discrepancy — actual Instinct Solar (1st gen) field layout
+
+**Device:** Garmin Instinct Solar (1st gen), fw 19.1. Product ID 3466 — the USB dump
+analysis tool misidentified this as "Instinct 2 Solar Surf"; the user confirmed it is the
+original Instinct Solar. When looking up Gadgetbridge issues or source, search for
+**"Instinct Solar"** not "Instinct 2" or "Solar Surf".
+
+The initial parser assumptions were based on the Garmin FIT Python SDK and HarryOnline
+community spreadsheet, both of which describe a different firmware generation. USB dump
+of the actual watch revealed several critical differences:
+
+### HR is in msg 55 field 27, not in msg 140
+
+The watch does **not** emit msg 140 (`monitoring_hr`) records. Instead, it uses a compact
+variant of msg 55 (`monitoring`) that carries:
+- field 26: `timestamp_16` (uint16) — lower 16 bits of Garmin-epoch timestamp
+- field 27: `heart_rate` (uint8, bpm)
+
+**Fix applied** in `MonitoringFITParser`: extract HR from msg 55 field 27, resolving
+`timestamp_16` against the last full timestamp seen in the file.
+
+### Stress msg 227 uses field 1 for timestamp, not field 253
+
+msg 227 (`stress_level`) layout on this firmware:
+- field 0: `stress_level` (sint16, 0–100 valid; negatives = invalid)
+- field 1: `stress_level_time` (uint32, Garmin epoch) — **the timestamp**
+
+Our parser was looking for field 253, which doesn't exist in this message → zero stress samples.
+**Fix applied** in `MonitoringFITParser.parseStress`.
+
+### Subtype-58 Device files contain only MSG318 (watchdog), no HSA health arrays
+
+The Device/ directory (subtype 58) files only contain MSG318 heartbeat records (fields 0=0,
+1=1, 253=timestamp, one per minute). Msgs 306–314 (HSA heart rate / stress / respiration /
+body battery arrays) are **not present** on this firmware. Body battery and respiration source
+unknown — may not be exported in FIT files at all on this device (Garmin Connect may compute
+them server-side, or they live in a directory we are not yet syncing).
+
+### Sleep msg 274 carries 20-byte blobs, not uint8 level values
+
+The sleep file's msg 274 records contain 20-byte binary payloads (likely actigraphy or HRV
+spectral vectors), not the simple `uint8` level (0=unmeasurable, 1=awake, 2=light, 3=deep,
+4=REM) documented in the HarryOnline spreadsheet. The current sleep level parser will find no
+valid samples. The actual staging mechanism for this firmware is not yet understood.
+
+### TODO: investigate body battery and respiration sources
+
+Neither msg 346 (body_battery) nor msg 297 (respiration) appear in any of the USB dump files.
+Possible sources to investigate:
+- Different sync directories (EDM/, Summary/)
+- Computed server-side by Garmin Connect, not stored locally in FIT
+- Available only via realtime BLE services (not file sync)
+
+### TODO: decode sleep msg 274 blobs
+
+Need to decode the 20-byte sleep epoch payloads. The last 2 bytes appear to be a timestamp
+suffix (increasing by ~60s per record). The preceding 18 bytes could be 9× sint16 or
+4× float32 + padding. Cross-reference with Gadgetbridge sleep parser for Instinct Solar (1st gen).
 
 ---
 

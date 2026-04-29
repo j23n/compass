@@ -1686,6 +1686,14 @@ line-by-line against the GB reference above:
     `SYSTEM_EVENT(PAIR_COMPLETE, 0)` after the watch's CONFIGURATION is
     ACKed and echoed.
 
+14. **Compass sends `SETUP_WIZARD_SKIPPED (15)` instead of `SETUP_WIZARD_COMPLETE (14)`.**
+    GB always sends COMPLETE (14). Compass deviates intentionally: we don't yet implement
+    the `Smart.GdiSmartProto` protobuf RPC layer the watch expects after COMPLETE (settings
+    init, music caps, weather negotiation). Sending SKIPPED (15) convinces the watch's
+    setup state machine to dismiss the wizard without that round-trip. If you later
+    implement the full proto init sequence, switch back to COMPLETE (14).
+    See `GarminDeviceManager.swift:runHandshake` for the rationale comment.
+
 ---
 
 ## 16. Known Unknowns
