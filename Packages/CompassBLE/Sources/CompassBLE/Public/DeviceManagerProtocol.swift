@@ -47,4 +47,8 @@ public protocol DeviceManagerProtocol: Sendable {
     /// A stream that emits a new value whenever the connection state changes.
     /// Callers subscribe once and observe for the lifetime of the session.
     func connectionStateStream() -> AsyncStream<ConnectionState>
+
+    /// Send an arbitrary GFDI message to the connected device.
+    /// Throws if not connected or the BLE write fails.
+    func sendRaw(message: GFDIMessage) async throws
 }

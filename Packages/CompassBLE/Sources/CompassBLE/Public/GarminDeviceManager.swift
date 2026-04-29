@@ -34,12 +34,54 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
     /// Guards against concurrent syncs (phone-initiated cancels any watch-initiated task).
     private var activeSyncTask: Task<[URL], Error>?
 
+    // MARK: - Service Callbacks (set by the app layer after connect)
+
+    /// Called when the watch sends a WEATHER_REQUEST.  The closure should
+    /// return the FIT_DEFINITION + FIT_DATA messages to push, or throw to
+    /// silently skip (the watch retries automatically).
+    private var weatherProvider: (@Sendable (WeatherRequest) async throws -> [GFDIMessage])?
+
+    /// Called when the watch sends a MUSIC_CONTROL command.  Ordinal maps to
+    /// `GarminMusicControlCommand`.
+    private var musicCommandHandler: (@Sendable (UInt8) -> Void)?
+
+    /// Called when the watch sends FIND_MY_PHONE_REQUEST or FIND_MY_PHONE_CANCEL.
+    private var findMyPhoneHandler: (@Sendable (FindMyPhoneEvent) -> Void)?
+
+    /// Prevents overlapping WeatherKit fetches when the watch retransmits every 5 s.
+    private var weatherRequestInFlight = false
+
     public init() {
         let central = BluetoothCentral()
         let transport = MultiLinkTransport(central: central)
         self.central = central
         self.transport = transport
         self.gfdiClient = GFDIClient(transport: transport)
+    }
+
+    // MARK: - Service Callback Setters
+
+    public func setWeatherProvider(
+        _ provider: (@Sendable (WeatherRequest) async throws -> [GFDIMessage])?
+    ) {
+        weatherProvider = provider
+    }
+
+    public func setMusicCommandHandler(_ handler: (@Sendable (UInt8) -> Void)?) {
+        musicCommandHandler = handler
+    }
+
+    public func setFindMyPhoneHandler(_ handler: (@Sendable (FindMyPhoneEvent) -> Void)?) {
+        findMyPhoneHandler = handler
+    }
+
+    /// Push one or more MUSIC_CONTROL_ENTITY_UPDATE messages to the watch.
+    /// No-ops when not connected.
+    public func sendMusicEntityUpdate(_ messages: [GFDIMessage]) async {
+        guard _isConnected else { return }
+        for msg in messages {
+            try? await gfdiClient.send(message: msg)
+        }
     }
 
     // MARK: - Connection State Stream
@@ -166,7 +208,13 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
             }
 
         case .response:
-            BLELogger.gfdi.debug("Unsolicited RESPONSE")
+            if let decoded = try? GFDIResponse.decode(from: msg.payload), decoded.status != 0 {
+                BLELogger.gfdi.warning(
+                    "Unsolicited RESPONSE NACK: originalType=0x\(String(format: "%04X", decoded.originalType)) status=\(decoded.status)"
+                )
+            } else {
+                BLELogger.gfdi.debug("Unsolicited RESPONSE ACK")
+            }
 
         case .currentTimeRequest:
             await Self.respondToCurrentTimeRequest(msg, via: client)
@@ -191,13 +239,41 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
             try? await client.send(message: pbAck.toMessage())
 
         case .musicControlCapabilities:
-            BLELogger.gfdi.debug("MUSIC_CONTROL_CAPABILITIES — replying with no capabilities")
-            let musicAck = GFDIResponse(
+            let commands = GarminMusicControlCommand.allCases.map(\.rawValue)
+            BLELogger.gfdi.info("MUSIC_CONTROL_CAPABILITIES — advertising \(commands.count) commands")
+            var extra = Data()
+            extra.append(UInt8(commands.count))
+            extra.append(contentsOf: commands)
+            let capsAck = GFDIResponse(
                 originalType: .musicControlCapabilities,
                 status: .ack,
-                additionalPayload: Data([0x00])
+                additionalPayload: extra
             )
-            try? await client.send(message: musicAck.toMessage())
+            try? await client.send(message: capsAck.toMessage())
+
+        case .musicControl:
+            let ack = GFDIResponse(originalType: .musicControl, status: .ack)
+            try? await client.send(message: ack.toMessage())
+            if msg.payload.count >= 1 {
+                let ordinal = msg.payload[0]
+                BLELogger.gfdi.info("MUSIC_CONTROL command=\(ordinal)")
+                musicCommandHandler?(ordinal)
+            }
+
+        case .weatherRequest:
+            await handleWeatherRequest(msg)
+
+        case .findMyPhoneRequest:
+            BLELogger.gfdi.info("FIND_MY_PHONE_REQUEST")
+            let ack = GFDIResponse(originalType: .findMyPhoneRequest, status: .ack)
+            try? await client.send(message: ack.toMessage())
+            findMyPhoneHandler?(.started)
+
+        case .findMyPhoneCancel:
+            BLELogger.gfdi.info("FIND_MY_PHONE_CANCEL")
+            let ack = GFDIResponse(originalType: .findMyPhoneCancel, status: .ack)
+            try? await client.send(message: ack.toMessage())
+            findMyPhoneHandler?(.cancelled)
 
         case .synchronization:
             await handleSynchronizationMessage(msg)
@@ -246,6 +322,53 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
 
     private func clearActiveSyncTask() {
         activeSyncTask = nil
+    }
+
+    /// Handle a WEATHER_REQUEST from the watch.
+    ///
+    /// Parses the lat/lon/format payload, calls the injected `weatherProvider`
+    /// closure (which runs WeatherKit on the app layer), and sends the resulting
+    /// FIT_DEFINITION + FIT_DATA messages back inline.  Guards against concurrent
+    /// fetches: the watch retransmits every ~5 s and WeatherKit takes 1–3 s.
+    private func handleWeatherRequest(_ msg: GFDIMessage) async {
+        guard !weatherRequestInFlight else {
+            BLELogger.gfdi.debug("WEATHER_REQUEST: fetch already in flight, skipping duplicate")
+            return
+        }
+        guard let provider = weatherProvider else {
+            BLELogger.gfdi.debug("WEATHER_REQUEST: no provider set, ignoring")
+            return
+        }
+        guard let request = try? WeatherRequestParser.decode(from: msg.payload) else {
+            BLELogger.gfdi.warning("WEATHER_REQUEST: failed to parse payload (\(msg.payload.count) bytes)")
+            return
+        }
+        BLELogger.gfdi.info(
+            "WEATHER_REQUEST lat=\(String(format: "%.4f", request.latitude)) "
+          + "lon=\(String(format: "%.4f", request.longitude)) hours=\(request.hoursOfForecast)"
+        )
+
+        // ACK the WEATHER_REQUEST before sending FIT messages.  Without this
+        // the watch treats the FIT_DEFINITION / FIT_DATA pair as unrelated
+        // unsolicited messages and keeps retransmitting every 5 s.
+        let weatherAck = GFDIResponse(originalType: .weatherRequest, status: .ack)
+        try? await gfdiClient.send(message: weatherAck.toMessage())
+
+        weatherRequestInFlight = true
+        defer { weatherRequestInFlight = false }
+
+        do {
+            let fitMessages = try await provider(request)
+            for fitMsg in fitMessages {
+                let hex = fitMsg.payload.map { String(format: "%02X", $0) }.joined(separator: " ")
+                BLELogger.gfdi.debug("WEATHER FIT type=0x\(String(format: "%04X", fitMsg.type.rawValue)) payload[\(fitMsg.payload.count)]: \(hex)")
+                try await gfdiClient.send(message: fitMsg)
+            }
+            BLELogger.gfdi.info("WEATHER_REQUEST: pushed \(fitMessages.count) FIT messages")
+        } catch {
+            BLELogger.gfdi.error("WEATHER_REQUEST: provider error — \(error)")
+            // Silence: the watch will retry in ~5 s.
+        }
     }
 
     /// Reply to CURRENT_TIME_REQUEST with the current Garmin-epoch
@@ -441,4 +564,10 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
 
     public var isConnected: Bool { _isConnected }
     public var connectedDevice: PairedDevice? { _connectedDevice }
+
+    // MARK: - Raw Send
+
+    public func sendRaw(message: GFDIMessage) async throws {
+        try await gfdiClient.send(message: message)
+    }
 }

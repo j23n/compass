@@ -270,6 +270,10 @@ public actor MockGarminDevice: DeviceManagerProtocol {
         AsyncStream { _ in }
     }
 
+    public func sendRaw(message: GFDIMessage) async throws {
+        BLELogger.gfdi.debug("[Mock] sendRaw type=0x\(String(format: "%04X", message.type.rawValue)) payload=\(message.payload.count)B")
+    }
+
     // MARK: - Synthetic FIT Generation
 
     /// Generate a minimal synthetic FIT file.

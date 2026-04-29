@@ -32,6 +32,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Compass
         INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: "Compass connects to your fitness watch to sync activity and health data."
+        INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "Compass sends your location to the watch for sunrise/sunset and timezone."
         INFOPLIST_KEY_NSAppleMusicUsageDescription: "Compass shows now-playing info on your Garmin watch."
         INFOPLIST_KEY_UIBackgroundModes: "bluetooth-central audio"
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES

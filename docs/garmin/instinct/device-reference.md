@@ -205,6 +205,27 @@ Every subtype-58 file contains ~66 records of message 318. This message is not i
 Garmin FIT Python SDK, Gadgetbridge, or the HarryOnline spreadsheet. Field dump is in
 place; field structure will be known after the next sync.
 
+### `LocationUpdatedNotification` does not update sunrise/sunset
+
+Compass sends a `PROTOBUF_RESPONSE (0x13B4)` containing a `Smart → CoreService →
+LocationUpdatedNotification` protobuf message on connect and on distance-filter
+triggers. The watch ACKs the message (RESPONSE originalType=0x13B4 status=ACK), but
+the sunrise/sunset widget does **not** update.
+
+**Likely cause:** `LocationUpdatedNotification` (positionType=REALTIME_TRACKING) is
+designed for Garmin's "Connect GPS" feature — devices that borrow the phone's GPS for
+indoor workouts. The Instinct Solar 1 has its own full GPS and does not implement this
+protobuf handler for home-location or widget purposes.
+
+**How the Instinct Solar 1 actually updates sunset/sunrise:**
+- From its own GPS fix during an outdoor activity (automatic, no BLE needed).
+- From the manually set Home Location (Settings → System → Location → Home Location on
+  the watch, or via Garmin Connect app device settings).
+
+There is no known BLE mechanism to remotely update the stored home location on this
+firmware. The phone-location push can be left in place (it is harmless and may assist
+other devices), but should not be relied on for sunset/sunrise on the Instinct Solar 1.
+
 ---
 
 ## 6. Related Documentation

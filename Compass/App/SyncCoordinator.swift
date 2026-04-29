@@ -1,5 +1,6 @@
 import Foundation
 import SwiftData
+import UserNotifications
 import CompassData
 import CompassBLE
 import CompassFIT
@@ -57,9 +58,24 @@ final class SyncCoordinator {
     private var connectionMonitorTask: Task<Void, Never>?
     private var reconnectRetryTask: Task<Void, Never>?
 
+    // MARK: - Watch Services
+
+    private let weatherService       = WeatherService()
+    private let findMyPhoneService   = FindMyPhoneService()
+    private let musicService         = MusicService()
+    private let phoneLocationService = PhoneLocationService()
+
     init(deviceManager: any DeviceManagerProtocol) {
         self.deviceManager = deviceManager
         AppLogger.sync.debug("SyncCoordinator initialized with \(String(describing: type(of: deviceManager)))")
+
+        // Request notification permission (needed for Find My Phone banners).
+        Task {
+            try? await UNUserNotificationCenter.current().requestAuthorization(
+                options: [.alert, .sound]
+            )
+        }
+
         // Monitor unexpected BLE drops and kick off auto-reconnect immediately
         // so CoreBluetooth re-establishes the link as soon as the watch is
         // reachable again (no polling delay for the common case).
@@ -67,6 +83,7 @@ final class SyncCoordinator {
             for await state in deviceManager.connectionStateStream() {
                 connectionState = state
                 if case .disconnected = state {
+                    tearDownDeviceCallbacks()
                     startAutoReconnect()
                 }
             }
@@ -143,6 +160,8 @@ final class SyncCoordinator {
             pairingState = .paired
             showPairingSheet = false
 
+            await wireUpDeviceCallbacks()
+
             // Reset after brief delay so UI can show success
             try? await Task.sleep(for: .seconds(1))
             pairingState = .idle
@@ -201,6 +220,7 @@ final class SyncCoordinator {
         do {
             try await deviceManager.connect(device)
             connectionState = .connected(deviceName: device.name)
+            await wireUpDeviceCallbacks()
         } catch {
             AppLogger.sync.error("Connect failed: \(error.localizedDescription)")
             connectionState = .disconnected
@@ -217,6 +237,62 @@ final class SyncCoordinator {
         connectionState = .disconnected
         context.delete(device)
         try? context.save()
+    }
+
+    // MARK: - Watch Service Wiring
+
+    /// Inject service callbacks into GarminDeviceManager after a successful connect.
+    /// Must be called on @MainActor (this class is @MainActor).
+    private func wireUpDeviceCallbacks() async {
+        guard let gm = deviceManager as? GarminDeviceManager else { return }
+
+        await gm.setWeatherProvider { [weak self] request in
+            guard let self else { throw CancellationError() }
+            return try await self.weatherService.buildFITMessages(for: request)
+        }
+
+        await gm.setMusicCommandHandler { [weak self] ordinal in
+            Task { @MainActor [weak self] in
+                self?.musicService.handleCommand(ordinal: ordinal)
+            }
+        }
+
+        await gm.setFindMyPhoneHandler { [weak self] event in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                await self.findMyPhoneService.handle(event)
+            }
+        }
+
+        // Capture gm directly so the closure avoids the protocol cast on every call.
+        musicService.startObserving { [weak gm] messages in
+            Task { [weak gm] in
+                await gm?.sendMusicEntityUpdate(messages)
+            }
+        }
+        // Push current now-playing state immediately so the watch face
+        // populates without waiting for a playback-state change.
+        musicService.pushCurrentState()
+
+        phoneLocationService.sendMessage = { [weak gm] msg in
+            try? await gm?.sendRaw(message: msg)
+        }
+        phoneLocationService.startUpdating()
+
+        AppLogger.sync.info("Watch services wired: weather, find-my-phone, music, phone-location")
+    }
+
+    private func tearDownDeviceCallbacks() {
+        Task {
+            guard let gm = deviceManager as? GarminDeviceManager else { return }
+            await gm.setWeatherProvider(nil)
+            await gm.setMusicCommandHandler(nil)
+            await gm.setFindMyPhoneHandler(nil)
+        }
+        musicService.stopObserving()
+        phoneLocationService.stopUpdating()
+        phoneLocationService.sendMessage = nil
+        AppLogger.sync.info("Watch services torn down")
     }
 
     // MARK: - Sync
@@ -287,14 +363,41 @@ final class SyncCoordinator {
                 if filename.contains("activity") || filename.contains("act") {
                     let parser = ActivityFITParser()
                     if let activity = try? await parser.parse(data: fileData) {
+                        // Dedup: skip if an activity with the same start date already exists
+                        let activityStart = activity.startDate
+                        var activityCheck = FetchDescriptor<Activity>(
+                            predicate: #Predicate<Activity> { act in
+                                act.startDate == activityStart
+                            }
+                        )
+                        activityCheck.fetchLimit = 1
+                        let existingActivities = (try? context.fetch(activityCheck)) ?? []
+                        guard existingActivities.isEmpty else {
+                            AppLogger.sync.debug("Skipping duplicate activity at \(activity.startDate)")
+                            continue
+                        }
                         context.insert(activity)
                         AppLogger.sync.debug("Inserted activity: \(activity.sport.displayName)")
                     }
                 } else if filename.contains("monitor") || filename.contains("mon") {
                     let parser = MonitoringFITParser()
                     if let results = try? await parser.parse(data: fileData) {
-                        for sample in results.heartRateSamples {
-                            context.insert(HeartRateSample(timestamp: sample.timestamp, bpm: sample.bpm, context: .resting))
+                        // HR samples — file-range dedup: skip if any HR exists in this file's span
+                        if !results.heartRateSamples.isEmpty {
+                            let firstTS = results.heartRateSamples.first!.timestamp
+                            let lastTS = results.heartRateSamples.last!.timestamp
+                            var hrCheck = FetchDescriptor<HeartRateSample>(
+                                predicate: #Predicate<HeartRateSample> { hr in
+                                    hr.timestamp >= firstTS && hr.timestamp <= lastTS
+                                }
+                            )
+                            hrCheck.fetchLimit = 1
+                            let existingHR = (try? context.fetch(hrCheck)) ?? []
+                            if existingHR.isEmpty {
+                                for sample in results.heartRateSamples {
+                                    context.insert(HeartRateSample(timestamp: sample.timestamp, bpm: sample.bpm, context: .resting))
+                                }
+                            }
                         }
                         for sample in results.stressSamples {
                             context.insert(StressSample(timestamp: sample.timestamp, stressScore: sample.stressScore))
@@ -305,22 +408,74 @@ final class SyncCoordinator {
                         for sample in results.respirationSamples {
                             context.insert(CompassData.RespirationSample(timestamp: sample.timestamp, breathsPerMinute: sample.breathsPerMinute))
                         }
-                        for count in results.stepCounts {
-                            context.insert(CompassData.StepCount(date: count.timestamp, steps: count.steps, intensityMinutes: 0, calories: 0))
+                        // Day-aggregate monitoring intervals into one StepCount per calendar day
+                        let calendar = Calendar.current
+                        var dayIntervals: [Date: [MonitoringInterval]] = [:]
+                        for interval in results.intervals {
+                            let dayStart = calendar.startOfDay(for: interval.timestamp)
+                            dayIntervals[dayStart, default: []].append(interval)
                         }
-                        AppLogger.sync.debug("Inserted monitoring data: \(results.heartRateSamples.count) HR, \(results.stressSamples.count) stress, \(results.bodyBatterySamples.count) BB, \(results.respirationSamples.count) resp, \(results.stepCounts.count) steps")
+                        var insertedDays = 0
+                        for (day, dayData) in dayIntervals {
+                            let daySteps = dayData.reduce(0) { $0 + $1.steps }
+                            let dayIntensityMinutes = dayData.reduce(0) { $0 + $1.intensityMinutes }
+                            let dayCalories = dayData.reduce(0.0) { $0 + $1.activeCalories }
+                            // Upsert: update existing record for this day if present
+                            let dayDate = day
+                            var stepCheck = FetchDescriptor<CompassData.StepCount>(
+                                predicate: #Predicate<CompassData.StepCount> { count in
+                                    count.date == dayDate
+                                }
+                            )
+                            stepCheck.fetchLimit = 1
+                            let existingCounts = (try? context.fetch(stepCheck)) ?? []
+                            if let existing = existingCounts.first {
+                                existing.steps = daySteps
+                                existing.intensityMinutes = dayIntensityMinutes
+                                existing.calories = dayCalories
+                            } else {
+                                context.insert(CompassData.StepCount(date: day, steps: daySteps, intensityMinutes: dayIntensityMinutes, calories: dayCalories))
+                                insertedDays += 1
+                            }
+                        }
+                        AppLogger.sync.debug("Inserted monitoring data: \(results.heartRateSamples.count) HR, \(results.stressSamples.count) stress, \(results.bodyBatterySamples.count) BB, \(results.respirationSamples.count) resp, \(results.intervals.count) intervals → \(insertedDays) day(s)")
                     }
                 } else if filename.contains("sleep") || filename.contains("slp") {
                     let parser = SleepFITParser()
                     if let result = try? await parser.parse(data: fileData) {
+                        // Dedup: skip if a session exists with startDate within ±1 hour
+                        let lowerBound = result.startDate.addingTimeInterval(-3600)
+                        let upperBound = result.startDate.addingTimeInterval(3600)
+                        var sleepCheck = FetchDescriptor<SleepSession>(
+                            predicate: #Predicate<SleepSession> { s in
+                                s.startDate >= lowerBound && s.startDate <= upperBound
+                            }
+                        )
+                        sleepCheck.fetchLimit = 1
+                        let existingSessions = (try? context.fetch(sleepCheck)) ?? []
+                        guard existingSessions.isEmpty else {
+                            AppLogger.sync.debug("Skipping duplicate sleep session near \(result.startDate)")
+                            continue
+                        }
                         let session = SleepSession(
                             id: UUID(),
                             startDate: result.startDate,
                             endDate: result.endDate,
-                            score: result.score
+                            score: result.score,
+                            recoveryScore: result.recoveryScore,
+                            qualifier: result.qualifier
                         )
                         context.insert(session)
-                        AppLogger.sync.debug("Inserted sleep session: \(result.startDate) - \(result.endDate)")
+                        for stageResult in result.stages {
+                            let stage = SleepStage(
+                                startDate: stageResult.startDate,
+                                endDate: stageResult.endDate,
+                                stage: stageResult.stage,
+                                session: session
+                            )
+                            context.insert(stage)
+                        }
+                        AppLogger.sync.debug("Inserted sleep session: \(result.startDate) – \(result.endDate) with \(result.stages.count) stage(s)")
                     }
                 } else if filename.contains("metric") || filename.contains("met") {
                     let parser = MetricsFITParser()
