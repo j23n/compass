@@ -75,6 +75,14 @@ public struct CobsCodec {
 
         /// Append received bytes and try to decode a full message.
         public func receivedBytes(_ data: Data) {
+            // A BLE notification whose first byte is 0x00 signals the start of
+            // a new COBS frame. If we already have a partial frame in the buffer
+            // (leading 0x00, no trailing 0x00 yet), the watch sent an independent
+            // message that interleaved our current receive window. Discard the
+            // incomplete fragment; the watch will retransmit it.
+            if data.first == 0x00 && !buffer.isEmpty {
+                buffer.removeAll(keepingCapacity: true)
+            }
             buffer.append(data)
             decodeIfReady()
         }

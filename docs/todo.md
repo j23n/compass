@@ -323,6 +323,10 @@ but exists for future expansion.
   just fixed where `lastIndex(of: 0)` produced corrupt frames). Should
   test: two complete frames in one `receivedBytes` call → both decode
   correctly via two `retrieveMessage()` calls.
+- `CobsCodec` test for interleaved notifications: single-packet message
+  arrives mid-stream of a multi-fragment message → partial fragment is
+  silently discarded, single-packet message decodes correctly, no spurious
+  decode errors.
 - `BluetoothCentral` write-queue tests (concurrent writers don't lose
   continuations) — currently nothing in the test suite exercises the
   concurrent-writer race that bit us.
