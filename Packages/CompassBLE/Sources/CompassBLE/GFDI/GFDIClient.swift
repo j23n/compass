@@ -17,8 +17,12 @@ public actor GFDIClient {
 
     private var receiveTask: Task<Void, Never>?
 
-    /// Stream-based pending response handlers (actor-safe).
+    /// One-shot pending continuations: fulfilled once then removed.
     private var pendingContinuations: [UInt16: AsyncStream<GFDIMessage>.Continuation] = [:]
+
+    /// Persistent subscriptions: all messages of the subscribed type are yielded
+    /// until `unsubscribe(from:)` is called.  Used for streaming chunk loops.
+    private var subscriptions: [UInt16: AsyncStream<GFDIMessage>.Continuation] = [:]
 
     public init(transport: MultiLinkTransport) {
         self.transport = transport
@@ -44,6 +48,8 @@ public actor GFDIClient {
         receiveTask = nil
         for (_, cont) in pendingContinuations { cont.finish() }
         pendingContinuations.removeAll()
+        for (_, cont) in subscriptions { cont.finish() }
+        subscriptions.removeAll()
     }
 
     public func setUnsolicitedHandler(_ handler: @escaping @Sendable (GFDIMessage) -> Void) {
@@ -72,10 +78,16 @@ public actor GFDIClient {
 
     private func routeMessage(_ message: GFDIMessage) {
         let typeCode = message.type.rawValue
-        if let cont = pendingContinuations.removeValue(forKey: typeCode) {
+        // Persistent subscriptions take priority over one-shot continuations.
+        if let cont = subscriptions[typeCode] {
+            BLELogger.gfdi.debug("← routed to subscription type=0x\(String(format: "%04X", typeCode))")
+            cont.yield(message)
+        } else if let cont = pendingContinuations.removeValue(forKey: typeCode) {
+            BLELogger.gfdi.debug("← routed to pending wait type=0x\(String(format: "%04X", typeCode))")
             cont.yield(message)
             cont.finish()
         } else {
+            BLELogger.gfdi.debug("← routed to unsolicited handler type=0x\(String(format: "%04X", typeCode))")
             unsolicitedHandler?(message)
         }
     }
@@ -114,5 +126,52 @@ public actor GFDIClient {
             self.pendingContinuations.removeValue(forKey: typeCode)
             return result
         }
+    }
+
+    // MARK: - Send-and-wait (atomic, avoids TOCTOU race)
+
+    /// Send `message` and wait for the first inbound message of `awaitType`.
+    ///
+    /// The response continuation is registered **before** the outbound message
+    /// is written to the wire, so a very-fast response cannot slip into the
+    /// unsolicited handler between `send` and `waitForMessage`.
+    public func sendAndWait(
+        _ message: GFDIMessage,
+        awaitType: GFDIMessageType,
+        timeout: Duration = .seconds(10)
+    ) async throws -> GFDIMessage {
+        return try await awaitResponse(forType: awaitType.rawValue, timeout: timeout) {
+            let wire = message.encode()
+            BLELogger.gfdi.debug("→ GFDI type=0x\(String(format: "%04X", message.type.rawValue)) wireLen=\(wire.count)")
+            try await self.transport.sendGFDI(wire)
+        }
+    }
+
+    // MARK: - Persistent subscriptions (for streaming chunk loops)
+
+    /// Register a persistent subscription for `type`.  Every inbound message of
+    /// that type is yielded to the returned `AsyncStream` until `unsubscribe` is
+    /// called or `stopReceiving` tears everything down.
+    ///
+    /// Only one subscription per type is supported.  Calling `subscribe` again
+    /// for the same type replaces the previous one (finishing the old stream).
+    public func subscribe(to type: GFDIMessageType) -> AsyncStream<GFDIMessage> {
+        let (stream, cont) = AsyncStream<GFDIMessage>.makeStream()
+        if subscriptions[type.rawValue] != nil {
+            BLELogger.gfdi.debug("subscribe: replacing existing subscription for type=0x\(String(format: "%04X", type.rawValue))")
+            subscriptions[type.rawValue]?.finish()
+        } else {
+            BLELogger.gfdi.debug("subscribe: registered for type=0x\(String(format: "%04X", type.rawValue))")
+        }
+        subscriptions[type.rawValue] = cont
+        return stream
+    }
+
+    /// Cancel the subscription for `type` and finish its stream.
+    public func unsubscribe(from type: GFDIMessageType) {
+        if subscriptions[type.rawValue] != nil {
+            BLELogger.gfdi.debug("unsubscribe: type=0x\(String(format: "%04X", type.rawValue))")
+        }
+        subscriptions.removeValue(forKey: type.rawValue)?.finish()
     }
 }

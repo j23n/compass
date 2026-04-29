@@ -14,13 +14,16 @@ public enum CRC16 {
         0xA001, 0x6C00, 0x7800, 0xB401, 0x5000, 0x9C01, 0x8801, 0x4400,
     ]
 
-    /// Compute the Garmin CRC-16 over the given data.
-    public static func compute(data: Data) -> UInt16 {
-        var crc: UInt16 = 0x0000
+    /// Compute the Garmin CRC-16 over the given data, optionally starting from a seed.
+    ///
+    /// The `seed` parameter enables the running-CRC used for file transfer chunks:
+    /// each chunk is verified against the cumulative CRC of all bytes received so far,
+    /// not just the bytes in that chunk. Pass the previous call's return value as the
+    /// seed for each subsequent chunk; use 0 for the first chunk or a full-file CRC.
+    public static func compute(data: Data, seed: UInt16 = 0) -> UInt16 {
+        var crc = seed
         for byte in data {
-            // Process low nibble of byte
             crc = ((crc >> 4) & 0x0FFF) ^ constants[Int(crc & 0x0F)] ^ constants[Int(byte & 0x0F)]
-            // Process high nibble of byte
             crc = ((crc >> 4) & 0x0FFF) ^ constants[Int(crc & 0x0F)] ^ constants[Int((byte >> 4) & 0x0F)]
         }
         return crc

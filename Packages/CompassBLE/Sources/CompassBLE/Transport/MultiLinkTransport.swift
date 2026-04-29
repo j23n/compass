@@ -104,6 +104,10 @@ public actor MultiLinkTransport {
     }
 
     public func initializeGFDI(timeout: Duration = .seconds(10)) async throws {
+        // Clear any COBS state left from a previous session before we start
+        // exchanging management frames.  Without this, partial data buffered
+        // during the last disconnect can corrupt the first reassembled message.
+        decoder.reset()
         startPump()
         BLELogger.transport.info("ML: sending CLOSE_ALL_REQ")
         try await sendCloseAll(timeout: timeout)

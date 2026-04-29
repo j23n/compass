@@ -27,6 +27,13 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
     private var _connectedDevice: PairedDevice?
     private var connectionStateContinuation: AsyncStream<ConnectionState>.Continuation?
 
+    /// Max GFDI payload size reported by the watch's DEVICE_INFORMATION message.
+    /// Defaults to 375 (Instinct Solar 1G value per Gadgetbridge `FileTransferHandler.java:62`).
+    private var maxPacketSize: Int = 375
+
+    /// Guards against concurrent syncs (phone-initiated cancels any watch-initiated task).
+    private var activeSyncTask: Task<[URL], Error>?
+
     public init() {
         let central = BluetoothCentral()
         let transport = MultiLinkTransport(central: central)
@@ -108,14 +115,17 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
             // Now start GFDI receive loop and run the device-initiated handshake.
             await gfdiClient.startReceiving()
 
-            // Handle async messages from the watch (AUTH_NEGOTIATION, etc.)
-            // that arrive outside our request/response wait points.
-            let client = gfdiClient
-            await gfdiClient.setUnsolicitedHandler { msg in
-                Task { await Self.handleUnsolicited(msg, via: client) }
+            // Handle async messages that arrive outside explicit request/response waits.
+            await gfdiClient.setUnsolicitedHandler { [weak self] msg in
+                guard let self else { return }
+                Task { await self.handleUnsolicited(msg) }
             }
 
             let info = try await runHandshake()
+
+            if info.maxPacketSize > 0 {
+                maxPacketSize = Int(info.maxPacketSize)
+            }
 
             _isConnected = true
             let paired = PairedDevice(
@@ -139,17 +149,14 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
         }
     }
 
-    /// Asynchronous handler for messages that arrive outside an explicit
-    /// `waitForMessage`. After the initial handshake the watch sends a
-    /// stream of post-pair onboarding requests (CURRENT_TIME_REQUEST,
-    /// MUSIC_CONTROL_CAPABILITIES, PROTOBUF_REQUEST, SYNCHRONIZATION,
-    /// WEATHER_REQUEST, etc.) and **stays in pair-UI until they get
-    /// answered** — the watch retransmits each request roughly every 1s
-    /// until it gets an ACK. We must at minimum reply with a bare 9-byte
-    /// ACK to every non-RESPONSE message; for `CURRENT_TIME_REQUEST` we
-    /// have to send the actual time so the watch can set its clock and
-    /// finish the setup wizard.
-    private static func handleUnsolicited(_ msg: GFDIMessage, via client: GFDIClient) async {
+    /// Handles messages that arrive outside an explicit `waitForMessage`.
+    ///
+    /// After the initial handshake the watch sends a stream of post-pair requests
+    /// (CURRENT_TIME_REQUEST, MUSIC_CONTROL_CAPABILITIES, PROTOBUF_REQUEST,
+    /// SYNCHRONIZATION, WEATHER_REQUEST, etc.) and retransmits each every ~1 s
+    /// until it gets an answer.  We must at minimum ACK every non-RESPONSE message.
+    private func handleUnsolicited(_ msg: GFDIMessage) async {
+        let client = gfdiClient
         switch msg.type {
         case .authNegotiation:
             if let auth = try? AuthNegotiationMessage.decode(from: msg.payload) {
@@ -157,17 +164,16 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
                 let ack = AuthNegotiationStatusResponse(echoing: auth, status: .guessOk)
                 try? await client.send(message: ack.toMessage())
             }
+
         case .response:
-            // ACKs from the watch — informational, no action needed.
             BLELogger.gfdi.debug("Unsolicited RESPONSE")
+
         case .currentTimeRequest:
-            await respondToCurrentTimeRequest(msg, via: client)
+            await Self.respondToCurrentTimeRequest(msg, via: client)
+
         case .protobufRequest:
-            // The watch sends PROTOBUF_REQUEST (0x13B3) for onboarding RPCs
-            // (settings init, locale, contacts, etc.). Gadgetbridge responds
-            // with a RESPONSE (0x1388) carrying extended protobuf-status fields
-            // rather than a PROTOBUF_RESPONSE (0x13B4). The watch accepts this
-            // and advances its setup state machine.
+            // Gadgetbridge replies with a RESPONSE (0x1388) carrying extended
+            // protobuf-status fields — not a full PROTOBUF_RESPONSE (0x13B4).
             // Wire: [originalType LE][status][requestId LE][dataOffset LE][chunkStatus][statusCode]
             let requestId: UInt16
             if msg.payload.count >= 2 {
@@ -183,10 +189,8 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
             extra.append(0)          // statusCode = NO_ERROR
             let pbAck = GFDIResponse(originalType: .protobufRequest, status: .ack, additionalPayload: extra)
             try? await client.send(message: pbAck.toMessage())
+
         case .musicControlCapabilities:
-            // Reply with zero capabilities so the watch stops re-asking every ~1 s.
-            // Payload after ACK: 1 byte = count of supported commands (0 = none).
-            // Matches Gadgetbridge MusicControlCapabilitiesMessage.generateOutgoing.
             BLELogger.gfdi.debug("MUSIC_CONTROL_CAPABILITIES — replying with no capabilities")
             let musicAck = GFDIResponse(
                 originalType: .musicControlCapabilities,
@@ -194,13 +198,54 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
                 additionalPayload: Data([0x00])
             )
             try? await client.send(message: musicAck.toMessage())
+
+        case .synchronization:
+            await handleSynchronizationMessage(msg)
+
         default:
-            // Bare ACK for everything else — without this the watch
-            // assumes the host is unresponsive and stays in setup-wizard.
             BLELogger.gfdi.debug("ACKing unsolicited 0x\(String(format: "%04X", msg.type.rawValue))")
             let ack = GFDIResponse(originalType: msg.type, status: .ack)
             try? await client.send(message: ack.toMessage())
         }
+    }
+
+    /// Handle a watch-initiated SYNCHRONIZATION (5037) message.
+    ///
+    /// If the bitmask says the watch has relevant data AND no sync is already
+    /// running, start a new watch-initiated sync for all supported directories.
+    private func handleSynchronizationMessage(_ msg: GFDIMessage) async {
+        guard let sync = try? SynchronizationMessage.decode(from: msg.payload) else {
+            BLELogger.sync.warning("SYNCHRONIZATION: failed to decode payload")
+            return
+        }
+        BLELogger.sync.info("SYNCHRONIZATION type=\(sync.syncType) bitmask=0x\(String(format: "%016X", sync.bitmask)) shouldProceed=\(sync.shouldProceed)")
+
+        guard sync.shouldProceed else { return }
+        guard activeSyncTask == nil else {
+            BLELogger.sync.info("SYNCHRONIZATION: sync already in progress, ignoring")
+            return
+        }
+
+        let client = gfdiClient
+        let pktSize = maxPacketSize
+        let task = Task<[URL], Error> {
+            let session = FileSyncSession(client: client, maxPacketSize: pktSize)
+            return try await session.run(
+                directories: Set(FITDirectory.allCases),
+                progress: nil,
+                watchInitiated: true
+            )
+        }
+        activeSyncTask = task
+        // Observe completion in a separate task to clear the reference when done.
+        Task { [weak self] in
+            _ = try? await task.value
+            await self?.clearActiveSyncTask()
+        }
+    }
+
+    private func clearActiveSyncTask() {
+        activeSyncTask = nil
     }
 
     /// Reply to CURRENT_TIME_REQUEST with the current Garmin-epoch
@@ -332,12 +377,15 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
         try await transport.initializeGFDI(timeout: .seconds(10))
         await gfdiClient.startReceiving()
 
-        let client = gfdiClient
-        await gfdiClient.setUnsolicitedHandler { msg in
-            Task { await Self.handleUnsolicited(msg, via: client) }
+        await gfdiClient.setUnsolicitedHandler { [weak self] msg in
+            guard let self else { return }
+            Task { await self.handleUnsolicited(msg) }
         }
 
-        _ = try await runHandshake()
+        let info = try await runHandshake()
+        if info.maxPacketSize > 0 {
+            maxPacketSize = Int(info.maxPacketSize)
+        }
         _isConnected = true
         _connectedDevice = device
         connectionStateContinuation?.yield(.connected(deviceName: device.name))
@@ -359,14 +407,30 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
         await central.disconnect()
     }
 
-    // MARK: - File Sync (not yet implemented)
+    // MARK: - File Sync
 
     public func pullFITFiles(
         directories: Set<FITDirectory>,
         progress: AsyncStream<SyncProgress>.Continuation?
     ) async throws -> [URL] {
-        progress?.yield(.failed(PairingError.authenticationFailed("File sync not implemented yet")))
-        throw PairingError.authenticationFailed("File sync not implemented yet")
+        guard _isConnected else {
+            progress?.yield(.failed(SyncError.notConnected))
+            throw SyncError.notConnected
+        }
+
+        // Cancel any in-flight watch-initiated sync before starting a phone-initiated one.
+        activeSyncTask?.cancel()
+        activeSyncTask = nil
+
+        let client = gfdiClient
+        let pktSize = maxPacketSize
+        let task = Task<[URL], Error> {
+            let session = FileSyncSession(client: client, maxPacketSize: pktSize)
+            return try await session.run(directories: directories, progress: progress, watchInitiated: false)
+        }
+        activeSyncTask = task
+        defer { activeSyncTask = nil }
+        return try await task.value
     }
 
     public func uploadCourse(_ url: URL) async throws {

@@ -487,6 +487,18 @@ If `status==ACK && downloadStatus==OK` (`canProceed()`), the
 `FileFragment` allocates a `ByteBuffer` of `maxFileSize` and waits for
 chunks. Otherwise the download is marked failed.
 
+> **Instinct Solar firmware quirk**: the Instinct Solar 1G sends
+> `DownloadRequestStatus` as a **full `RESPONSE` (0x1388)** rather than
+> the compact-type `5002 | 0x8000` form. An iOS implementation must
+> wait for a `RESPONSE` (type 5000) here, not for compact-type 0x138A.
+> Additionally, some older files return `downloadStatus=3`
+> (`NO_SPACE_LEFT`) with `maxFileSize=0` even though the watch
+> immediately proceeds to stream the file. Only gate on
+> `outerStatus==0`; ignore the `downloadStatus` field. When
+> `maxFileSize=0`, rely on the last-chunk flag (`flags & 0x08` in
+> `FileTransferDataMessage`) to detect end-of-transfer instead of
+> comparing byte count to `maxFileSize`.
+
 ### 5.3 `FILE_TRANSFER_DATA` chunks (id 5004)
 
 The watch then emits one or more `FILE_TRANSFER_DATA` frames. Wire
@@ -495,7 +507,7 @@ format (`messages/FileTransferDataMessage.java:31–39, 53–63`):
 ```
 2 bytes  packet size
 2 bytes  msg type (5004)
-1 byte   flags                (always 0 in GB)
+1 byte   flags                (bit 0x08 = last chunk; all other bits always 0 in observed traffic)
 2 bytes  crc                  (running CRC after appending this chunk's data; see §7)
 4 bytes  dataOffset           (LE, absolute offset of this chunk in the file)
 N bytes  payload bytes
@@ -1436,6 +1448,94 @@ which uses the explicit `5000 RESPONSE` form,
   in the pairing doc §6; not repeated here. If you re-derive it on
   iOS, test against the worked examples in this doc and against a
   real watch's frames.
+
+### 14.5 Instinct Solar 1G quirks found during iOS implementation
+
+These are divergences from what Gadgetbridge's code implies, discovered
+by running against a real Instinct Solar 1G (firmware ~3.x) in the
+`compass` iOS project.
+
+#### `DownloadRequestStatus` arrives as full `RESPONSE`, not compact-typed
+
+See §5.2. The watch sends type `0x1388` (`RESPONSE` / 5000) carrying
+`originalType=5002`, rather than the compact-type `0x138A` the
+Gadgetbridge code path implies. Your iOS subscriber must wait for
+`awaitType: .response` (5000), not for the compact form.
+
+The same applies to `SetFileFlagsStatus` (5008 ACK): also arrives as
+full `RESPONSE (0x1388)` on this firmware.
+
+#### `downloadStatus=3` (`NO_SPACE_LEFT`) on some files with `maxFileSize=0`
+
+Certain directory entries (particularly older monitor / sleep files)
+return `downloadStatus=3` and `maxFileSize=0` in their
+`DownloadRequestStatus` even though the watch immediately begins
+streaming chunks. The correct behaviour: gate only on `outerStatus==0`,
+ignore `downloadStatus`, and treat `maxFileSize=0` as "size unknown —
+use last-chunk flag to detect completion."
+
+#### Last-chunk flag is `flags & 0x08`
+
+The `flags` byte in `FileTransferDataMessage` carries `0x08` set on the
+final chunk. In observed traffic on the Instinct Solar all other flag
+bits are always zero. When `maxFileSize=0`, this bit is the only
+reliable end-of-transfer signal — polling `buffer.count >= expectedSize`
+won't work.
+
+#### COBS trailing terminator arrives as a solo `[0x00]` BLE notification
+
+When a COBS-encoded GFDI message's body exactly fills the BLE MTU (i.e.
+all 19 payload bytes after stripping the ML handle byte are COBS body),
+the trailing `0x00` end-delimiter is delivered as a separate 1-byte BLE
+notification: `[handle_byte, 0x00]`. After stripping the handle byte,
+`CobsCodec.Decoder.receivedBytes` sees `Data([0x00])` (count == 1).
+
+A naive guard of `if data.first == 0x00 { buffer.removeAll() }` treats
+this as a "new message start" and discards the entire accumulated
+buffer. The watch retransmits every ~5.5 s and the decoder loops
+forever without ever completing the message. The fix: only discard the
+buffer when `data.first == 0x00 && data.count > 1` (a real new-message
+start always carries at least the leading zero byte plus some COBS body
+bytes).
+
+#### Stale COBS decoder state from a previous session
+
+`CobsCodec.Decoder` is a long-lived stateful object. After a BLE
+disconnect and reconnect, the decoder may hold a partial buffer from the
+previous session. The first new notification may complete that stale
+buffer, producing a corrupt "message" that causes a GFDI CRC error.
+Fix: call `decoder.reset()` at the start of every `initializeGFDI()`
+call (before the pump task starts receiving notifications).
+
+#### Swift actor isolation: `defer { Task { await unsubscribe() } }` is unsafe
+
+In a Swift actor, `defer` cannot `await`, so a common workaround is
+`defer { Task { await ... } }`. This spawns an *unstructured* Task that
+executes asynchronously at an unpredictable time. In a download loop:
+
+```swift
+// UNSAFE — unstructured Task races against next file's subscribe:
+let stream = await client.subscribe(to: .fileTransferData)
+defer { Task { await client.unsubscribe(from: .fileTransferData) } }
+```
+
+The deferred Task can fire *after* the next file's `subscribe` call
+has replaced the subscription, killing the new subscription and causing
+the next file's download to receive zero chunks. Fix: call
+`await client.unsubscribe(from: .fileTransferData)` synchronously in
+both the success path and the `catch` branch using an explicit
+`do/catch` (no `defer`).
+
+#### Abort ACK on download failure
+
+When a download fails mid-transfer (CRC mismatch, offset mismatch,
+timeout), the watch continues streaming chunks because it hasn't
+received a "stop" signal. Those chunks arrive during the *next* file's
+download, causing offset-mismatch errors on the new transfer. Fix: in
+the error path, send a `FileTransferDataACK` with
+`transferStatus = .abort` and `nextDataOffset = current_byte_count`
+before unsubscribing. This signals the watch to stop the current
+transfer immediately.
 
 ---
 

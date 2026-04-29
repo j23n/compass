@@ -29,7 +29,7 @@ references that doc throughout.
 | `PROTOBUF_REQUEST` (0x13B3) — proper ProtobufStatusMessage ACK (not bare 9-byte ACK) | ✅ |
 | `MUSIC_CONTROL_CAPABILITIES` (0x13B2) — reply with zero capabilities to stop 1-Hz retransmit | ✅ |
 | Watch exits post-pair setup wizard | ⏳ needs real-watch test |
-| File sync (FIT pull) | ❌ |
+| File sync (FIT pull) | ✅ |
 | File upload (course push) | ❌ |
 | Notifications, music control, weather, find-my-phone, etc. | ❌ |
 
@@ -226,19 +226,26 @@ Where the live state should come from:
 These don't block pairing but are needed for the app's actual purpose
 (reading FIT activity files):
 
-### File sync (FIT pull)
+### ~~File sync (FIT pull)~~ — **IMPLEMENTED** ✅
 
-The whole `Sync/` package was deleted along with the protobuf layer.
-What's needed:
+`FileSyncSession` implements the full download loop: `FilterMessage`
+handshake (watch-initiated path), root-directory download, per-file
+`DownloadRequest` → `DownloadRequestStatus` → `FileTransferData` chunks
+→ per-chunk `FileTransferDataACK` → `SetFileFlagsMessage(ARCHIVE)` →
+`SystemEvent(SYNC_COMPLETE)`.
 
-- `DirectoryFileFilterRequest` / `FILTER` (`0x138F`) — ask the watch for
-  a directory listing of activity files
-- Handle `FILE_TRANSFER_DATA` (`0x138C`) — chunked file streaming
-- `DOWNLOAD_REQUEST` (`0x138A`) — request a file by filename / data ID
-- `SET_FILE_FLAG` (`0x1390`) — mark files as transferred so the watch
-  doesn't re-offer them
+Key Instinct Solar quirks handled (see `gadgetbridge-instinct-sync.md`
+§14.5 for details):
+- `DownloadRequestStatus` arrives as full `RESPONSE (0x1388)`, not
+  compact-typed
+- `downloadStatus=3` + `maxFileSize=0` firmware quirk on some files
+- Last-chunk flag `flags & 0x08` as fallback end-of-transfer signal
+- COBS trailing-terminator solo-byte bug in `CobsCodec.Decoder`
+- Stale decoder state reset in `MultiLinkTransport.initializeGFDI()`
+- Abort ACK on download error to stop watch retransmission
+- Synchronous `unsubscribe` via explicit `do/catch` (not `defer { Task {} }`)
 
-Reference: Gadgetbridge `FileTransferHandler` + the `gadgetbridge-instinct-sync.md` doc.
+Reference: `Packages/CompassBLE/Sources/CompassBLE/Sync/FileSyncSession.swift`
 
 ### File upload (course push)
 
@@ -327,6 +334,15 @@ but exists for future expansion.
   arrives mid-stream of a multi-fragment message → partial fragment is
   silently discarded, single-packet message decodes correctly, no spurious
   decode errors.
+- `CobsCodec` test for solo trailing-terminator: a multi-fragment message
+  whose COBS body exactly fills the BLE MTU, so the trailing `0x00`
+  arrives as a separate 1-byte notification. Should decode correctly
+  (not discard the accumulated buffer). The bug: `receivedBytes([0x00])`
+  when `data.count == 1` was incorrectly treated as a new-message start.
+- `FileSyncSession` subscribe/unsubscribe ordering: verify that
+  `unsubscribe(from: .fileTransferData)` completes synchronously before
+  the next `subscribe` call, so a late `defer { Task { unsubscribe } }`
+  Task cannot kill a freshly registered subscription.
 - `BluetoothCentral` write-queue tests (concurrent writers don't lose
   continuations) — currently nothing in the test suite exercises the
   concurrent-writer race that bit us.

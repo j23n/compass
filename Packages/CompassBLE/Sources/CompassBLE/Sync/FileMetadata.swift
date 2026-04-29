@@ -55,31 +55,43 @@ public struct FileEntry: Sendable, Equatable {
 
 /// FIT file type identifiers.
 ///
-/// These correspond to the file type byte stored in the device's file directory.
-/// Each type maps to a ``FITDirectory`` in the public API.
+/// These are the `fileSubType` byte values from the watch's directory entries.
+/// The companion `fileDataType` byte is always 128 (0x80) for FIT files.
+///
+/// Subtype values are decimal, from Gadgetbridge `FileType.java:37–98`.
 ///
 /// Reference: Garmin FIT SDK — `FIT_FILE` constants.
 ///            Gadgetbridge `FileType.java`.
 public enum FileType: UInt8, Sendable, Equatable {
     /// Activity recording (run, ride, swim, etc.).
     /// Corresponds to ``FITDirectory/activity``.
-    case activity = 0x04
+    case activity = 4       // 128/4
 
     /// Course file (route for navigation).
     /// Used for uploads, not typically in sync directories.
-    case course = 0x06
+    case course = 6         // 128/6
 
     /// Health monitoring data (HR, steps, stress).
     /// Corresponds to ``FITDirectory/monitor``.
-    case monitor = 0x20
-
-    /// Sleep tracking data.
-    /// Corresponds to ``FITDirectory/sleep``.
-    case sleep = 0x49
+    case monitor = 32       // 128/32
 
     /// Health metrics summaries.
     /// Corresponds to ``FITDirectory/metrics``.
-    case metrics = 0x52
+    case metrics = 44       // 128/44
+
+    /// Sleep tracking data.
+    /// Corresponds to ``FITDirectory/sleep``.
+    case sleep = 49         // 128/49
+
+    /// The `fileDataType` byte for all FIT files in the watch directory.
+    public static let fitDataType: UInt8 = 128
+
+    /// Create a `FileType` from the two raw bytes in a directory entry.
+    /// Returns `nil` if `dataType` is not 128 or `subType` is unrecognised.
+    public init?(dataType: UInt8, subType: UInt8) {
+        guard dataType == FileType.fitDataType else { return nil }
+        self.init(rawValue: subType)
+    }
 }
 
 /// Extension to map between ``FITDirectory`` and ``FileType``.

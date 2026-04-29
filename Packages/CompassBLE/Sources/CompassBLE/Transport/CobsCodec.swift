@@ -75,12 +75,24 @@ public struct CobsCodec {
 
         /// Append received bytes and try to decode a full message.
         public func receivedBytes(_ data: Data) {
-            // A BLE notification whose first byte is 0x00 signals the start of
-            // a new COBS frame. If we already have a partial frame in the buffer
-            // (leading 0x00, no trailing 0x00 yet), the watch sent an independent
-            // message that interleaved our current receive window. Discard the
-            // incomplete fragment; the watch will retransmit it.
-            if data.first == 0x00 && !buffer.isEmpty {
+            // A notification whose first byte is 0x00 can mean two different things:
+            //
+            //  1. NEW MESSAGE START: the watch began a new independent GFDI message
+            //     while we were still accumulating the previous one.  In this case
+            //     the notification always carries more bytes (the start of the COBS
+            //     body), so data.count > 1.  Discard the incomplete prior fragment —
+            //     the watch will retransmit it.
+            //
+            //  2. TRAILING TERMINATOR: this is the sole 0x00 end-delimiter of a
+            //     multi-fragment COBS message whose body happened to fill the MTU
+            //     exactly.  data.count == 1.  Appending it lets decodeIfReady()
+            //     complete the pending message.
+            //
+            // The original code used `data.first == 0x00` (no count check), which
+            // discarded valid accumulated buffers whenever the trailing terminator
+            // arrived as a lone byte — causing an indefinite hang as the watch
+            // retransmitted every ~5 s without ever receiving an ACK.
+            if data.first == 0x00 && data.count > 1 && !buffer.isEmpty {
                 buffer.removeAll(keepingCapacity: true)
             }
             buffer.append(data)
