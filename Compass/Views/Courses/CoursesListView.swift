@@ -91,21 +91,43 @@ struct CoursesListView: View {
                     longitude: gpxWaypoint.longitude,
                     altitude: gpxWaypoint.altitude,
                     name: gpxWaypoint.name,
-                    distanceFromStart: gpxWaypoint.distanceFromStart
+                    distanceFromStart: gpxWaypoint.distanceFromStart,
+                    timestamp: gpxWaypoint.timestamp
                 )
             }
 
+            let pois = parsed.pointsOfInterest.map { poi in
+                CoursePOI(
+                    latitude: poi.latitude,
+                    longitude: poi.longitude,
+                    name: poi.name,
+                    coursePointType: Int(poi.coursePointType),
+                    distanceFromStart: poi.distanceFromStart
+                )
+            }
+
+            // Use the GPX track's <name> if set, otherwise fall back to the
+            // source filename (without extension) so users see a meaningful
+            // course name in the list.
+            let trimmedName = parsed.name.trimmingCharacters(in: .whitespaces)
+            let courseName = trimmedName.isEmpty
+                ? url.deletingPathExtension().lastPathComponent
+                : trimmedName
+
             let course = Course(
-                name: parsed.name,
+                name: courseName,
                 importDate: Date(),
                 sport: .running,
                 totalDistance: parsed.totalDistance,
+                totalAscent: parsed.totalAscent,
+                totalDescent: parsed.totalDescent,
                 waypoints: waypoints
             )
+            course.pointsOfInterest = pois
 
             modelContext.insert(course)
             try modelContext.save()
-            print("Imported course: \(course.name) with \(course.waypoints.count) waypoints")
+            print("Imported course: \(course.name) with \(course.waypoints.count) waypoints and \(pois.count) POIs")
         } catch {
             importError = error.localizedDescription
             print("GPX import error: \(error)")
@@ -115,5 +137,5 @@ struct CoursesListView: View {
 
 #Preview {
     CoursesListView()
-        .modelContainer(for: [Course.self, CourseWaypoint.self], inMemory: true)
+        .modelContainer(for: [Course.self, CourseWaypoint.self, CoursePOI.self], inMemory: true)
 }

@@ -43,5 +43,6 @@ struct ContentView: View {
             RespirationSample.self,
             Course.self,
             CourseWaypoint.self,
+            CoursePOI.self,
         ], inMemory: true)
 }

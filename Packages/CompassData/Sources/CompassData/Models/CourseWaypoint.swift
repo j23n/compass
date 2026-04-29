@@ -9,6 +9,8 @@ public final class CourseWaypoint {
     public var altitude: Double?     // meters
     public var name: String?         // for turn-by-turn prompts
     public var distanceFromStart: Double  // meters (cumulative Haversine)
+    /// UTC timestamp from the original GPX `<time>` element, if any.
+    public var timestamp: Date?
 
     public var course: Course?
 
@@ -19,6 +21,7 @@ public final class CourseWaypoint {
         altitude: Double? = nil,
         name: String? = nil,
         distanceFromStart: Double,
+        timestamp: Date? = nil,
         course: Course? = nil
     ) {
         self.order = order
@@ -27,6 +30,7 @@ public final class CourseWaypoint {
         self.altitude = altitude
         self.name = name
         self.distanceFromStart = distanceFromStart
+        self.timestamp = timestamp
         self.course = course
     }
 }

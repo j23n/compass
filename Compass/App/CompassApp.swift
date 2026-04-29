@@ -26,6 +26,7 @@ struct CompassApp: App {
             ConnectedDevice.self,
             Course.self,
             CourseWaypoint.self,
+            CoursePOI.self,
         ])
 
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)

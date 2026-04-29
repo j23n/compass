@@ -11,9 +11,13 @@ public final class Course {
     public var sport: Sport
     public var totalDistance: Double  // meters
     public var totalAscent: Double?   // meters
+    public var totalDescent: Double?  // meters
 
     @Relationship(deleteRule: .cascade, inverse: \CourseWaypoint.course)
     public var waypoints: [CourseWaypoint]
+
+    @Relationship(deleteRule: .cascade, inverse: \CoursePOI.course)
+    public var pointsOfInterest: [CoursePOI] = []
 
     public var fitFileURL: URL?
 
@@ -60,6 +64,7 @@ public final class Course {
         sport: Sport = .running,
         totalDistance: Double,
         totalAscent: Double? = nil,
+        totalDescent: Double? = nil,
         waypoints: [CourseWaypoint] = [],
         fitFileURL: URL? = nil
     ) {
@@ -69,6 +74,7 @@ public final class Course {
         self.sport = sport
         self.totalDistance = totalDistance
         self.totalAscent = totalAscent
+        self.totalDescent = totalDescent
         self.waypoints = waypoints
         self.fitFileURL = fitFileURL
     }

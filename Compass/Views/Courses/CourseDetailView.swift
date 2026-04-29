@@ -31,9 +31,17 @@ struct CourseDetailView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal)
 
-                    MapRouteView(coordinates: course.waypoints
-                        .sorted { $0.order < $1.order }
-                        .map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+                    MapRouteView(
+                        coordinates: course.waypoints
+                            .sorted { $0.order < $1.order }
+                            .map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) },
+                        pois: course.pointsOfInterest.map {
+                            MapPOI(
+                                coordinate: CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude),
+                                name: $0.name,
+                                coursePointType: $0.coursePointType
+                            )
+                        }
                     )
                     .frame(height: 300)
                     .cornerRadius(12)
@@ -51,6 +59,12 @@ struct CourseDetailView: View {
                 // Upload button
                 uploadSection
                     .padding(.horizontal)
+
+                // POIs
+                if !course.pointsOfInterest.isEmpty {
+                    poiSection
+                        .padding(.horizontal)
+                }
 
                 Spacer()
             }
@@ -101,6 +115,55 @@ struct CourseDetailView: View {
         .padding()
         .background(Color(.systemGray6))
         .cornerRadius(10)
+    }
+
+    private var poiSection: some View {
+        let sortedPOIs = course.pointsOfInterest.sorted { $0.distanceFromStart < $1.distanceFromStart }
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Points of Interest")
+                .font(.headline)
+            VStack(spacing: 0) {
+                ForEach(Array(sortedPOIs.enumerated()), id: \.element.persistentModelID) { index, poi in
+                    HStack(spacing: 12) {
+                        Image(systemName: poiSystemImage(forType: poi.coursePointType))
+                            .font(.body)
+                            .foregroundStyle(.blue)
+                            .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(poi.name)
+                                .font(.subheadline)
+                                .lineLimit(1)
+                            Text(String(format: "%.2f km", poi.distanceFromStart / 1_000))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 12)
+                    if index < sortedPOIs.count - 1 {
+                        Divider().padding(.leading, 48)
+                    }
+                }
+            }
+            .background(Color(.systemGray6))
+            .cornerRadius(10)
+        }
+    }
+
+    private func poiSystemImage(forType type: Int) -> String {
+        switch type {
+        case 1: return "mountain.2.fill"
+        case 2: return "arrow.down.to.line"
+        case 3: return "drop.fill"
+        case 4: return "fork.knife"
+        case 5: return "exclamationmark.triangle"
+        case 6: return "arrow.turn.up.left"
+        case 7: return "arrow.turn.up.right"
+        case 8: return "arrow.up"
+        case 9: return "cross.fill"
+        default: return "mappin"
+        }
     }
 
     private var uploadSection: some View {
@@ -205,7 +268,19 @@ struct CourseDetailView: View {
                 longitude: waypoint.longitude,
                 altitude: waypoint.altitude,
                 name: waypoint.name,
-                distanceFromStart: waypoint.distanceFromStart
+                distanceFromStart: waypoint.distanceFromStart,
+                timestamp: waypoint.timestamp
+            )
+        }
+
+        let fitPOIs = course.pointsOfInterest.map { poi in
+            FITCourseWaypoint(
+                latitude: poi.latitude,
+                longitude: poi.longitude,
+                altitude: nil,
+                name: poi.name,
+                distanceFromStart: poi.distanceFromStart,
+                coursePointType: UInt8(clamping: poi.coursePointType)
             )
         }
 
@@ -213,7 +288,9 @@ struct CourseDetailView: View {
             name: course.name,
             sport: course.sport.fitSportCode,
             waypoints: fitWaypoints,
-            totalDistance: course.totalDistance
+            pointsOfInterest: fitPOIs,
+            totalDistance: course.totalDistance,
+            estimatedDuration: course.estimatedDuration
         )
 
         let safeName = sanitizeFilename(course.name)
@@ -278,7 +355,14 @@ struct StatsGrid: View {
                 if let ascent = course.totalAscent {
                     StatCell(
                         title: "Ascent",
-                        value: String(format: "%.0f", ascent),
+                        value: "+\(String(format: "%.0f", ascent))",
+                        unit: "m"
+                    )
+                }
+                if let descent = course.totalDescent {
+                    StatCell(
+                        title: "Descent",
+                        value: "-\(String(format: "%.0f", descent))",
                         unit: "m"
                     )
                 }
@@ -308,5 +392,5 @@ struct StatsGrid: View {
 
     CourseDetailView(course: course)
         .environment(SyncCoordinator(deviceManager: MockGarminDevice()))
-        .modelContainer(for: [Course.self, CourseWaypoint.self], inMemory: true)
+        .modelContainer(for: [Course.self, CourseWaypoint.self, CoursePOI.self], inMemory: true)
 }

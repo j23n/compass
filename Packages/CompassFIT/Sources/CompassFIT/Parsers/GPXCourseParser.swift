@@ -24,13 +24,40 @@ public struct GPXWaypoint: Sendable {
     public let altitude: Double?
     public let name: String?
     public let distanceFromStart: Double
+    /// UTC timestamp from the GPX `<time>` element, if present.
+    public let timestamp: Date?
 
-    public init(latitude: Double, longitude: Double, altitude: Double? = nil, name: String? = nil, distanceFromStart: Double) {
+    public init(latitude: Double, longitude: Double, altitude: Double? = nil, name: String? = nil, distanceFromStart: Double, timestamp: Date? = nil) {
         self.latitude = latitude
         self.longitude = longitude
         self.altitude = altitude
         self.name = name
         self.distanceFromStart = distanceFromStart
+        self.timestamp = timestamp
+    }
+}
+
+/// A point of interest from a GPX `<wpt>` element. POIs are markers along
+/// the route (not part of the route itself) — e.g., water fountains, summits,
+/// turn cues. They become FIT `course_point` messages.
+public struct GPXPointOfInterest: Sendable {
+    public let latitude: Double
+    public let longitude: Double
+    public let name: String
+    /// Free-form symbol/category from the GPX `<sym>` element (e.g., "Drinking Water", "Flag, Blue", "Summit").
+    public let symbol: String?
+    /// Cumulative distance (m) from course start to the closest track point — used for FIT `course_point.distance`.
+    public let distanceFromStart: Double
+    /// FIT `course_point` type enum value (0=generic, 1=summit, 3=water, 4=food, 5=danger, …).
+    public let coursePointType: UInt8
+
+    public init(latitude: Double, longitude: Double, name: String, symbol: String?, distanceFromStart: Double, coursePointType: UInt8) {
+        self.latitude = latitude
+        self.longitude = longitude
+        self.name = name
+        self.symbol = symbol
+        self.distanceFromStart = distanceFromStart
+        self.coursePointType = coursePointType
     }
 }
 
@@ -38,12 +65,20 @@ public struct GPXWaypoint: Sendable {
 public struct ParsedGPXCourse: Sendable {
     public let name: String
     public let waypoints: [GPXWaypoint]
+    public let pointsOfInterest: [GPXPointOfInterest]
     public let totalDistance: Double
+    /// Total elevation gain in metres (nil if no altitude data in the GPX).
+    public let totalAscent: Double?
+    /// Total elevation loss in metres (nil if no altitude data in the GPX).
+    public let totalDescent: Double?
 
-    public init(name: String, waypoints: [GPXWaypoint], totalDistance: Double) {
+    public init(name: String, waypoints: [GPXWaypoint], pointsOfInterest: [GPXPointOfInterest] = [], totalDistance: Double, totalAscent: Double? = nil, totalDescent: Double? = nil) {
         self.name = name
         self.waypoints = waypoints
+        self.pointsOfInterest = pointsOfInterest
         self.totalDistance = totalDistance
+        self.totalAscent = totalAscent
+        self.totalDescent = totalDescent
     }
 }
 
@@ -88,34 +123,64 @@ public struct GPXCourseParser: Sendable {
                 latitude: point.latitude,
                 longitude: point.longitude,
                 altitude: point.altitude,
-                name: nil,  // Populated below from named waypoints
-                distanceFromStart: cumulativeDistance
+                name: nil,
+                distanceFromStart: cumulativeDistance,
+                timestamp: point.timestamp
             ))
         }
 
-        // Merge named waypoints by snapping to the closest track point
-        for namedWaypoint in delegate.namedWaypoints {
-            if let closestIndex = findClosestWaypoint(
-                to: (namedWaypoint.latitude, namedWaypoint.longitude),
-                in: waypoints
-            ) {
-                waypoints[closestIndex] = GPXWaypoint(
-                    latitude: waypoints[closestIndex].latitude,
-                    longitude: waypoints[closestIndex].longitude,
-                    altitude: waypoints[closestIndex].altitude,
-                    name: namedWaypoint.name,
-                    distanceFromStart: waypoints[closestIndex].distanceFromStart
-                )
-            }
+        // Compute elevation gain/loss across simplified waypoints
+        var totalAscent: Double = 0
+        var totalDescent: Double = 0
+        for i in 1..<waypoints.count {
+            guard let prev = waypoints[i - 1].altitude, let curr = waypoints[i].altitude else { continue }
+            let diff = curr - prev
+            if diff > 0 { totalAscent += diff } else { totalDescent -= diff }
         }
 
-        let courseName = delegate.trackName.isEmpty ? "Imported Course" : delegate.trackName
+        // Build POIs at their actual lat/lon, with distance taken from the
+        // closest track point along the route.
+        let pois: [GPXPointOfInterest] = delegate.namedWaypoints.map { wpt in
+            let closestDistance = findClosestWaypoint(
+                to: (wpt.latitude, wpt.longitude),
+                in: waypoints
+            ).map { waypoints[$0].distanceFromStart } ?? 0
+            return GPXPointOfInterest(
+                latitude: wpt.latitude,
+                longitude: wpt.longitude,
+                name: wpt.name,
+                symbol: wpt.symbol,
+                distanceFromStart: closestDistance,
+                coursePointType: coursePointType(forSymbol: wpt.symbol)
+            )
+        }
 
+        // Return the raw trk name (possibly empty); callers should fall back to
+        // the source filename if they need a non-empty name.
         return ParsedGPXCourse(
-            name: courseName,
+            name: delegate.trackName,
             waypoints: waypoints,
-            totalDistance: cumulativeDistance
+            pointsOfInterest: pois,
+            totalDistance: cumulativeDistance,
+            totalAscent: totalAscent > 0 ? totalAscent : nil,
+            totalDescent: totalDescent > 0 ? totalDescent : nil
         )
+    }
+
+    /// Map a GPX `<sym>` value to a FIT `course_point` type enum.
+    /// Common Garmin/OsmAnd symbol names → FIT course_point. Unknown → generic (0).
+    private static func coursePointType(forSymbol sym: String?) -> UInt8 {
+        guard let s = sym?.lowercased() else { return 0 }
+        if s.contains("water") || s.contains("fountain") || s.contains("drinking") { return 3 }
+        if s.contains("summit") || s.contains("peak") || s.contains("mountain") { return 1 }
+        if s.contains("valley") { return 2 }
+        if s.contains("food") || s.contains("restaurant") || s.contains("cafe") { return 4 }
+        if s.contains("danger") || s.contains("warning") { return 5 }
+        if s.contains("first aid") || s.contains("medical") || s.contains("hospital") { return 9 }
+        if s.contains("left") { return 6 }
+        if s.contains("right") { return 7 }
+        if s.contains("straight") { return 8 }
+        return 0  // generic
     }
 
     // MARK: - Helpers
@@ -146,15 +211,23 @@ public struct GPXCourseParser: Sendable {
 // MARK: - XMLParser Delegate
 
 private class GPXParserDelegate: NSObject, XMLParserDelegate {
-    var trackPoints: [(latitude: Double, longitude: Double, altitude: Double?)] = []
-    var namedWaypoints: [(latitude: Double, longitude: Double, name: String)] = []
+    var trackPoints: [(latitude: Double, longitude: Double, altitude: Double?, timestamp: Date?)] = []
+    var namedWaypoints: [(latitude: Double, longitude: Double, name: String, symbol: String?)] = []
     var trackName: String = ""
+
+    nonisolated(unsafe) private static let iso8601: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
 
     private var currentElement: String = ""
     private var currentLat: Double? = nil
     private var currentLon: Double? = nil
     private var currentAlt: Double? = nil
+    private var currentTimestamp: Date? = nil
     private var currentName: String = ""
+    private var currentSymbol: String? = nil
 
     func parser(
         _ parser: XMLParser,
@@ -166,13 +239,30 @@ private class GPXParserDelegate: NSObject, XMLParserDelegate {
         currentElement = elementName
 
         switch elementName {
-        case "trkpt", "wpt":
+        case "trkpt":
+            // Don't touch currentName here — the surrounding <trk><name>...</name>
+            // is captured into currentName before the first <trkpt> opens, and
+            // <trkpt> doesn't have its own <name> child to overwrite.
             if let lat = attributeDict["lat"], let latVal = Double(lat) {
                 currentLat = latVal
             }
             if let lon = attributeDict["lon"], let lonVal = Double(lon) {
                 currentLon = lonVal
             }
+            currentTimestamp = nil
+
+        case "wpt":
+            // Reset name/sym so a <wpt>'s <name> doesn't append to whatever
+            // was last in currentName (e.g., the metadata <name>).
+            if let lat = attributeDict["lat"], let latVal = Double(lat) {
+                currentLat = latVal
+            }
+            if let lon = attributeDict["lon"], let lonVal = Double(lon) {
+                currentLon = lonVal
+            }
+            currentName = ""
+            currentSymbol = nil
+            currentTimestamp = nil
 
         case "trk":
             currentName = ""
@@ -191,18 +281,20 @@ private class GPXParserDelegate: NSObject, XMLParserDelegate {
         switch elementName {
         case "trkpt":
             if let lat = currentLat, let lon = currentLon {
-                trackPoints.append((latitude: lat, longitude: lon, altitude: currentAlt))
+                trackPoints.append((latitude: lat, longitude: lon, altitude: currentAlt, timestamp: currentTimestamp))
                 currentLat = nil
                 currentLon = nil
                 currentAlt = nil
+                currentTimestamp = nil
             }
 
         case "wpt":
             if let lat = currentLat, let lon = currentLon, !currentName.isEmpty {
-                namedWaypoints.append((latitude: lat, longitude: lon, name: currentName))
+                namedWaypoints.append((latitude: lat, longitude: lon, name: currentName, symbol: currentSymbol))
                 currentLat = nil
                 currentLon = nil
                 currentName = ""
+                currentSymbol = nil
             }
 
         case "trk":
@@ -227,8 +319,14 @@ private class GPXParserDelegate: NSObject, XMLParserDelegate {
         switch currentElement {
         case "ele":
             currentAlt = Double(trimmed)
+        case "time":
+            // Try with fractional seconds first, then without
+            currentTimestamp = GPXParserDelegate.iso8601.date(from: trimmed)
+                ?? ISO8601DateFormatter().date(from: trimmed)
         case "name":
             currentName.append(trimmed)
+        case "sym":
+            currentSymbol = (currentSymbol ?? "") + trimmed
         default:
             break
         }
