@@ -11,8 +11,16 @@ struct ContentView: View {
                 TodayView()
             }
 
+            Tab("Activities", systemImage: "figure.run") {
+                ActivitiesListView()
+            }
+
             Tab("Health", systemImage: "heart.text.square.fill") {
                 HealthView()
+            }
+
+            Tab("Courses", systemImage: "map") {
+                CoursesListView()
             }
         }
     }
@@ -33,5 +41,7 @@ struct ContentView: View {
             StressSample.self,
             StepCount.self,
             RespirationSample.self,
+            Course.self,
+            CourseWaypoint.self,
         ], inMemory: true)
 }

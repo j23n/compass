@@ -1047,6 +1047,42 @@ Notifications. Independent of sync but the watch will subscribe via
 notifications, you can NAK these and the watch will still let you
 sync.
 
+**Important: a bare `RESPONSE(5000)` (just `[originalType][status]`) does not
+close the loop — neither ACK nor NAK works on its own.** The watch keeps
+retransmitting every ~1 s until it gets the full
+`NotificationSubscriptionStatusMessage` payload, which carries 4 extra bytes
+beyond the generic status byte:
+
+```
+0C 00        len = 12
+88 13        type = 5000  (RESPONSE)
+AC 13        responding-to = 5036  (NOTIFICATION_SUBSCRIPTION)
+00           status = ACK (0)
+00           notificationStatus = ENABLED (0=ENABLED, 1=DISABLED)
+xx           enableRaw — echo of the enable byte from the request
+00           unk — Gadgetbridge always sends 0
+xx xx        CRC
+```
+
+Match Gadgetbridge's default: `status=ACK, notificationStatus=ENABLED,
+enableRaw=<echo>, unk=0`. Gadgetbridge picks ENABLED when the user's
+`PREF_SEND_APP_NOTIFICATIONS` pref is true (the default), DISABLED otherwise.
+On Instinct Solar fw 1910, replying with `notificationStatus=DISABLED` did
+**not** close the 1 s retransmit loop; ENABLED is what the watch accepts.
+
+Reference: Gadgetbridge `NotificationSubscriptionStatusMessage.java`
+(generateOutgoing) and `GarminSupport.java` (`NotificationSubscriptionDeviceEvent`
+branch, ~line 289). The earlier "NAK closes the loop" note in this doc was
+wrong — both NAK and bare ACK leave the watch retransmitting; the four
+trailing bytes are required and `notificationStatus=ENABLED` is what the
+firmware accepts.
+
+Note: phone notifications on iOS Garmin watches also arrive via **ANCS**
+(Apple Notification Center Service), a separate BLE service provided by iOS
+that the watch subscribes to directly — independent of the GFDI relay. NAKing
+`NOTIFICATION_SUBSCRIPTION` on the GFDI side has no effect on ANCS-delivered
+notifications.
+
 ### 10.8 `Protobuf` (5043 / 5044)
 
 Two-way envelope for the modern protobuf services
@@ -1525,6 +1561,15 @@ the next file's download to receive zero chunks. Fix: call
 `await client.unsubscribe(from: .fileTransferData)` synchronously in
 both the success path and the `catch` branch using an explicit
 `do/catch` (no `defer`).
+
+#### `NOTIFICATION_SUBSCRIPTION` (5036) loops at 1 s
+
+The Instinct Solar sends `NOTIFICATION_SUBSCRIPTION` (5036) once per second
+after pairing until it gets the full Gadgetbridge-style status reply.
+A bare `RESPONSE(5000)` carrying only `[originalType][status]` does **not**
+close the loop — neither ACK nor NAK is sufficient. The reply must include
+4 trailing bytes (`notificationStatus`, `enableRaw`, `unk`). See §10.7 for
+the full wire layout.
 
 #### Abort ACK on download failure
 

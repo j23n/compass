@@ -82,7 +82,7 @@ actor FileSyncSession {
                 )
                 continue
             }
-            guard directories.contains(where: { $0.fileType == ft }) else {
+            guard let fileDir = ft.directory, directories.contains(fileDir) else {
                 BLELogger.sync.debug(
                     "Sync: skipping fileIndex=\(entry.fileIndex) — type=\(ft) not in requested directories"
                 )
@@ -153,7 +153,7 @@ actor FileSyncSession {
         for entry in entries {
             let typeStr = entry.fitFileType.map(String.init(describing:)) ?? "unknown(\(entry.fileDataType)/\(entry.fileSubType))"
             let archivedStr = entry.isArchived ? " [archived]" : ""
-            BLELogger.sync.debug(
+            BLELogger.sync.info(
                 "Sync:   entry fileIndex=\(entry.fileIndex) type=\(typeStr) size=\(entry.fileSize)B date=\(entry.date)\(archivedStr)"
             )
         }

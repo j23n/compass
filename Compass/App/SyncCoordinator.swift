@@ -57,6 +57,7 @@ final class SyncCoordinator {
     private var discoveryTask: Task<Void, Never>?
     private var connectionMonitorTask: Task<Void, Never>?
     private var reconnectRetryTask: Task<Void, Never>?
+    private var syncTask: Task<Void, Never>?
 
     // MARK: - Watch Services
 
@@ -239,6 +240,16 @@ final class SyncCoordinator {
         try? context.save()
     }
 
+    // MARK: - Sync Control
+
+    func cancelSync() {
+        syncTask?.cancel()
+        syncTask = nil
+        state = .idle
+        progress = 0
+        AppLogger.sync.info("Sync cancelled by user")
+    }
+
     // MARK: - Watch Service Wiring
 
     /// Inject service callbacks into GarminDeviceManager after a successful connect.
@@ -297,7 +308,7 @@ final class SyncCoordinator {
 
     // MARK: - Sync
 
-    func sync(context: ModelContext) async {
+    func sync(context: ModelContext) {
         guard case .idle = state else {
             AppLogger.sync.warning("Sync requested but already in state: \(String(describing: self.state))")
             return
@@ -306,7 +317,8 @@ final class SyncCoordinator {
         AppLogger.sync.info("Starting sync")
         state = .syncing(description: "Starting sync...")
 
-        do {
+        syncTask = Task {
+            do {
             // Create progress stream
             let (stream, continuation) = AsyncStream<SyncProgress>.makeStream()
 
@@ -349,10 +361,21 @@ final class SyncCoordinator {
 
             AppLogger.sync.info("Received \(fitURLs.count) FIT file(s), beginning parse")
 
+            // Save FIT files to persistent storage
+            var savedURLs: [URL] = []
+            for url in fitURLs {
+                if let saved = try? FITFileStore.shared.save(from: url) {
+                    savedURLs.append(saved)
+                    AppLogger.sync.debug("Saved FIT file: \(saved.lastPathComponent)")
+                } else {
+                    AppLogger.sync.warning("Failed to save FIT file: \(url.lastPathComponent)")
+                }
+            }
+
             // Parse FIT files and write to SwiftData
             state = .syncing(description: "Parsing \(fitURLs.count) files...")
 
-            for url in fitURLs {
+            for url in savedURLs {
                 guard let fileData = try? Data(contentsOf: url) else {
                     AppLogger.sync.warning("Could not read FIT file at: \(url.lastPathComponent)")
                     continue
@@ -415,6 +438,27 @@ final class SyncCoordinator {
                             let dayStart = calendar.startOfDay(for: interval.timestamp)
                             dayIntervals[dayStart, default: []].append(interval)
                         }
+                        // Per-interval step samples for intraday chart — dedup by time range
+                        if !results.intervals.isEmpty {
+                            let firstTS = results.intervals.first!.timestamp
+                            let lastTS  = results.intervals.last!.timestamp
+                            var stepSampleCheck = FetchDescriptor<CompassData.StepSample>(
+                                predicate: #Predicate<CompassData.StepSample> { s in
+                                    s.timestamp >= firstTS && s.timestamp <= lastTS
+                                }
+                            )
+                            stepSampleCheck.fetchLimit = 1
+                            let existingStepSamples = (try? context.fetch(stepSampleCheck)) ?? []
+                            if existingStepSamples.isEmpty {
+                                for interval in results.intervals where interval.steps > 0 {
+                                    context.insert(CompassData.StepSample(
+                                        timestamp: interval.timestamp,
+                                        steps: interval.steps
+                                    ))
+                                }
+                            }
+                        }
+
                         var insertedDays = 0
                         for (day, dayData) in dayIntervals {
                             let daySteps = dayData.reduce(0) { $0 + $1.steps }
@@ -494,18 +538,47 @@ final class SyncCoordinator {
             AppLogger.sync.info("SwiftData save complete")
 
             lastSyncDate = Date()
-            state = .completed(fileCount: fitURLs.count)
-            AppLogger.sync.info("Sync completed: \(fitURLs.count) files processed")
+            state = .completed(fileCount: savedURLs.count)
+            AppLogger.sync.info("Sync completed: \(savedURLs.count) files processed")
 
             // Reset to idle after a delay
             try? await Task.sleep(for: .seconds(3))
             state = .idle
 
-        } catch {
-            AppLogger.sync.error("Sync failed: \(error.localizedDescription)")
-            state = .failed(error.localizedDescription)
-            try? await Task.sleep(for: .seconds(5))
-            state = .idle
+            } catch {
+                AppLogger.sync.error("Sync failed: \(error.localizedDescription)")
+                state = .failed(error.localizedDescription)
+                try? await Task.sleep(for: .seconds(5))
+                state = .idle
+            }
+        }
+    }
+
+    func uploadCourse(fitURL: URL) {
+        guard case .idle = state else {
+            AppLogger.sync.warning("Upload requested but already in state: \(String(describing: self.state))")
+            return
+        }
+
+        AppLogger.sync.info("Starting course upload")
+        state = .syncing(description: "Uploading course...")
+
+        syncTask = Task {
+            do {
+                try await deviceManager.uploadCourse(fitURL)
+                AppLogger.sync.info("Course uploaded successfully")
+                state = .completed(fileCount: 1)
+
+                // Reset to idle after a delay
+                try? await Task.sleep(for: .seconds(3))
+                state = .idle
+
+            } catch {
+                AppLogger.sync.error("Upload failed: \(error.localizedDescription)")
+                state = .failed(error.localizedDescription)
+                try? await Task.sleep(for: .seconds(5))
+                state = .idle
+            }
         }
     }
 }

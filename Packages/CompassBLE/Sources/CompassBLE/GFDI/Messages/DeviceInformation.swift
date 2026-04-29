@@ -164,6 +164,16 @@ extension Data {
         append(UInt8((value >> 24) & 0xFF))
     }
 
+    /// Append a signed byte (Int8).
+    mutating func appendInt8(_ value: Int8) {
+        append(UInt8(bitPattern: value))
+    }
+
+    /// Append an Int32 in little-endian byte order.
+    mutating func appendInt32LE(_ value: Int32) {
+        appendUInt32LE(UInt32(bitPattern: value))
+    }
+
     /// Append a length-prefixed UTF-8 string (1-byte length, no terminator).
     /// Throws nothing but truncates strings longer than 255 bytes.
     mutating func appendLengthPrefixedString(_ value: String) {

@@ -1,7 +1,7 @@
 import Foundation
 
 public enum Sport: String, Codable, Sendable, CaseIterable {
-    case running, cycling, swimming, hiking, walking, strength, cardio, other
+    case running, cycling, swimming, hiking, walking, strength, yoga, cardio, other
 
     public var displayName: String {
         rawValue.capitalized
@@ -15,8 +15,9 @@ public enum Sport: String, Codable, Sendable, CaseIterable {
         case .hiking: "figure.hiking"
         case .walking: "figure.walk"
         case .strength: "dumbbell"
-        case .cardio: "heart.circle"
-        case .other: "figure.mixed.cardio"
+        case .yoga:    "figure.yoga"
+        case .cardio:  "heart.circle"
+        case .other:   "figure.mixed.cardio"
         }
     }
 }

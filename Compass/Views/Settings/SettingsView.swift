@@ -59,6 +59,8 @@ struct SettingsView: View {
                     warningSection
                 }
 
+                developerSection
+
                 aboutSection
             }
             .navigationTitle("Settings")
@@ -160,15 +162,17 @@ struct SettingsView: View {
         Section {
             Button {
                 AppLogger.ui.info("Sync Now tapped")
-                Task {
-                    await syncCoordinator.sync(context: modelContext)
-                }
+                syncCoordinator.sync(context: modelContext)
             } label: {
                 HStack {
                     Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
                     Spacer()
                     if isSyncing {
                         ProgressView()
+                        Button("Cancel", role: .destructive) {
+                            syncCoordinator.cancelSync()
+                        }
+                        .font(.caption)
                     }
                 }
             }
@@ -230,6 +234,27 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
             .listRowBackground(Color.yellow.opacity(0.08))
+        }
+    }
+
+    // MARK: - Developer Section
+
+    @ViewBuilder
+    private var developerSection: some View {
+        Section {
+            NavigationLink {
+                LogsView()
+            } label: {
+                Label("Logs", systemImage: "doc.text.magnifyingglass")
+            }
+
+            NavigationLink {
+                FITFilesView()
+            } label: {
+                Label("FIT Files", systemImage: "doc.badge.arrow.up")
+            }
+        } header: {
+            Text("Developer")
         }
     }
 

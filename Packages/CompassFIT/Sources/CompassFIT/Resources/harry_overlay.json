@@ -2,11 +2,27 @@
   "version": "0.1.0",
   "source": "HarryOnline Garmin FIT extensions spreadsheet (placeholder values)",
   "messages": {
+    "21": {
+      "name": "event",
+      "fields": {
+        "253": { "name": "timestamp", "type": "date_time", "units": "s" },
+        "0":   { "name": "event", "type": "enum", "units": "" },
+        "1":   { "name": "event_type", "type": "enum", "units": "" },
+        "4":   { "name": "data", "type": "uint32", "units": "" }
+      }
+    },
     "140": {
       "name": "monitoring_hr",
       "fields": {
         "253": { "name": "timestamp", "type": "date_time", "units": "s" },
         "1": { "name": "heart_rate", "type": "uint8", "units": "bpm" }
+      }
+    },
+    "162": {
+      "name": "timestamp_correlation",
+      "fields": {
+        "253": { "name": "timestamp",       "type": "date_time", "units": "s" },
+        "3":   { "name": "local_timestamp", "type": "date_time", "units": "s" }
       }
     },
     "211": {
@@ -15,6 +31,17 @@
         "253": { "name": "timestamp", "type": "date_time", "units": "s" },
         "0": { "name": "cycles", "type": "uint32", "units": "cycles" },
         "3": { "name": "active_calories", "type": "uint16", "units": "kcal" }
+      }
+    },
+    "233": {
+      "name": "monitoring_v2",
+      "fields": {
+        "253": { "name": "timestamp", "type": "date_time", "units": "s" },
+        "0":   { "name": "heart_rate", "type": "uint8", "units": "bpm" },
+        "1":   { "name": "activity_type", "type": "enum", "units": "" },
+        "2":   { "name": "intensity", "type": "uint8", "units": "" },
+        "3":   { "name": "steps", "type": "uint32", "units": "steps" },
+        "4":   { "name": "active_calories", "type": "uint16", "units": "kcal" }
       }
     },
     "273": {
@@ -26,12 +53,78 @@
         "3": { "name": "end_time", "type": "date_time", "units": "s" }
       }
     },
+    "274": {
+      "name": "sleep_level",
+      "fields": {
+        "253": { "name": "timestamp", "type": "date_time", "units": "s" },
+        "0":   { "name": "current_activity_type_intensity", "type": "uint8", "units": "" }
+      }
+    },
     "275": {
       "name": "sleep_stage",
       "fields": {
         "253": { "name": "timestamp", "type": "date_time", "units": "s" },
         "0": { "name": "stage", "type": "enum", "units": "" },
         "1": { "name": "duration", "type": "uint32", "units": "s" }
+      }
+    },
+    "276": {
+      "name": "sleep_assessment",
+      "fields": {
+        "253": { "name": "timestamp", "type": "date_time", "units": "s" },
+        "0":   { "name": "combined_awake_score", "type": "uint8", "units": "" },
+        "1":   { "name": "awake_time_score", "type": "uint8", "units": "" },
+        "2":   { "name": "awakenings_count_score", "type": "uint8", "units": "" },
+        "3":   { "name": "deep_sleep_score", "type": "uint8", "units": "" },
+        "4":   { "name": "sleep_duration_score", "type": "uint8", "units": "" },
+        "5":   { "name": "light_sleep_score", "type": "uint8", "units": "" },
+        "6":   { "name": "overall_sleep_score", "type": "uint8", "units": "" },
+        "7":   { "name": "sleep_quality_score", "type": "uint8", "units": "" },
+        "8":   { "name": "sleep_recovery_score", "type": "uint8", "units": "" },
+        "9":   { "name": "rem_sleep_score", "type": "uint8", "units": "" },
+        "10":  { "name": "sleep_restlessness_score", "type": "uint8", "units": "" },
+        "11":  { "name": "awakenings_count", "type": "uint8", "units": "" }
+      }
+    },
+    "306": {
+      "name": "hsa_stress_data",
+      "fields": {
+        "253": { "name": "timestamp",            "type": "date_time", "units": "s" },
+        "0":   { "name": "processing_interval",  "type": "uint16",    "units": "s" },
+        "1":   { "name": "stress_level",         "type": "sint8[]",   "units": "" }
+      }
+    },
+    "307": {
+      "name": "hsa_respiration_data",
+      "fields": {
+        "253": { "name": "timestamp",           "type": "date_time", "units": "s" },
+        "0":   { "name": "processing_interval", "type": "uint16",    "units": "s" },
+        "1":   { "name": "respiration_rate",    "type": "uint8[]",   "units": "breaths/min" }
+      }
+    },
+    "308": {
+      "name": "hsa_heart_rate_data",
+      "fields": {
+        "253": { "name": "timestamp",           "type": "date_time", "units": "s" },
+        "0":   { "name": "processing_interval", "type": "uint16",    "units": "s" },
+        "1":   { "name": "status",              "type": "uint8",     "units": "" },
+        "2":   { "name": "heart_rate",          "type": "uint8[]",   "units": "bpm" }
+      }
+    },
+    "314": {
+      "name": "hsa_body_battery_data",
+      "fields": {
+        "253": { "name": "timestamp",           "type": "date_time", "units": "s" },
+        "0":   { "name": "processing_interval", "type": "uint16",    "units": "s" },
+        "1":   { "name": "level",               "type": "sint8[]",   "units": "%" },
+        "2":   { "name": "charged",             "type": "sint16[]",  "units": "" },
+        "3":   { "name": "uncharged",           "type": "sint16[]",  "units": "" }
+      }
+    },
+    "318": {
+      "name": "hsa_unknown_318",
+      "fields": {
+        "253": { "name": "timestamp", "type": "date_time", "units": "s" }
       }
     },
     "346": {

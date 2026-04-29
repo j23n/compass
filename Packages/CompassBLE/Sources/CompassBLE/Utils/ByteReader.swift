@@ -84,6 +84,16 @@ public struct ByteReader: Sendable {
         return Int16(bitPattern: raw)
     }
 
+    /// Read a signed byte (Int8) and advance the cursor by 1.
+    public mutating func readInt8() throws -> Int8 {
+        Int8(bitPattern: try readUInt8())
+    }
+
+    /// Read a little-endian Int32 and advance the cursor by 4.
+    public mutating func readInt32LE() throws -> Int32 {
+        Int32(bitPattern: try readUInt32LE())
+    }
+
     /// Read `count` raw bytes and advance the cursor.
     public mutating func readBytes(_ count: Int) throws -> Data {
         guard remaining >= count else {

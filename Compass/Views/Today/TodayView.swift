@@ -1,10 +1,9 @@
 import SwiftUI
 import SwiftData
-import Charts
 import CompassData
 import CompassBLE
 
-/// The main Today tab -- a vertically scrolling dashboard.
+/// The main Today tab — connection status, dense vitals grid, and recent activities.
 struct TodayView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(SyncCoordinator.self) private var syncCoordinator
@@ -30,72 +29,120 @@ struct TodayView: View {
     @Query(sort: \StepCount.date)
     private var allSteps: [StepCount]
 
+    @Query(sort: \StepSample.timestamp)
+    private var allStepSamples: [StepSample]
+
     @State private var showingSettings = false
 
-    // MARK: - Computed Data
+    // MARK: - Time windows
 
-    private var startOfToday: Date {
-        Calendar.current.startOfDay(for: Date())
+    private var startOfToday: Date { Calendar.current.startOfDay(for: Date()) }
+    private var last24h: Date { Date().addingTimeInterval(-86400) }
+
+    private var hasDevice: Bool { !connectedDevices.isEmpty }
+
+    // MARK: - Activities (last 24 h)
+
+    private var recentActivities: [Activity] {
+        allActivities.filter { $0.startDate >= last24h }
     }
 
-    private var hasDevice: Bool {
-        !connectedDevices.isEmpty
-    }
+    // MARK: - Sleep
 
-    private var todayActivities: [Activity] {
-        let start = startOfToday
-        return allActivities.filter { $0.startDate >= start }
-    }
+    private var lastSleep: SleepSession? { allSleepSessions.first }
 
-    private var lastSleep: SleepSession? {
-        allSleepSessions.first
-    }
+    private var weekAgo: Date { Calendar.current.date(byAdding: .day, value: -7, to: Date())! }
+
+    // MARK: - Heart rate
 
     private var todayRestingHR: [HeartRateSample] {
-        let start = startOfToday
-        return allHeartRateSamples.filter {
-            $0.timestamp >= start && $0.context == .resting
-        }
+        allHeartRateSamples.filter { $0.timestamp >= startOfToday && $0.context == .resting }
     }
 
-    private var currentRestingHR: Int? {
-        todayRestingHR.min(by: { $0.bpm < $1.bpm })?.bpm
+    private var heartRateMetric: VitalsMetric {
+        let history = allHeartRateSamples
+            .filter { $0.timestamp >= weekAgo && $0.context == .resting }
+            .map { TrendDataPoint(date: $0.timestamp, value: Double($0.bpm)) }
+        let current = todayRestingHR.min(by: { $0.bpm < $1.bpm })?.bpm
+        let sparkline = todayRestingHR.suffix(20).map { Double($0.bpm) }
+        return VitalsMetric(current: current, sparkline: sparkline, history: history)
     }
 
-    private var restingHRSparkline: [Double] {
-        todayRestingHR.suffix(20).map { Double($0.bpm) }
+    // MARK: - Body battery
+
+    private var todayBodyBattery: [BodyBatterySample] {
+        allBodyBattery.filter { $0.timestamp >= startOfToday }
     }
 
-    private var todayBodyBatterySamples: [BodyBatterySample] {
-        let start = startOfToday
-        return allBodyBattery.filter { $0.timestamp >= start }
+    private var bodyBatteryMetric: VitalsMetric {
+        let history = allBodyBattery
+            .filter { $0.timestamp >= weekAgo }
+            .map { TrendDataPoint(date: $0.timestamp, value: Double($0.level)) }
+        let current = todayBodyBattery.last?.level
+        let sparkline = todayBodyBattery.suffix(30).map { Double($0.level) }
+        return VitalsMetric(current: current, sparkline: sparkline, history: history)
     }
 
-    private var currentBodyBattery: Int {
-        todayBodyBatterySamples.last?.level ?? 0
+    // MARK: - Stress
+
+    private var todayStress: [StressSample] {
+        allStress.filter { $0.timestamp >= startOfToday }
     }
 
-    private var todayStressSamples: [StressSample] {
-        let start = startOfToday
-        return allStress.filter { $0.timestamp >= start }
+    private var stressMetric: VitalsMetric {
+        let history = allStress
+            .filter { $0.timestamp >= weekAgo }
+            .map { TrendDataPoint(date: $0.timestamp, value: Double($0.stressScore)) }
+        let current = todayStress.last?.stressScore
+        let sparkline = todayStress.suffix(30).map { Double($0.stressScore) }
+        return VitalsMetric(current: current, sparkline: sparkline, history: history)
     }
 
-    private var currentStress: Int {
-        todayStressSamples.last?.stressScore ?? 0
-    }
+    // MARK: - Steps
 
     private var todayStepCounts: [StepCount] {
-        let start = startOfToday
-        return allSteps.filter { $0.date >= start }
+        allSteps.filter { $0.date >= startOfToday }
     }
 
-    private var totalActivityMinutes: Int {
-        todayStepCounts.reduce(0) { $0 + $1.intensityMinutes }
+    private var stepsMetric: VitalsMetric {
+        // 7-day daily totals for history chart
+        let cal = Calendar.current
+        let grouped = Dictionary(grouping: allSteps.filter { $0.date >= weekAgo }) {
+            cal.startOfDay(for: $0.date)
+        }
+        let history = grouped
+            .map { day, counts in TrendDataPoint(date: day, value: Double(counts.reduce(0) { $0 + $1.steps })) }
+            .sorted { $0.date < $1.date }
+
+        // Hourly sparkline for today using per-minute StepSample records
+        let todaySamples = allStepSamples.filter { $0.timestamp >= startOfToday }
+        var buckets = [Double](repeating: 0, count: 24)
+        for sample in todaySamples {
+            let hour = cal.component(.hour, from: sample.timestamp)
+            buckets[hour] += Double(sample.steps)
+        }
+        var lastHour = 23
+        while lastHour > 0 && buckets[lastHour] == 0 { lastHour -= 1 }
+        let sparkline = todaySamples.isEmpty ? [] : Array(buckets[0...lastHour])
+
+        let total = todayStepCounts.reduce(0) { $0 + $1.steps }
+        return VitalsMetric(current: todayStepCounts.isEmpty ? nil : total, sparkline: sparkline, history: history)
     }
 
-    private var sleepHours: Double {
-        guard let sleep = lastSleep else { return 0 }
-        return sleep.endDate.timeIntervalSince(sleep.startDate) / 3600.0
+    // MARK: - Active minutes
+
+    private var activeMinutesMetric: VitalsMetric {
+        let cal = Calendar.current
+        let grouped = Dictionary(grouping: allSteps.filter { $0.date >= weekAgo }) {
+            cal.startOfDay(for: $0.date)
+        }
+        let history = grouped
+            .map { day, counts in TrendDataPoint(date: day, value: Double(counts.reduce(0) { $0 + $1.intensityMinutes })) }
+            .sorted { $0.date < $1.date }
+        let todayCounts = allSteps.filter { $0.date >= startOfToday }
+        let sparkline = todayCounts.map { Double($0.intensityMinutes) }
+        let total = todayCounts.reduce(0) { $0 + $1.intensityMinutes }
+        return VitalsMetric(current: todayCounts.isEmpty ? nil : total, sparkline: sparkline, history: history)
     }
 
     // MARK: - Body
@@ -113,7 +160,6 @@ struct TodayView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        AppLogger.ui.debug("Settings button tapped from TodayView")
                         showingSettings = true
                     } label: {
                         Image(systemName: "gearshape")
@@ -124,7 +170,6 @@ struct TodayView: View {
                 SettingsView()
             }
             .onAppear {
-                AppLogger.ui.debug("TodayView appeared — hasDevice: \(self.hasDevice), activities: \(self.allActivities.count), sleep: \(self.allSleepSessions.count), HR samples: \(self.allHeartRateSamples.count)")
                 if let device = connectedDevices.first,
                    case .disconnected = syncCoordinator.connectionState {
                     Task { await syncCoordinator.reconnect(device: device) }
@@ -133,29 +178,24 @@ struct TodayView: View {
         }
     }
 
-    // MARK: - Dashboard Content
+    // MARK: - Dashboard
 
     @ViewBuilder
     private var dashboardContent: some View {
         ScrollView {
             LazyVStack(spacing: 20) {
                 connectionPill
-                heroSection
-                heartRateSection
-                sleepSection
+                vitalsSection
                 activitiesSection
-                bodyBatterySection
-                stressSection
             }
             .padding()
         }
         .refreshable {
-            AppLogger.ui.debug("Pull-to-refresh triggered")
             await syncCoordinator.sync(context: modelContext)
         }
     }
 
-    // MARK: - Connection Pill
+    // MARK: - Connection pill
 
     @ViewBuilder
     private var connectionPill: some View {
@@ -187,74 +227,23 @@ struct TodayView: View {
         }
     }
 
-    // MARK: - Hero Section
+    // MARK: - Vitals
 
     @ViewBuilder
-    private var heroSection: some View {
-        RingsView(
-            activityMinutes: totalActivityMinutes,
-            activityGoal: 60,
-            sleepHours: sleepHours,
-            sleepGoal: 8.0,
-            bodyBattery: currentBodyBattery,
-            stressLevel: currentStress
-        )
-        .padding(.bottom, 8)
-    }
+    private var vitalsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Vitals")
+                .font(.headline)
 
-    // MARK: - Heart Rate
-
-    @ViewBuilder
-    private var heartRateSection: some View {
-        if let rhr = currentRestingHR {
-            MetricCard(
-                title: "Resting Heart Rate",
-                value: "\(rhr)",
-                unit: "bpm",
-                color: .red,
-                icon: "heart.fill",
-                sparklineData: restingHRSparkline
+            VitalsGridView(
+                sleepScore: lastSleep?.score,
+                sleepStages: lastSleep?.stages ?? [],
+                heartRate: heartRateMetric,
+                bodyBattery: bodyBatteryMetric,
+                stress: stressMetric,
+                steps: stepsMetric,
+                activeMinutes: activeMinutesMetric
             )
-        }
-    }
-
-    // MARK: - Sleep
-
-    @ViewBuilder
-    private var sleepSection: some View {
-        if let sleep = lastSleep {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 8) {
-                    Image(systemName: "bed.double.fill")
-                        .foregroundStyle(.purple)
-                        .font(.subheadline)
-
-                    Text("Last Night's Sleep")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-
-                    Spacer()
-
-                    if let score = sleep.score {
-                        Text("Score: \(score)")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundStyle(.purple)
-                    }
-                }
-
-                SleepStageBar(stages: sleep.stages)
-            }
-            .padding()
-            .background {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(.background)
-                    .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 2)
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(.separator, lineWidth: 0.5)
-            }
         }
     }
 
@@ -262,15 +251,25 @@ struct TodayView: View {
 
     @ViewBuilder
     private var activitiesSection: some View {
-        if !todayActivities.isEmpty {
+        if !recentActivities.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Activities")
+                Text("Recent Activities")
                     .font(.headline)
-                    .padding(.horizontal, 4)
 
-                ForEach(todayActivities) { activity in
+                ForEach(recentActivities) { activity in
                     NavigationLink(destination: ActivityDetailView(activity: activity)) {
-                        activityRow(activity)
+                        ActivityRowView(activity: activity)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 4)
+                            .background {
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(.background)
+                                    .shadow(color: .black.opacity(0.06), radius: 4, x: 0, y: 1)
+                            }
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .strokeBorder(.separator, lineWidth: 0.5)
+                            }
                     }
                     .buttonStyle(.plain)
                 }
@@ -278,195 +277,7 @@ struct TodayView: View {
         }
     }
 
-    @ViewBuilder
-    private func activityRow(_ activity: Activity) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: activity.sport.systemImage)
-                .font(.title3)
-                .foregroundStyle(.green)
-                .frame(width: 36, height: 36)
-                .background(Color.green.opacity(0.12))
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(activity.sport.displayName)
-                    .font(.body)
-                    .fontWeight(.medium)
-                    .foregroundStyle(.primary)
-
-                HStack(spacing: 8) {
-                    if activity.distance > 0 {
-                        Text(formatDistance(activity.distance))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Text(formatDuration(activity.duration))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Spacer()
-
-            Image(systemName: "chevron.right")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-        }
-        .padding()
-        .background {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.background)
-                .shadow(color: .black.opacity(0.06), radius: 4, x: 0, y: 1)
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(.separator, lineWidth: 0.5)
-        }
-    }
-
-    // MARK: - Body Battery
-
-    @ViewBuilder
-    private var bodyBatterySection: some View {
-        if !todayBodyBatterySamples.isEmpty {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 8) {
-                    Image(systemName: "battery.75percent")
-                        .foregroundStyle(.blue)
-                        .font(.subheadline)
-
-                    Text("Body Battery")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-
-                    Spacer()
-
-                    Text("\(currentBodyBattery)")
-                        .font(.title2)
-                        .fontWeight(.bold)
-                        .foregroundStyle(.primary)
-                }
-
-                Chart(todayBodyBatterySamples, id: \.timestamp) { sample in
-                    LineMark(
-                        x: .value("Time", sample.timestamp),
-                        y: .value("Level", sample.level)
-                    )
-                    .foregroundStyle(.blue)
-                    .interpolationMethod(.catmullRom)
-
-                    AreaMark(
-                        x: .value("Time", sample.timestamp),
-                        y: .value("Level", sample.level)
-                    )
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [Color.blue.opacity(0.25), Color.blue.opacity(0.0)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    .interpolationMethod(.catmullRom)
-                }
-                .chartYScale(domain: 0...100)
-                .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 6)) { _ in
-                        AxisValueLabel(format: .dateTime.hour())
-                    }
-                }
-                .chartYAxis {
-                    AxisMarks(position: .leading, values: [0, 25, 50, 75, 100]) { _ in
-                        AxisGridLine()
-                        AxisValueLabel()
-                    }
-                }
-                .frame(height: 150)
-            }
-            .padding()
-            .background {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(.background)
-                    .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 2)
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(.separator, lineWidth: 0.5)
-            }
-        }
-    }
-
-    // MARK: - Stress
-
-    @ViewBuilder
-    private var stressSection: some View {
-        if !todayStressSamples.isEmpty {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 8) {
-                    Image(systemName: "brain.head.profile")
-                        .foregroundStyle(.orange)
-                        .font(.subheadline)
-
-                    Text("Stress")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-
-                    Spacer()
-
-                    Text("\(currentStress)")
-                        .font(.title2)
-                        .fontWeight(.bold)
-                        .foregroundStyle(.primary)
-                }
-
-                Chart(todayStressSamples, id: \.timestamp) { sample in
-                    LineMark(
-                        x: .value("Time", sample.timestamp),
-                        y: .value("Stress", sample.stressScore)
-                    )
-                    .foregroundStyle(.orange)
-                    .interpolationMethod(.catmullRom)
-
-                    AreaMark(
-                        x: .value("Time", sample.timestamp),
-                        y: .value("Stress", sample.stressScore)
-                    )
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [Color.orange.opacity(0.25), Color.orange.opacity(0.0)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    .interpolationMethod(.catmullRom)
-                }
-                .chartYScale(domain: 0...100)
-                .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 6)) { _ in
-                        AxisValueLabel(format: .dateTime.hour())
-                    }
-                }
-                .chartYAxis {
-                    AxisMarks(position: .leading, values: [0, 25, 50, 75, 100]) { _ in
-                        AxisGridLine()
-                        AxisValueLabel()
-                    }
-                }
-                .frame(height: 150)
-            }
-            .padding()
-            .background {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(.background)
-                    .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 2)
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(.separator, lineWidth: 0.5)
-            }
-        }
-    }
-
-    // MARK: - Empty State
+    // MARK: - Empty state
 
     @ViewBuilder
     private var emptyStateView: some View {
@@ -476,7 +287,6 @@ struct TodayView: View {
             Text("Pair a compatible fitness watch to start tracking your health and activity data.")
         } actions: {
             Button {
-                AppLogger.ui.info("Pair a Device tapped from empty state")
                 showingSettings = true
             } label: {
                 Text("Pair a Device")
@@ -484,26 +294,6 @@ struct TodayView: View {
             }
             .buttonStyle(.borderedProminent)
         }
-    }
-
-    // MARK: - Formatting
-
-    private func formatDistance(_ meters: Double) -> String {
-        let km = meters / 1000.0
-        if km >= 1 {
-            return String(format: "%.2f km", km)
-        }
-        return String(format: "%.0f m", meters)
-    }
-
-    private func formatDuration(_ interval: TimeInterval) -> String {
-        let hours = Int(interval) / 3600
-        let minutes = (Int(interval) % 3600) / 60
-        let seconds = Int(interval) % 60
-        if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
-        }
-        return String(format: "%d:%02d", minutes, seconds)
     }
 }
 
@@ -520,5 +310,6 @@ struct TodayView: View {
             BodyBatterySample.self,
             StressSample.self,
             StepCount.self,
+            StepSample.self,
         ], inMemory: true)
 }

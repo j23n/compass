@@ -278,6 +278,27 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
         case .synchronization:
             await handleSynchronizationMessage(msg)
 
+        case .notificationSubscription:
+            // The watch's response format is RESPONSE(0x1388) carrying:
+            //   [originalType=13AC LE][status][notificationStatus][enableRaw][unk]
+            // A bare ACK or NAK with no extra bytes leaves the watch retransmitting
+            // every ~1 s. Match Gadgetbridge: status=ACK, notificationStatus=DISABLED,
+            // echo enable byte, unk=0. iOS notifications still reach the watch via ANCS.
+            // Reference: Gadgetbridge NotificationSubscriptionStatusMessage.java +
+            // GarminSupport.java (NotificationSubscriptionDeviceEvent handler).
+            let enableRaw: UInt8 = msg.payload.first ?? 0
+            var extra = Data()
+            extra.append(0x00)       // notificationStatus = ENABLED (matches Gadgetbridge default)
+            extra.append(enableRaw)  // echo enable
+            extra.append(0x00)       // unk
+            BLELogger.gfdi.debug("NOTIFICATION_SUBSCRIPTION — ACK+ENABLED")
+            let resp = GFDIResponse(
+                originalType: .notificationSubscription,
+                status: .ack,
+                additionalPayload: extra
+            )
+            try? await client.send(message: resp.toMessage())
+
         default:
             BLELogger.gfdi.debug("ACKing unsolicited 0x\(String(format: "%04X", msg.type.rawValue))")
             let ack = GFDIResponse(originalType: msg.type, status: .ack)
@@ -466,18 +487,11 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
         BLELogger.auth.debug("Sending DEVICE_SETTINGS")
         try await gfdiClient.send(message: SetDeviceSettingsMessage.defaults().toMessage())
 
-        // Try `SETUP_WIZARD_SKIPPED` (15) instead of `SETUP_WIZARD_COMPLETE` (14)
-        // as a workaround. We don't yet implement the protobuf RPC layer
-        // (`Smart.GdiSmartProto`) that the watch expects after pair-complete —
-        // it keeps re-asking for settings init / music caps / weather / etc.
-        // and stays in setup-wizard UI until those are answered.
-        // `SKIPPED` may convince the watch's setup state machine to dismiss
-        // the wizard without the protobuf round-trip.
-        BLELogger.auth.debug("Sending SYNC_READY / PAIR_COMPLETE / SYNC_COMPLETE / SETUP_WIZARD_SKIPPED")
+        BLELogger.auth.debug("Sending SYNC_READY / PAIR_COMPLETE / SYNC_COMPLETE / SETUP_WIZARD_COMPLETE")
         try await gfdiClient.send(message: SystemEventMessage(eventType: .syncReady).toMessage())
         try await gfdiClient.send(message: SystemEventMessage(eventType: .pairComplete).toMessage())
         try await gfdiClient.send(message: SystemEventMessage(eventType: .syncComplete).toMessage())
-        try await gfdiClient.send(message: SystemEventMessage(eventType: .setupWizardSkipped).toMessage())
+        try await gfdiClient.send(message: SystemEventMessage(eventType: .setupWizardComplete).toMessage())
 
         return devInfo
     }
@@ -557,7 +571,9 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
     }
 
     public func uploadCourse(_ url: URL) async throws {
-        throw PairingError.authenticationFailed("Course upload not implemented yet")
+        let data = try Data(contentsOf: url)
+        let session = FileUploadSession(client: gfdiClient, maxPacketSize: 375)
+        try await session.upload(data: data, progress: nil)
     }
 
     // MARK: - Properties

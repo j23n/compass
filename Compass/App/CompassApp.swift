@@ -22,7 +22,10 @@ struct CompassApp: App {
             BodyBatterySample.self,
             RespirationSample.self,
             StepCount.self,
+            StepSample.self,
             ConnectedDevice.self,
+            Course.self,
+            CourseWaypoint.self,
         ])
 
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)

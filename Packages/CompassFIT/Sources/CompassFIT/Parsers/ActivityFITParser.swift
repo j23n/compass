@@ -21,14 +21,14 @@ public struct ActivityFITParser: Sendable {
     private static let fieldTimestamp: UInt8 = 253
     private static let fieldStartTime: UInt8 = 2
     private static let fieldTotalElapsedTime: UInt8 = 7   // in ms (scale 1000)
-    private static let fieldTotalDistance: UInt8 = 5       // in cm (scale 100)
+    private static let fieldTotalDistance: UInt8 = 9       // in cm (scale 100)
     private static let fieldTotalCalories: UInt8 = 11      // kcal
     private static let fieldAvgHeartRate: UInt8 = 16
     private static let fieldMaxHeartRate: UInt8 = 17
     private static let fieldTotalAscent: UInt8 = 22        // meters
     private static let fieldTotalDescent: UInt8 = 23       // meters
-    private static let fieldSport: UInt8 = 5               // sport enum field in session
     private static let fieldSessionSport: UInt8 = 5
+    private static let fieldSessionSubSport: UInt8 = 6
 
     // Record (20) field definition numbers
     private static let recordTimestamp: UInt8 = 253
@@ -139,9 +139,9 @@ public struct ActivityFITParser: Sendable {
         let duration: TimeInterval = durationRaw / 1000.0
         let endDate = startDate.addingTimeInterval(duration)
 
-        // Distance is in cm (scale 100).
+        // Distance is in cm (scale 100). Guard against FIT invalid-value sentinel (0xFFFFFFFF).
         let distanceRaw = session[Self.fieldTotalDistance]?.doubleValue ?? 0
-        let distance = distanceRaw / 100.0
+        let distance = (distanceRaw >= Double(UInt32.max)) ? 0.0 : distanceRaw / 100.0
 
         let totalCalories = session[Self.fieldTotalCalories]?.doubleValue ?? 0
         let avgHR = session[Self.fieldAvgHeartRate]?.intValue
@@ -166,25 +166,34 @@ public struct ActivityFITParser: Sendable {
         )
     }
 
-    /// Maps FIT sport enum to CompassData `Sport`.
+    /// Maps FIT sport/sub_sport enums to CompassData `Sport`.
     ///
-    /// FIT sport enum values (from the FIT SDK Profile):
-    /// 0 = generic, 1 = running, 2 = cycling, 5 = swimming, 10 = training,
-    /// 11 = walking, 17 = hiking, 20 = strength_training, etc.
+    /// FIT sport field 5 values (FIT SDK Profile):
+    ///   0=generic, 1=running, 2=cycling, 4=fitness_equipment, 5=swimming,
+    ///   10=training, 11=walking, 17=hiking, 19=yoga, 20=strength_training, etc.
+    /// FIT sub_sport field 6 values (selected):
+    ///   43=yoga, 51=pilates (both come in under sport 10/training on Garmin)
     private func mapSport(from session: [UInt8: FITFieldValue]) -> Sport {
-        // The sport field in a session message is field 5 with enum base type.
-        guard let sportValue = session[Self.fieldSessionSport]?.intValue else {
-            return .other
+        let sportValue = session[Self.fieldSessionSport]?.intValue ?? 0
+        let subSportValue = session[Self.fieldSessionSubSport]?.intValue ?? 0
+
+        // Sub-sport overrides take priority — Garmin encodes yoga as training/43.
+        switch subSportValue {
+        case 43: return .yoga    // yoga
+        case 51: return .yoga    // pilates — close enough
+        default: break
         }
+
         switch sportValue {
-        case 1:  return .running
-        case 2:  return .cycling
-        case 5:  return .swimming
-        case 11: return .walking
-        case 17: return .hiking
-        case 10, 20: return .strength
-        case 13: return .cardio // fitness_equipment often maps to cardio
-        default: return .other
+        case 1:       return .running
+        case 2:       return .cycling
+        case 5:       return .swimming
+        case 11:      return .walking
+        case 17:      return .hiking
+        case 19:      return .yoga           // sport=yoga on some firmware
+        case 10, 20:  return .strength
+        case 13:      return .cardio         // fitness_equipment → cardio
+        default:      return .other
         }
     }
 }

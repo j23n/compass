@@ -81,8 +81,8 @@ struct TrendChartView: View {
                             Text(valueFormatter(selected.value))
                                 .font(.caption)
                                 .fontWeight(.bold)
-                                .foregroundStyle(color)
-                            Text(selected.date, style: .date)
+                                .foregroundStyle(.primary)
+                            Text(selected.date, format: .dateTime.month(.abbreviated).day().hour().minute())
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
@@ -90,8 +90,14 @@ struct TrendChartView: View {
                         .padding(.vertical, 4)
                         .background {
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(.ultraThinMaterial)
+                                .fill(Color.white)
+                                .shadow(color: .black.opacity(0.12), radius: 4, x: 0, y: 2)
                         }
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .strokeBorder(Color.gray.opacity(0.2), lineWidth: 0.5)
+                        }
+                        .colorScheme(.light)
                     }
             }
         }

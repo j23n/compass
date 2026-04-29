@@ -98,6 +98,28 @@ public enum FITFieldValue: Sendable, Equatable {
         if case .string(let s) = self { return s }
         return nil
     }
+
+    /// Returns the value as an array of `UInt8`.
+    /// Handles both a scalar `.uint8` (returns single-element array) and a
+    /// `.data` blob (array of uint8 elements, as used in HSA messages).
+    public var uint8Array: [UInt8]? {
+        switch self {
+        case .uint8(let v):   return [v]
+        case .data(let bytes): return bytes.isEmpty ? nil : Array(bytes)
+        default: return nil
+        }
+    }
+
+    /// Returns the value as an array of `Int8`.
+    /// Handles both a scalar `.int8` and a `.data` blob (array of sint8 elements,
+    /// as used in HSA stress/body-battery messages).
+    public var int8Array: [Int8]? {
+        switch self {
+        case .int8(let v):    return [v]
+        case .data(let bytes): return bytes.isEmpty ? nil : bytes.map { Int8(bitPattern: $0) }
+        default: return nil
+        }
+    }
 }
 
 // MARK: - Errors
@@ -137,19 +159,39 @@ public struct FITDecoder: Sendable {
         // Local message definitions (keyed by local message type 0-15).
         var definitions: [UInt8: LocalMessageDefinition] = [:]
         var messages: [FITMessage] = []
+        // Last absolute Garmin-epoch timestamp seen, used to resolve compressed timestamps.
+        var lastTimestamp: UInt32 = 0
 
         while reader.offset < dataEnd {
             let recordHeader = reader.readUInt8()
 
             // Bit 7 distinguishes normal header (0) from compressed-timestamp header (1).
             if recordHeader & 0x80 != 0 {
-                // Compressed timestamp data message
+                // Compressed timestamp data message.
+                // Bits 6-5 = local message type (0-3); bits 4-0 = 5-bit time offset.
                 let localType = (recordHeader >> 5) & 0x03
+                let timeOffset = UInt32(recordHeader & 0x1F)
                 guard let def = definitions[localType] else {
                     Self.logger.warning("Compressed timestamp references undefined local type \(localType), skipping")
                     continue
                 }
-                let message = try readDataMessage(&reader, definition: def)
+                var message = try readDataMessage(&reader, definition: def)
+                // Resolve the implied absolute timestamp per FIT SDK §3.3.7:
+                // if offset >= (lastTS & 0x1F) the upper bits stay; otherwise they increment by 32.
+                let maskedLast = lastTimestamp & 0x1F
+                let newTimestamp: UInt32
+                if timeOffset >= maskedLast {
+                    newTimestamp = (lastTimestamp & ~UInt32(0x1F)) | timeOffset
+                } else {
+                    newTimestamp = ((lastTimestamp & ~UInt32(0x1F)) &+ 0x20) | timeOffset
+                }
+                lastTimestamp = newTimestamp
+                // Inject field 253 (timestamp) so parsers can use it normally.
+                if message.fields[253] == nil {
+                    var fields = message.fields
+                    fields[253] = .uint32(newTimestamp)
+                    message = FITMessage(globalMessageNumber: message.globalMessageNumber, fields: fields)
+                }
                 messages.append(message)
             } else if recordHeader & 0x40 != 0 {
                 // Definition message
@@ -164,6 +206,10 @@ public struct FITDecoder: Sendable {
                     continue
                 }
                 let message = try readDataMessage(&reader, definition: def)
+                // Track the last absolute timestamp for compressed-timestamp resolution.
+                if let tsField = message.fields[253], case .uint32(let tsVal) = tsField {
+                    lastTimestamp = tsVal
+                }
                 messages.append(message)
             }
         }

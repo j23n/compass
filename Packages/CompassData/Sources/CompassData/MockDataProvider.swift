@@ -67,6 +67,12 @@ public struct MockDataProvider: Sendable {
         // --- Step Counts (daily) ---
         seedStepCounts(context: context, startDate: startDate, calendar: calendar, rng: &rng)
 
+        // --- Step Samples (intraday, every 5 min) ---
+        seedStepSamples(context: context, startDate: startDate, calendar: calendar, rng: &rng)
+
+        // --- Courses (sample routes) ---
+        seedCourses(context: context, calendar: calendar, rng: &rng)
+
         try? context.save()
     }
 
@@ -495,6 +501,44 @@ public struct MockDataProvider: Sendable {
         }
     }
 
+    // MARK: - Step Samples (intraday)
+
+    private static func seedStepSamples(
+        context: ModelContext,
+        startDate: Date,
+        calendar: Calendar,
+        rng: inout SeededRandomNumberGenerator
+    ) {
+        let interval: TimeInterval = 5 * 60 // 5-minute monitoring intervals
+        for dayOffset in 0..<90 {
+            guard let dayDate = calendar.date(byAdding: .day, value: dayOffset, to: startDate) else { continue }
+            let dayStart = calendar.startOfDay(for: dayDate)
+
+            for slotIndex in 0..<288 { // 24h × 12 slots/h
+                let timestamp = dayStart.addingTimeInterval(Double(slotIndex) * interval)
+                let hour = calendar.component(.hour, from: timestamp)
+
+                let steps: Int
+                switch hour {
+                case 23, 0, 1, 2, 3, 4, 5:
+                    steps = 0 // sleeping
+                case 7...9:
+                    steps = Int.random(in: 30...120, using: &rng)  // morning routine
+                case 12...13:
+                    steps = Int.random(in: 40...160, using: &rng)  // lunch walk
+                case 17...19:
+                    steps = Int.random(in: 50...200, using: &rng)  // evening walk
+                default:
+                    steps = Int.random(in: 5...60, using: &rng)
+                }
+
+                if steps > 0 {
+                    context.insert(StepSample(timestamp: timestamp, steps: steps))
+                }
+            }
+        }
+    }
+
     // MARK: - Step Counts
 
     private static func seedStepCounts(
@@ -521,5 +565,122 @@ public struct MockDataProvider: Sendable {
             )
             context.insert(stepCount)
         }
+    }
+
+    // MARK: - Courses
+
+    private static func seedCourses(
+        context: ModelContext,
+        calendar: Calendar,
+        rng: inout SeededRandomNumberGenerator
+    ) {
+        let now = Date()
+
+        // Course 1: Bay Trail Loop (San Francisco area)
+        var waypointsBay: [CourseWaypoint] = []
+        let baseLatBay = 37.7749
+        let baseLonBay = -122.4194
+        let waypointCountBay = 12
+
+        for i in 0..<waypointCountBay {
+            let angle = Double(i) * 2.0 * .pi / Double(waypointCountBay)
+            let lat = baseLatBay + 0.03 * sin(angle)
+            let lon = baseLonBay + 0.03 * cos(angle)
+            let distanceFromStart = Double(i) * (8500.0 / Double(waypointCountBay))
+            let altitude = 10.0 + Double.random(in: 0...50, using: &rng)
+
+            let waypoint = CourseWaypoint(
+                order: i,
+                latitude: lat,
+                longitude: lon,
+                altitude: altitude,
+                name: i % 3 == 0 ? "Checkpoint \(i / 3 + 1)" : nil,
+                distanceFromStart: distanceFromStart
+            )
+            waypointsBay.append(waypoint)
+            context.insert(waypoint)
+        }
+
+        let course1 = Course(
+            name: "Bay Trail Loop",
+            importDate: calendar.date(byAdding: .day, value: -7, to: now) ?? now,
+            sport: .running,
+            totalDistance: 8500,
+            totalAscent: 120,
+            waypoints: waypointsBay
+        )
+        context.insert(course1)
+        waypointsBay.forEach { $0.course = course1 }
+
+        // Course 2: Urban Run (SF Downtown)
+        var waypointsDown: [CourseWaypoint] = []
+        let baseLatDown = 37.7940
+        let baseLonDown = -122.3983
+        let waypointCountDown = 8
+
+        for i in 0..<waypointCountDown {
+            let lat = baseLatDown + 0.02 * sin(Double(i) * 2.0 * .pi / Double(waypointCountDown))
+            let lon = baseLonDown + 0.02 * cos(Double(i) * 2.0 * .pi / Double(waypointCountDown))
+            let altitude = 15.0 + Double.random(in: 0...100, using: &rng)
+            let distanceFromStart = Double(i) * (5200.0 / Double(waypointCountDown))
+
+            let waypoint = CourseWaypoint(
+                order: i,
+                latitude: lat,
+                longitude: lon,
+                altitude: altitude,
+                name: i % 2 == 0 ? "Turn \(i / 2 + 1)" : nil,
+                distanceFromStart: distanceFromStart
+            )
+            waypointsDown.append(waypoint)
+            context.insert(waypoint)
+        }
+
+        let course2 = Course(
+            name: "Downtown Loop",
+            importDate: calendar.date(byAdding: .day, value: -3, to: now) ?? now,
+            sport: .running,
+            totalDistance: 5200,
+            totalAscent: 180,
+            waypoints: waypointsDown
+        )
+        context.insert(course2)
+        waypointsDown.forEach { $0.course = course2 }
+
+        // Course 3: Hiking Trail
+        var waypointsHike: [CourseWaypoint] = []
+        let baseLatHike = 37.7549
+        let baseLonHike = -122.4481
+        let waypointCountHike = 10
+
+        for i in 0..<waypointCountHike {
+            let progression = Double(i) / Double(waypointCountHike - 1)
+            let lat = baseLatHike + 0.025 * progression
+            let lon = baseLonHike + 0.025 * progression
+            let altitude = 100.0 + progression * 400.0 + Double.random(in: -20...20, using: &rng)
+            let distanceFromStart = Double(i) * (6500.0 / Double(waypointCountHike - 1))
+
+            let waypoint = CourseWaypoint(
+                order: i,
+                latitude: lat,
+                longitude: lon,
+                altitude: altitude,
+                name: i == 0 ? "Trailhead" : i == waypointCountHike - 1 ? "Summit" : nil,
+                distanceFromStart: distanceFromStart
+            )
+            waypointsHike.append(waypoint)
+            context.insert(waypoint)
+        }
+
+        let course3 = Course(
+            name: "Twin Peaks Trail",
+            importDate: calendar.date(byAdding: .day, value: -14, to: now) ?? now,
+            sport: .hiking,
+            totalDistance: 6500,
+            totalAscent: 450,
+            waypoints: waypointsHike
+        )
+        context.insert(course3)
+        waypointsHike.forEach { $0.course = course3 }
     }
 }

@@ -83,6 +83,16 @@ public enum FileType: UInt8, Sendable, Equatable {
     /// Corresponds to ``FITDirectory/sleep``.
     case sleep = 49         // 128/49
 
+    /// Activity file variant (some Garmin firmware versions).
+    /// Contains activity summary or detailed session data.
+    /// Corresponds to ``FITDirectory/activity``.
+    case activityVariant = 41  // 128/41
+
+    /// Garmin health-monitoring variant (Instinct Solar and similar firmware).
+    /// Contains the same message types as ``monitor`` but in a separate file per session.
+    /// Corresponds to ``FITDirectory/monitor``.
+    case monitorHealth = 58 // 128/58
+
     /// The `fileDataType` byte for all FIT files in the watch directory.
     public static let fitDataType: UInt8 = 128
 
@@ -116,6 +126,8 @@ extension FileType {
         case .sleep: return .sleep
         case .metrics: return .metrics
         case .course: return nil
+        case .activityVariant: return .activity
+        case .monitorHealth: return .monitor
         }
     }
 }

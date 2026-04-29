@@ -2,14 +2,23 @@ import Foundation
 
 // MARK: - Result types for monitoring data not present in CompassData
 
-/// A step-count observation from a monitoring FIT file.
-public struct StepCount: Sendable, Equatable {
+/// A monitoring interval from a monitoring FIT file (message 55).
+/// Each record typically covers one minute of activity tracking.
+public struct MonitoringInterval: Sendable, Equatable {
     public let timestamp: Date
     public let steps: Int
+    /// Raw FIT activity_type enum (0=generic, 1=running, 2=cycling, 6=sedentary, 7=stop).
+    public let activityType: Int
+    /// 1 if the interval represents active time (activityType != 6 and != 7), else 0.
+    public let intensityMinutes: Int
+    public let activeCalories: Double
 
-    public init(timestamp: Date, steps: Int) {
+    public init(timestamp: Date, steps: Int, activityType: Int, intensityMinutes: Int, activeCalories: Double) {
         self.timestamp = timestamp
         self.steps = steps
+        self.activityType = activityType
+        self.intensityMinutes = intensityMinutes
+        self.activeCalories = activeCalories
     }
 }
 
@@ -47,20 +56,20 @@ public struct RespirationSample: Sendable, Equatable {
 public struct MonitoringData: Sendable {
     public let heartRateSamples: [HeartRateSampleValue]
     public let stressSamples: [StressSampleValue]
-    public let stepCounts: [StepCount]
+    public let intervals: [MonitoringInterval]
     public let bodyBatterySamples: [BodyBatterySample]
     public let respirationSamples: [RespirationSample]
 
     public init(
         heartRateSamples: [HeartRateSampleValue] = [],
         stressSamples: [StressSampleValue] = [],
-        stepCounts: [StepCount] = [],
+        intervals: [MonitoringInterval] = [],
         bodyBatterySamples: [BodyBatterySample] = [],
         respirationSamples: [RespirationSample] = []
     ) {
         self.heartRateSamples = heartRateSamples
         self.stressSamples = stressSamples
-        self.stepCounts = stepCounts
+        self.intervals = intervals
         self.bodyBatterySamples = bodyBatterySamples
         self.respirationSamples = respirationSamples
     }

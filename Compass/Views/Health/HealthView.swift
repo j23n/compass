@@ -3,7 +3,7 @@ import SwiftData
 import Charts
 import CompassData
 
-/// The Health/Trends tab showing trend charts for all health metrics.
+/// The Health tab — metrics grouped into sections, each with a drag-to-read chart card.
 struct HealthView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var selectedRange: TrendTimeRange = .week
@@ -26,22 +26,22 @@ struct HealthView: View {
     @Query(sort: \StepCount.date)
     private var allSteps: [StepCount]
 
+    // MARK: - Date range
+
     private var dateRange: ClosedRange<Date> {
         let now = Date()
-        let calendar = Calendar.current
+        let cal = Calendar.current
         let start: Date
         switch selectedRange {
-        case .week:
-            start = calendar.date(byAdding: .day, value: -7, to: now)!
-        case .month:
-            start = calendar.date(byAdding: .month, value: -1, to: now)!
-        case .threeMonths:
-            start = calendar.date(byAdding: .month, value: -3, to: now)!
-        case .year:
-            start = calendar.date(byAdding: .year, value: -1, to: now)!
+        case .week:        start = cal.date(byAdding: .day,   value:  -7, to: now)!
+        case .month:       start = cal.date(byAdding: .month, value:  -1, to: now)!
+        case .threeMonths: start = cal.date(byAdding: .month, value:  -3, to: now)!
+        case .year:        start = cal.date(byAdding: .year,  value:  -1, to: now)!
         }
         return start...now
     }
+
+    // MARK: - Data points
 
     private var restingHRData: [TrendDataPoint] {
         let range = dateRange
@@ -61,10 +61,7 @@ struct HealthView: View {
         let range = dateRange
         return allSleep
             .filter { range.contains($0.startDate) }
-            .map {
-                let hours = $0.endDate.timeIntervalSince($0.startDate) / 3600.0
-                return TrendDataPoint(date: $0.startDate, value: hours)
-            }
+            .map { TrendDataPoint(date: $0.startDate, value: $0.endDate.timeIntervalSince($0.startDate) / 3600.0) }
             .sorted { $0.date < $1.date }
     }
 
@@ -89,139 +86,91 @@ struct HealthView: View {
             .map { TrendDataPoint(date: $0.date, value: Double($0.steps)) }
     }
 
+    private var activeMinutesData: [TrendDataPoint] {
+        let range = dateRange
+        return allSteps
+            .filter { range.contains($0.date) }
+            .map { TrendDataPoint(date: $0.date, value: Double($0.intensityMinutes)) }
+    }
+
+    // MARK: - Body
+
     var body: some View {
         NavigationStack {
             ScrollView {
-                let _ = AppLogger.ui.debug("HealthView rendering — range: \(selectedRange.rawValue), HR: \(restingHRData.count), HRV: \(hrvData.count), sleep: \(sleepDurationData.count), steps: \(stepsData.count)")
-                LazyVStack(spacing: 28) {
-                    // Segmented time range picker
-                    Picker("Time Range", selection: $selectedRange) {
-                        ForEach(TrendTimeRange.allCases) { range in
-                            Text(range.rawValue).tag(range)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.horizontal, 4)
+                LazyVStack(spacing: 16) {
+                    rangePicker
 
-                    // Resting HR
-                    NavigationLink {
-                        HealthDetailView(
-                            metricTitle: "Resting Heart Rate",
-                            metricUnit: "bpm",
-                            color: .red,
-                            icon: "heart.fill",
-                            data: restingHRData,
-                            valueFormatter: { "\(Int($0)) bpm" }
-                        )
-                    } label: {
-                        trendSection(
-                            title: "Resting Heart Rate",
-                            color: .red,
-                            data: restingHRData,
-                            valueFormatter: { "\(Int($0)) bpm" }
-                        )
-                    }
-                    .buttonStyle(.plain)
+                    // Heart
+                    sectionHeader(icon: "heart.fill", title: "Heart", color: .red)
+                    InteractiveTrendCard(
+                        title: "Resting Heart Rate",
+                        icon: "heart.fill",
+                        color: .red,
+                        unit: "bpm",
+                        data: restingHRData,
+                        valueFormatter: { "\(Int($0)) bpm" }
+                    )
+                    InteractiveTrendCard(
+                        title: "Heart Rate Variability",
+                        icon: "waveform.path.ecg",
+                        color: .purple,
+                        unit: "ms",
+                        data: hrvData,
+                        valueFormatter: { "\(Int($0)) ms" }
+                    )
 
-                    // HRV
-                    NavigationLink {
-                        HealthDetailView(
-                            metricTitle: "Heart Rate Variability",
-                            metricUnit: "ms",
-                            color: .purple,
-                            icon: "waveform.path.ecg",
-                            data: hrvData,
-                            valueFormatter: { "\(Int($0)) ms" }
-                        )
-                    } label: {
-                        trendSection(
-                            title: "Heart Rate Variability",
-                            color: .purple,
-                            data: hrvData,
-                            valueFormatter: { "\(Int($0)) ms" }
-                        )
-                    }
-                    .buttonStyle(.plain)
+                    // Sleep
+                    sectionHeader(icon: "bed.double.fill", title: "Sleep", color: .indigo)
+                    InteractiveTrendCard(
+                        title: "Sleep Duration",
+                        icon: "bed.double.fill",
+                        color: .indigo,
+                        unit: "hr",
+                        data: sleepDurationData,
+                        useBarChart: true,
+                        valueFormatter: { String(format: "%.1f hr", $0) }
+                    )
 
-                    // Sleep duration
-                    NavigationLink {
-                        HealthDetailView(
-                            metricTitle: "Sleep Duration",
-                            metricUnit: "hr",
-                            color: .purple,
-                            icon: "bed.double.fill",
-                            data: sleepDurationData,
-                            valueFormatter: { String(format: "%.1f hr", $0) }
-                        )
-                    } label: {
-                        trendSection(
-                            title: "Sleep Duration",
-                            color: .purple,
-                            data: sleepDurationData,
-                            valueFormatter: { String(format: "%.1f hr", $0) }
-                        )
-                    }
-                    .buttonStyle(.plain)
+                    // Recovery
+                    sectionHeader(icon: "bolt.fill", title: "Recovery", color: .blue)
+                    InteractiveTrendCard(
+                        title: "Body Battery",
+                        icon: "bolt.fill",
+                        color: .blue,
+                        unit: "",
+                        data: bodyBatteryData,
+                        valueFormatter: { "\(Int($0))" }
+                    )
+                    InteractiveTrendCard(
+                        title: "Stress",
+                        icon: "brain.head.profile",
+                        color: .orange,
+                        unit: "",
+                        data: stressData,
+                        valueFormatter: { "\(Int($0))" }
+                    )
 
-                    // Body Battery
-                    NavigationLink {
-                        HealthDetailView(
-                            metricTitle: "Body Battery",
-                            metricUnit: "",
-                            color: .blue,
-                            icon: "battery.75percent",
-                            data: bodyBatteryData,
-                            valueFormatter: { "\(Int($0))" }
-                        )
-                    } label: {
-                        trendSection(
-                            title: "Body Battery",
-                            color: .blue,
-                            data: bodyBatteryData,
-                            valueFormatter: { "\(Int($0))" }
-                        )
-                    }
-                    .buttonStyle(.plain)
-
-                    // Stress
-                    NavigationLink {
-                        HealthDetailView(
-                            metricTitle: "Stress",
-                            metricUnit: "",
-                            color: .orange,
-                            icon: "brain.head.profile",
-                            data: stressData,
-                            valueFormatter: { "\(Int($0))" }
-                        )
-                    } label: {
-                        trendSection(
-                            title: "Stress Average",
-                            color: .orange,
-                            data: stressData,
-                            valueFormatter: { "\(Int($0))" }
-                        )
-                    }
-                    .buttonStyle(.plain)
-
-                    // Steps
-                    NavigationLink {
-                        HealthDetailView(
-                            metricTitle: "Steps",
-                            metricUnit: "steps",
-                            color: .green,
-                            icon: "figure.walk",
-                            data: stepsData,
-                            valueFormatter: { "\(Int($0))" }
-                        )
-                    } label: {
-                        trendSection(
-                            title: "Steps",
-                            color: .green,
-                            data: stepsData,
-                            valueFormatter: { "\(Int($0))" }
-                        )
-                    }
-                    .buttonStyle(.plain)
+                    // Activity
+                    sectionHeader(icon: "figure.run", title: "Activity", color: .green)
+                    InteractiveTrendCard(
+                        title: "Steps",
+                        icon: "figure.walk",
+                        color: .green,
+                        unit: "steps",
+                        data: stepsData,
+                        useBarChart: true,
+                        valueFormatter: { "\(Int($0))" }
+                    )
+                    InteractiveTrendCard(
+                        title: "Active Minutes",
+                        icon: "figure.run",
+                        color: .teal,
+                        unit: "min",
+                        data: activeMinutesData,
+                        useBarChart: true,
+                        valueFormatter: { "\(Int($0)) min" }
+                    )
                 }
                 .padding()
             }
@@ -229,76 +178,30 @@ struct HealthView: View {
         }
     }
 
+    // MARK: - Helpers
+
+    private var rangePicker: some View {
+        Picker("Time Range", selection: $selectedRange) {
+            ForEach(TrendTimeRange.allCases) { range in
+                Text(range.rawValue).tag(range)
+            }
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 4)
+    }
+
     @ViewBuilder
-    private func trendSection(
-        title: String,
-        color: Color,
-        data: [TrendDataPoint],
-        valueFormatter: @escaping @Sendable (Double) -> String
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+    private func sectionHeader(icon: String, title: String, color: Color) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.subheadline)
+                .foregroundStyle(color)
             Text(title)
-                .font(.headline)
-
-            if data.isEmpty {
-                Text("No data available")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .frame(height: 100)
-                    .frame(maxWidth: .infinity)
-            } else {
-                Chart(data) { point in
-                    LineMark(
-                        x: .value("Date", point.date),
-                        y: .value("Value", point.value)
-                    )
-                    .foregroundStyle(color)
-                    .interpolationMethod(.catmullRom)
-
-                    AreaMark(
-                        x: .value("Date", point.date),
-                        y: .value("Value", point.value)
-                    )
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [color.opacity(0.2), color.opacity(0.0)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    .interpolationMethod(.catmullRom)
-                }
-                .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 4)) { value in
-                        AxisValueLabel(format: .dateTime.month(.abbreviated).day())
-                    }
-                }
-                .chartYAxis {
-                    AxisMarks(position: .leading) { _ in
-                        AxisGridLine()
-                        AxisValueLabel()
-                    }
-                }
-                .frame(height: 150)
-            }
-
-            HStack {
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
+                .font(.title3)
+                .fontWeight(.semibold)
+            Spacer()
         }
-        .padding()
-        .background {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(.background)
-                .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 2)
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(.separator, lineWidth: 0.5)
-        }
+        .padding(.top, 4)
     }
 }
 

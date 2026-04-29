@@ -31,25 +31,31 @@ enum AppLogger {
 struct AppLoggerCategory: Sendable {
 
     private let logger: Logger
+    let category: String
 
     init(subsystem: String = "com.compass.app", category: String) {
         self.logger = Logger(subsystem: subsystem, category: category)
+        self.category = category
     }
 
     func debug(_ message: String) {
         logger.debug("\(AppLoggerCategory.timestamp(), privacy: .public) \(message, privacy: .public)")
+        LogStore.shared.append(level: .debug, category: category, message: message)
     }
 
     func info(_ message: String) {
         logger.info("\(AppLoggerCategory.timestamp(), privacy: .public) \(message, privacy: .public)")
+        LogStore.shared.append(level: .info, category: category, message: message)
     }
 
     func warning(_ message: String) {
         logger.warning("\(AppLoggerCategory.timestamp(), privacy: .public) \(message, privacy: .public)")
+        LogStore.shared.append(level: .warning, category: category, message: message)
     }
 
     func error(_ message: String) {
         logger.error("\(AppLoggerCategory.timestamp(), privacy: .public) \(message, privacy: .public)")
+        LogStore.shared.append(level: .error, category: category, message: message)
     }
 
     private static func timestamp() -> String {
