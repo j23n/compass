@@ -5,10 +5,8 @@ struct LogsView: View {
     @State private var filterLevel: LogStore.Entry.Level? = nil
     @State private var searchText = ""
     @State private var isFollowing = true
-    @State private var showShareSheet = false
     @State private var showCopyAlert = false
     @State private var logStore = LogStore.shared
-    @State private var shareItems: [URL] = []
 
     private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -64,17 +62,11 @@ struct LogsView: View {
                         }
 
                         Button {
-                            if let url = createLogsFile() {
-                                shareItems = [url]
-                                showShareSheet = true
-                            }
+                            presentShareSheet()
                         } label: {
                             Image(systemName: "square.and.arrow.up")
                         }
                     }
-                }
-                .sheet(isPresented: $showShareSheet) {
-                    ActivityView(items: shareItems)
                 }
                 .alert("Copied", isPresented: $showCopyAlert) {
                     Button("OK") {}
@@ -189,24 +181,27 @@ struct LogsView: View {
     private func getLogsText() -> String {
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
-
         return logStore.entries.map { entry in
             "[\(dateFormatter.string(from: entry.timestamp))] [\(entry.level.displayName)] [\(entry.category)] \(entry.message)"
         }.joined(separator: "\n")
     }
 
-    private func createLogsFile() -> URL? {
+    private func presentShareSheet() {
         let text = getLogsText()
-        let fileName = "compass-logs-\(Date().formatted(date: .abbreviated, time: .standard)).txt"
-        let tempDir = FileManager.default.temporaryDirectory
-        let fileURL = tempDir.appendingPathComponent(fileName)
-
-        do {
-            try text.write(to: fileURL, atomically: true, encoding: .utf8)
-            return fileURL
-        } catch {
-            return nil
+        let vc = UIActivityViewController(activityItems: [text], applicationActivities: nil)
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let window = scene.keyWindow else { return }
+        // Walk to the topmost presented view controller so we don't double-present.
+        var topVC = window.rootViewController
+        while let presented = topVC?.presentedViewController {
+            topVC = presented
         }
+        // iPad needs a popover source rect; on iPhone this is ignored.
+        vc.popoverPresentationController?.sourceView = window
+        vc.popoverPresentationController?.sourceRect = CGRect(
+            x: window.bounds.midX, y: window.safeAreaInsets.top, width: 0, height: 0
+        )
+        topVC?.present(vc, animated: true)
     }
 }
 
