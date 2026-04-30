@@ -188,7 +188,10 @@ struct LogsView: View {
 
     private func presentShareSheet() {
         let text = getLogsText()
-        let vc = UIActivityViewController(activityItems: [text], applicationActivities: nil)
+        let fileName = "compass-logs-\(Date().formatted(.dateTime.year().month().day())).txt"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+        guard (try? text.write(to: url, atomically: true, encoding: .utf8)) != nil else { return }
+        let vc = UIActivityViewController(activityItems: [url], applicationActivities: nil)
         guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
               let window = scene.keyWindow else { return }
         // Walk to the topmost presented view controller so we don't double-present.
