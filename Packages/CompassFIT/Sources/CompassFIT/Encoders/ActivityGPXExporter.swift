@@ -4,7 +4,7 @@ import CompassData
 /// Exports an `Activity`'s track points to a GPX 1.1 file.
 public struct ActivityGPXExporter: Sendable {
 
-    private static let iso8601: ISO8601DateFormatter = {
+    nonisolated(unsafe) private static let iso8601: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime]
         return f
