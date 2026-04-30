@@ -80,10 +80,12 @@ public struct SleepFITParser: Sendable {
     // Common field numbers
     private static let fieldTimestamp: UInt8 = 253
 
-    // sleep_data_info (273) fields
-    private static let sleepScore: UInt8 = 0
-    private static let sleepStartTime: UInt8 = 2
-    private static let sleepEndTime: UInt8 = 3
+    // sleep_data_info (273) fields — corrected from live Instinct Solar 1G captures:
+    // field 253 = timestamp = sleep start; field 2 = sleep end; field 1 = score (0–100);
+    // field 0 is a quality-category enum (0–3), not the numeric score.
+    private static let sleepScore: UInt8 = 1
+    private static let sleepStartTime: UInt8 = 253
+    private static let sleepEndTime: UInt8 = 2
 
     // sleep_stage (275) fields
     private static let stageType: UInt8 = 0
@@ -110,7 +112,7 @@ public struct SleepFITParser: Sendable {
         let fitFile = try decoder.decode(data: data)
 
         var sleepInfo: [UInt8: FITFieldValue]?
-        var rawStages: [(timestamp: Date, stageValue: Int, durationSeconds: Int)] = []
+        var rawStages: [(timestamp: Date, stageValue: Int, durationSeconds: Int?)] = []
         var levelSamples: [SleepLevelSample] = []
 
         for message in fitFile.messages {
@@ -157,12 +159,13 @@ public struct SleepFITParser: Sendable {
 
     // MARK: - Private helpers
 
-    private func parseSleepStage(from fields: [UInt8: FITFieldValue]) -> (timestamp: Date, stageValue: Int, durationSeconds: Int)? {
+    private func parseSleepStage(from fields: [UInt8: FITFieldValue]) -> (timestamp: Date, stageValue: Int, durationSeconds: Int?)? {
         guard let timestamp = fields[Self.fieldTimestamp].flatMap(FITTimestamp.date(from:)),
-              let stageValue = fields[Self.stageType]?.intValue,
-              let duration = fields[Self.stageDuration]?.intValue else {
+              let stageValue = fields[Self.stageType]?.intValue else {
             return nil
         }
+        // Duration is optional: the Instinct Solar omits field 1; spans are derived from timestamps.
+        let duration = fields[Self.stageDuration]?.intValue
         return (timestamp: timestamp, stageValue: stageValue, durationSeconds: duration)
     }
 
@@ -176,7 +179,7 @@ public struct SleepFITParser: Sendable {
 
     private func buildSleepResult(
         from info: [UInt8: FITFieldValue]?,
-        rawStages: [(timestamp: Date, stageValue: Int, durationSeconds: Int)],
+        rawStages: [(timestamp: Date, stageValue: Int, durationSeconds: Int?)],
         levelSamples: [SleepLevelSample]
     ) -> SleepResult? {
         let score = info?[Self.sleepScore]?.intValue
@@ -197,9 +200,14 @@ public struct SleepFITParser: Sendable {
             // Each level record = 1 minute; add 60s to include the last minute
             endDate = levelSamples.last!.timestamp.addingTimeInterval(60)
         } else if !rawStages.isEmpty {
-            startDate = rawStages.first!.timestamp
-            let last = rawStages.last!
-            endDate = last.timestamp.addingTimeInterval(TimeInterval(last.durationSeconds))
+            let sorted = rawStages.sorted { $0.timestamp < $1.timestamp }
+            startDate = sorted.first!.timestamp
+            let last = sorted.last!
+            if let dur = last.durationSeconds {
+                endDate = last.timestamp.addingTimeInterval(TimeInterval(dur))
+            } else {
+                endDate = last.timestamp.addingTimeInterval(60)
+            }
         } else {
             Self.logger.warning("Cannot determine session bounds — no level samples or stage records")
             return nil
@@ -217,9 +225,18 @@ public struct SleepFITParser: Sendable {
         if !levelSamples.isEmpty {
             stages = buildStagesFromLevelSamples(levelSamples)
         } else {
-            stages = rawStages.compactMap { raw in
+            // Sort by timestamp; each stage spans to the next stage's start (or session end for the last).
+            let sorted = rawStages.sorted { $0.timestamp < $1.timestamp }
+            stages = sorted.enumerated().compactMap { i, raw in
                 guard let stageType = mapSleepStage(raw.stageValue) else { return nil }
-                let stageEnd = raw.timestamp.addingTimeInterval(TimeInterval(raw.durationSeconds))
+                let stageEnd: Date
+                if let dur = raw.durationSeconds {
+                    stageEnd = raw.timestamp.addingTimeInterval(TimeInterval(dur))
+                } else if i + 1 < sorted.count {
+                    stageEnd = sorted[i + 1].timestamp
+                } else {
+                    stageEnd = endDate
+                }
                 return SleepStageResult(startDate: raw.timestamp, endDate: stageEnd, stage: stageType)
             }
         }

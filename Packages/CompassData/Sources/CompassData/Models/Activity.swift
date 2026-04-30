@@ -17,6 +17,7 @@ public final class Activity {
     public var maxHeartRate: Int?
     public var totalAscent: Double?
     public var totalDescent: Double?
+    public var sourceFileName: String?
 
     @Relationship(deleteRule: .cascade, inverse: \TrackPoint.activity)
     public var trackPoints: [TrackPoint]
@@ -33,6 +34,7 @@ public final class Activity {
         maxHeartRate: Int? = nil,
         totalAscent: Double? = nil,
         totalDescent: Double? = nil,
+        sourceFileName: String? = nil,
         trackPoints: [TrackPoint] = []
     ) {
         self.id = id
@@ -46,6 +48,7 @@ public final class Activity {
         self.maxHeartRate = maxHeartRate
         self.totalAscent = totalAscent
         self.totalDescent = totalDescent
+        self.sourceFileName = sourceFileName
         self.trackPoints = trackPoints
     }
 }

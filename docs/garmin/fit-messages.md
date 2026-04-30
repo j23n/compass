@@ -272,15 +272,20 @@ Session-level header. One per sleep session.
 
 | Field | Name | Type | Notes |
 |---|---|---|---|
-| 253 | timestamp | date_time | — |
-| 0 | sleep_score | uint8 | Overall sleep score 0–100 |
-| 2 | start_time | date_time | Session start (may be absent on older firmware) |
-| 3 | end_time | date_time | Session end (may be absent on older firmware) |
+| 253 | timestamp | date_time | **Sleep start time** (FIT convention: timestamp = start of the record's interval) |
+| 0 | sleep_quality | enum | Quality category: 0=poor, 1=fair, 2=good, 3=excellent — **not the numeric score** |
+| 1 | sleep_score | uint16 | Overall sleep score 0–100 |
+| 2 | end_time | date_time | Sleep session end time |
+
+**Correction vs. earlier notes:** The HarryOnline spreadsheet listed field 0 as `sleep_score` and fields 2/3 as start/end times. Live Instinct Solar 1G captures show the opposite: field 253 (timestamp) is the start, field 2 is the end, field 1 is the numeric score (60 in the captured file), and field 0 is a 2-bit quality enum. The parser was fixed accordingly.
 
 ### Message 274 — `sleep_level`
 
-Per-minute staging record. **The primary sleep staging source on Instinct Solar 1G.**
-Msg 275 (`sleep_stage`) is absent on this firmware; use msg 274 only.
+**On Instinct Solar 1G (live capture 2026-04-30):** message 274 appears with a non-standard definition — no timestamp field (253) and field 0 as a 20-byte blob (`bytes` type). Six such records were present for a 120-minute session, suggesting one byte per minute packed in batches of 20.
+
+The byte values in the blob do not match the expected 0–4 sleep level encoding; the encoding is unknown. The parser currently skips these records gracefully (returns nil from `parseSleepLevel` when field 253 or an integer field 0 is absent). Session bounds and stages fall back to msg 273 and msg 275 respectively.
+
+**Standard definition (other firmware):** One record per minute; stage from field 0.
 
 | Field | Name | Type | Notes |
 |---|---|---|---|
@@ -294,19 +299,15 @@ Stage mapping for `SleepStage` persistence:
 - 3 → `.deep`
 - 4 → `.rem`
 
-Session bounds fallback: if msg 273 fields 2/3 are absent, derive bounds from msg 274:
-- `startDate = levelSamples.first!.timestamp`
-- `endDate = levelSamples.last!.timestamp + 60s` (each record represents one minute)
-
 ### Message 275 — `sleep_stage`
 
 | Field | Name | Type | Notes |
 |---|---|---|---|
-| 253 | timestamp | date_time | — |
-| 0 | stage | enum | — |
-| 1 | duration | uint32 | seconds |
+| 253 | timestamp | date_time | Start of the stage |
+| 0 | stage | enum | 0=deep, 1=light, 2=REM, 3=awake |
+| 1 | duration | uint32 | seconds — **absent on Instinct Solar 1G** |
 
-**Not observed on Instinct Solar 1G.** Retained as fallback for other firmware.
+**Observed on Instinct Solar 1G** — contrary to earlier notes. However, field 1 (duration) is absent. The parser derives stage spans from consecutive record timestamps; the last stage extends to the session end.
 
 ### Message 276 — `sleep_assessment`
 

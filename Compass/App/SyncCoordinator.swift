@@ -399,6 +399,7 @@ final class SyncCoordinator {
                             AppLogger.sync.debug("Skipping duplicate activity at \(activity.startDate)")
                             continue
                         }
+                        activity.sourceFileName = url.lastPathComponent
                         context.insert(activity)
                         AppLogger.sync.debug("Inserted activity: \(activity.sport.displayName)")
                     }

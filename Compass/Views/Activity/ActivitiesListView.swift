@@ -2,8 +2,10 @@ import SwiftUI
 import SwiftData
 import CompassData
 
+
 /// The Activities tab — full reverse-chronological list with sport filter chips.
 struct ActivitiesListView: View {
+    @Environment(\.modelContext) private var modelContext
     @Query(sort: \Activity.startDate, order: .reverse)
     private var allActivities: [Activity]
 
@@ -60,6 +62,7 @@ struct ActivitiesListView: View {
                         }
                         .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
                     }
+                    .onDelete(perform: deleteActivities)
                 }
             }
         }
@@ -110,6 +113,14 @@ struct ActivitiesListView: View {
             .clipShape(Capsule())
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - Delete
+
+    private func deleteActivities(at offsets: IndexSet) {
+        for index in offsets {
+            modelContext.delete(filteredActivities[index])
+        }
     }
 
     // MARK: - Empty state

@@ -17,19 +17,22 @@ struct MapPOI: Identifiable, Equatable {
 struct MapRouteView: UIViewRepresentable {
     let coordinates: [CLLocationCoordinate2D]
     let pois: [MapPOI]
+    var highlightCoordinate: CLLocationCoordinate2D? = nil
 
-    init(trackPoints: [TrackPoint]) {
+    init(trackPoints: [TrackPoint], highlightCoordinate: CLLocationCoordinate2D? = nil) {
         let sorted = trackPoints.sorted { $0.timestamp < $1.timestamp }
         self.coordinates = sorted.compactMap { point in
             guard point.latitude != 0 || point.longitude != 0 else { return nil }
             return CLLocationCoordinate2D(latitude: point.latitude, longitude: point.longitude)
         }
         self.pois = []
+        self.highlightCoordinate = highlightCoordinate
     }
 
-    init(coordinates: [CLLocationCoordinate2D], pois: [MapPOI] = []) {
+    init(coordinates: [CLLocationCoordinate2D], pois: [MapPOI] = [], highlightCoordinate: CLLocationCoordinate2D? = nil) {
         self.coordinates = coordinates
         self.pois = pois
+        self.highlightCoordinate = highlightCoordinate
     }
 
     func makeUIView(context: Context) -> MKMapView {
@@ -46,32 +49,51 @@ struct MapRouteView: UIViewRepresentable {
     }
 
     func updateUIView(_ map: MKMapView, context: Context) {
-        map.removeOverlays(map.overlays)
-        map.removeAnnotations(map.annotations)
+        let coord = context.coordinator
 
-        guard !coordinates.isEmpty else { return }
+        // Only rebuild route when the coordinate set changes.
+        if coord.lastCoordinateCount != coordinates.count {
+            map.removeOverlays(map.overlays)
+            let routeAnnotations = map.annotations.filter { !($0 is HighlightAnnotation) }
+            map.removeAnnotations(routeAnnotations)
 
-        let polyline = MKPolyline(coordinates: coordinates, count: coordinates.count)
-        map.addOverlay(polyline, level: .aboveRoads)
+            guard !coordinates.isEmpty else {
+                coord.lastCoordinateCount = 0
+                return
+            }
 
-        map.addAnnotations([
-            RouteAnnotation(coordinate: coordinates.first!, kind: .start),
-            RouteAnnotation(coordinate: coordinates.last!, kind: .end),
-        ])
+            let polyline = MKPolyline(coordinates: coordinates, count: coordinates.count)
+            map.addOverlay(polyline, level: .aboveRoads)
 
-        if !pois.isEmpty {
-            map.addAnnotations(pois.map { POIAnnotation(poi: $0) })
+            map.addAnnotations([
+                RouteAnnotation(coordinate: coordinates.first!, kind: .start),
+                RouteAnnotation(coordinate: coordinates.last!, kind: .end),
+            ])
+
+            if !pois.isEmpty {
+                map.addAnnotations(pois.map { POIAnnotation(poi: $0) })
+            }
+
+            let allCoords = coordinates + pois.map(\.coordinate)
+            let region = MKCoordinateRegion(routeCoordinates: allCoords, paddingFraction: 0.22)
+            if map.frame.isEmpty {
+                DispatchQueue.main.async { map.setRegion(region, animated: false) }
+            } else {
+                map.setRegion(region, animated: false)
+            }
+
+            coord.lastCoordinateCount = coordinates.count
         }
 
-        // Compute region around track AND POIs so off-route POIs aren't clipped.
-        let allCoords = coordinates + pois.map(\.coordinate)
-        let region = MKCoordinateRegion(routeCoordinates: allCoords, paddingFraction: 0.22)
-        // Defer setRegion until after SwiftUI's layout pass has given the map view
-        // its actual frame; calling it with a zero-frame produces "clip: empty path" warnings.
-        if map.frame.isEmpty {
-            DispatchQueue.main.async { map.setRegion(region, animated: false) }
-        } else {
-            map.setRegion(region, animated: false)
+        // Update highlight annotation independently (fast path for chart scrubbing).
+        if let existing = coord.highlightAnnotation {
+            map.removeAnnotation(existing)
+            coord.highlightAnnotation = nil
+        }
+        if let newCoord = highlightCoordinate {
+            let ann = HighlightAnnotation(coordinate: newCoord)
+            map.addAnnotation(ann)
+            coord.highlightAnnotation = ann
         }
     }
 
@@ -80,6 +102,9 @@ struct MapRouteView: UIViewRepresentable {
     // MARK: - Coordinator
 
     final class Coordinator: NSObject, MKMapViewDelegate {
+        var lastCoordinateCount = 0
+        var highlightAnnotation: HighlightAnnotation? = nil
+
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             guard let polyline = overlay as? MKPolyline else {
                 return MKOverlayRenderer(overlay: overlay)
@@ -108,27 +133,41 @@ struct MapRouteView: UIViewRepresentable {
                 view.titleVisibility = .adaptive
                 return view
             }
+            if annotation is HighlightAnnotation {
+                let view = MKAnnotationView(annotation: annotation, reuseIdentifier: "highlight")
+                view.bounds = CGRect(x: 0, y: 0, width: 14, height: 14)
+                view.backgroundColor = .systemBlue
+                view.layer.cornerRadius = 7
+                view.layer.borderColor = UIColor.white.cgColor
+                view.layer.borderWidth = 2.5
+                view.layer.shadowColor = UIColor.black.cgColor
+                view.layer.shadowOpacity = 0.3
+                view.layer.shadowRadius = 2
+                view.layer.shadowOffset = CGSize(width: 0, height: 1)
+                view.canShowCallout = false
+                return view
+            }
             return nil
         }
 
         private func poiSystemImage(forType type: Int) -> String {
             switch type {
-            case 1: return "mountain.2.fill"          // summit
-            case 2: return "arrow.down.to.line"       // valley
-            case 3: return "drop.fill"                // water
-            case 4: return "fork.knife"               // food
-            case 5: return "exclamationmark.triangle" // danger
-            case 6: return "arrow.turn.up.left"       // left
-            case 7: return "arrow.turn.up.right"      // right
-            case 8: return "arrow.up"                 // straight
-            case 9: return "cross.fill"               // first_aid
-            default: return "mappin"                  // generic
+            case 1: return "mountain.2.fill"
+            case 2: return "arrow.down.to.line"
+            case 3: return "drop.fill"
+            case 4: return "fork.knife"
+            case 5: return "exclamationmark.triangle"
+            case 6: return "arrow.turn.up.left"
+            case 7: return "arrow.turn.up.right"
+            case 8: return "arrow.up"
+            case 9: return "cross.fill"
+            default: return "mappin"
             }
         }
     }
 }
 
-// MARK: - Route annotation
+// MARK: - Annotations
 
 final class RouteAnnotation: NSObject, MKAnnotation {
     enum Kind: String { case start, end }
@@ -147,6 +186,11 @@ final class POIAnnotation: NSObject, MKAnnotation {
     var title: String? { poi.name }
 
     init(poi: MapPOI) { self.poi = poi }
+}
+
+final class HighlightAnnotation: NSObject, MKAnnotation {
+    let coordinate: CLLocationCoordinate2D
+    init(coordinate: CLLocationCoordinate2D) { self.coordinate = coordinate }
 }
 
 // MARK: - MKCoordinateRegion convenience
