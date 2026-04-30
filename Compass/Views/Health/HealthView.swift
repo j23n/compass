@@ -33,32 +33,12 @@ struct HealthView: View {
         let cal = Calendar.current
         let start: Date
         switch selectedRange {
-        case .day:   start = cal.date(byAdding: .day,   value:  -1, to: now)!
-        case .week:  start = cal.date(byAdding: .day,   value:  -7, to: now)!
-        case .month: start = cal.date(byAdding: .month, value:  -1, to: now)!
+        case .day:   start = cal.startOfDay(for: now)
+        case .week:  start = cal.date(byAdding: .day,   value:  -6, to: cal.startOfDay(for: now))!
+        case .month: start = cal.date(byAdding: .day,   value: -29, to: cal.startOfDay(for: now))!
         case .year:  start = cal.date(byAdding: .year,  value:  -1, to: now)!
         }
         return start...now
-    }
-
-    private func monthlySum(_ points: [TrendDataPoint]) -> [TrendDataPoint] {
-        let cal = Calendar.current
-        let groups = Dictionary(grouping: points) {
-            cal.dateInterval(of: .month, for: $0.date)?.start ?? $0.date
-        }
-        return groups.map { TrendDataPoint(date: $0.key, value: $0.value.reduce(0) { $0 + $1.value }) }
-            .sorted { $0.date < $1.date }
-    }
-
-    private func monthlyAverage(_ points: [TrendDataPoint]) -> [TrendDataPoint] {
-        let cal = Calendar.current
-        let groups = Dictionary(grouping: points) {
-            cal.dateInterval(of: .month, for: $0.date)?.start ?? $0.date
-        }
-        return groups.compactMap { key, pts in
-            guard !pts.isEmpty else { return nil }
-            return TrendDataPoint(date: key, value: pts.reduce(0) { $0 + $1.value } / Double(pts.count))
-        }.sorted { $0.date < $1.date }
     }
 
     // MARK: - Data points
@@ -79,11 +59,10 @@ struct HealthView: View {
 
     private var sleepDurationData: [TrendDataPoint] {
         let range = dateRange
-        let daily = allSleep
+        return allSleep
             .filter { range.contains($0.startDate) }
             .map { TrendDataPoint(date: $0.startDate, value: $0.endDate.timeIntervalSince($0.startDate) / 3600.0) }
             .sorted { $0.date < $1.date }
-        return selectedRange == .year ? monthlyAverage(daily) : daily
     }
 
     private var bodyBatteryData: [TrendDataPoint] {
@@ -102,18 +81,16 @@ struct HealthView: View {
 
     private var stepsData: [TrendDataPoint] {
         let range = dateRange
-        let daily = allSteps
+        return allSteps
             .filter { range.contains($0.date) }
             .map { TrendDataPoint(date: $0.date, value: Double($0.steps)) }
-        return selectedRange == .year ? monthlySum(daily) : daily
     }
 
     private var activeMinutesData: [TrendDataPoint] {
         let range = dateRange
-        let daily = allSteps
+        return allSteps
             .filter { range.contains($0.date) }
             .map { TrendDataPoint(date: $0.date, value: Double($0.intensityMinutes)) }
-        return selectedRange == .year ? monthlySum(daily) : daily
     }
 
     // MARK: - Body

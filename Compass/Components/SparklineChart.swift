@@ -1,7 +1,7 @@
 import SwiftUI
 import Charts
 
-/// A minimal sparkline bar chart — no axes, labels, or grid.
+/// A minimal sparkline scatter chart — no axes, labels, or grid.
 struct SparklineChart: View {
     let data: [Double]
     var color: Color = .red
@@ -9,12 +9,12 @@ struct SparklineChart: View {
     var body: some View {
         Chart {
             ForEach(Array(data.enumerated()), id: \.offset) { index, value in
-                BarMark(
+                PointMark(
                     x: .value("Index", index),
                     y: .value("Value", value)
                 )
                 .foregroundStyle(color.opacity(0.75))
-                .cornerRadius(2)
+                .symbolSize(20)
             }
         }
         .chartXAxis(.hidden)

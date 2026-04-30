@@ -18,6 +18,59 @@ struct TrendDataPoint: Identifiable, Sendable {
     let value: Double
 }
 
+/// An aggregated bucket for ranged bar charts (week / month / year views).
+struct TrendBucket: Identifiable, Sendable {
+    let id = UUID()
+    let date: Date      // bucket start (day or month)
+    let low: Double     // bar bottom: 0 for sum metrics, actual min for range metrics
+    let high: Double    // bar top:    total for sum, actual max for range
+    let display: Double // shown in callout: total for sum, average for range
+}
+
+/// Groups `data` into calendar buckets for the given range.
+/// - `isSum`: true for totals (steps, sleep), false for min/max ranges (HR, BB, stress).
+/// Day range is a no-op (scatter handled separately).
+func makeTrendBuckets(from data: [TrendDataPoint], range: TrendTimeRange, isSum: Bool) -> [TrendBucket] {
+    guard range != .day else { return [] }
+    let cal = Calendar.current
+    let now = Date()
+    let todayStart = cal.startOfDay(for: now)
+
+    let startDate: Date
+    let unit: Calendar.Component
+    let count: Int
+
+    switch range {
+    case .day: return []
+    case .week:
+        startDate = cal.date(byAdding: .day, value: -6, to: todayStart)!
+        unit = .day; count = 7
+    case .month:
+        startDate = cal.date(byAdding: .day, value: -29, to: todayStart)!
+        unit = .day; count = 30
+    case .year:
+        let thisMonth = cal.date(from: cal.dateComponents([.year, .month], from: now))!
+        startDate = cal.date(byAdding: .month, value: -11, to: thisMonth)!
+        unit = .month; count = 12
+    }
+
+    return (0..<count).compactMap { i in
+        let bucketStart = cal.date(byAdding: unit, value: i, to: startDate)!
+        let bucketEnd   = cal.date(byAdding: unit, value: 1, to: bucketStart)!
+        guard bucketStart <= now else { return nil }
+        let vals = data.filter { $0.date >= bucketStart && $0.date < bucketEnd }.map { $0.value }
+        guard !vals.isEmpty else { return nil }
+        if isSum {
+            let total = vals.reduce(0, +)
+            return TrendBucket(date: bucketStart, low: 0, high: total, display: total)
+        } else {
+            let lo = vals.min()!, hi = vals.max()!
+            let avg = vals.reduce(0, +) / Double(vals.count)
+            return TrendBucket(date: bucketStart, low: lo, high: hi, display: avg)
+        }
+    }
+}
+
 /// A reusable trend chart with time range picker and tap-to-inspect callout.
 struct TrendChartView: View {
     let title: String
