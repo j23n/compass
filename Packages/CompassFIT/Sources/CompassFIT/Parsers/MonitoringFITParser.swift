@@ -191,9 +191,13 @@ public struct MonitoringFITParser: Sendable {
     // FIT activity_type enum (msg 55, field 5) as observed on Instinct Solar (1st gen) fw 19.1:
     //   0=generic, 1=running, 2=cycling, 3=transition, 4=fitness_equipment,
     //   5=swimming, 6=walking, 8=sedentary (NOT 7 — confirmed from USB dump), 254=invalid
-    // The `intensity` field (field 28) is packed into the high 5 bits of
-    // `current_activity_type_intensity` (field 29); activity_type in the low 3 bits.
-    private static let sedentaryActivityType: Int = 8
+    // field 24 = current_activity_type_intensity (uint8): bits[2:0]=activity_type, bits[7:3]=intensity.
+    // field 29 (uint16) is a separate cumulative field; it does not carry packed intensity data.
+    //
+    // Activity types that contribute intensity minutes (purposeful movement only).
+    // generic (0) is used for sleep and unclassified periods and must NOT count.
+    // It is also the default when field 5 is absent, so excluding it is critical.
+    private static let intensityActivityTypes: Set<Int> = [1, 2, 4, 5, 6]
 
     private func parseMonitoringInterval(
         from fields: [UInt8: FITFieldValue],
@@ -222,8 +226,7 @@ public struct MonitoringFITParser: Sendable {
             steps = 0
         }
 
-        // Sedentary = raw 8 on Instinct Solar fw 19.1 (confirmed from USB FIT dump).
-        let intensityMinutes = (activityType == Self.sedentaryActivityType) ? 0 : 1
+        let intensityMinutes = Self.intensityActivityTypes.contains(activityType) ? 1 : 0
 
         let activeCalories = fields[Self.monitoringActiveCalories]?.doubleValue ?? 0.0
         return MonitoringInterval(
