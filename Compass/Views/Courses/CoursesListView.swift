@@ -127,10 +127,10 @@ struct CoursesListView: View {
 
             modelContext.insert(course)
             try modelContext.save()
-            print("Imported course: \(course.name) with \(course.waypoints.count) waypoints and \(pois.count) POIs")
+            AppLogger.sync.info("Imported course: \(course.name) with \(course.waypoints.count) waypoints and \(pois.count) POIs")
         } catch {
             importError = error.localizedDescription
-            print("GPX import error: \(error)")
+            AppLogger.sync.error("GPX import error: \(error)")
         }
     }
 }

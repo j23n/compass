@@ -375,6 +375,9 @@ final class SyncCoordinator {
             // Parse FIT files and write to SwiftData
             state = .syncing(description: "Parsing \(fitURLs.count) files...")
 
+            // Track sleep session starts inserted in this batch (saves not flushed until end of loop)
+            var batchInsertedSleepStarts: [TimeInterval] = []
+
             for url in savedURLs {
                 guard let fileData = try? Data(contentsOf: url) else {
                     AppLogger.sync.warning("Could not read FIT file at: \(url.lastPathComponent)")
@@ -488,9 +491,18 @@ final class SyncCoordinator {
                 } else if filename.contains("sleep") || filename.contains("slp") {
                     let parser = SleepFITParser()
                     if let result = try? await parser.parse(data: fileData) {
-                        // Dedup: skip if a session exists with startDate within ±1 hour
+                        // Dedup: skip if a session exists with startDate within ±1 hour —
+                        // check both persisted records and sessions inserted earlier in this batch
+                        // (batch inserts are invisible to fetch until context.save())
                         let lowerBound = result.startDate.addingTimeInterval(-3600)
                         let upperBound = result.startDate.addingTimeInterval(3600)
+                        let inBatch = batchInsertedSleepStarts.contains {
+                            abs($0 - result.startDate.timeIntervalSince1970) <= 3600
+                        }
+                        guard !inBatch else {
+                            AppLogger.sync.debug("Skipping duplicate sleep session (in-batch) near \(result.startDate)")
+                            continue
+                        }
                         var sleepCheck = FetchDescriptor<SleepSession>(
                             predicate: #Predicate<SleepSession> { s in
                                 s.startDate >= lowerBound && s.startDate <= upperBound
@@ -502,6 +514,7 @@ final class SyncCoordinator {
                             AppLogger.sync.debug("Skipping duplicate sleep session near \(result.startDate)")
                             continue
                         }
+                        batchInsertedSleepStarts.append(result.startDate.timeIntervalSince1970)
                         let session = SleepSession(
                             id: UUID(),
                             startDate: result.startDate,

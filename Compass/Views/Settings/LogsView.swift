@@ -3,16 +3,29 @@ import UIKit
 
 struct LogsView: View {
     @State private var filterLevel: LogStore.Entry.Level? = nil
+    @State private var searchText = ""
+    @State private var isFollowing = true
     @State private var showShareSheet = false
     @State private var showCopyAlert = false
     @State private var logStore = LogStore.shared
     @State private var shareItems: [URL] = []
 
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss.SSS"
+        return f
+    }()
+
     private var filteredEntries: [LogStore.Entry] {
-        if let level = filterLevel {
-            return logStore.entries.filter { $0.level == level }
+        logStore.entries.filter { entry in
+            if let level = filterLevel, entry.level != level { return false }
+            if !searchText.isEmpty {
+                let needle = searchText.lowercased()
+                return entry.message.lowercased().contains(needle)
+                    || entry.category.lowercased().contains(needle)
+            }
+            return true
         }
-        return logStore.entries
     }
 
     private var levelColors: [LogStore.Entry.Level: Color] {
@@ -29,12 +42,20 @@ struct LogsView: View {
             contentBody
                 .navigationTitle("Logs")
                 .navigationBarTitleDisplayMode(.inline)
+                .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Filter by message or category")
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         filterMenu
                     }
 
                     ToolbarItemGroup(placement: .topBarTrailing) {
+                        Button {
+                            isFollowing.toggle()
+                        } label: {
+                            Image(systemName: isFollowing ? "arrow.down.circle.fill" : "arrow.down.circle")
+                        }
+                        .help(isFollowing ? "Auto-scrolling to latest" : "Scroll to latest paused")
+
                         Button {
                             UIPasteboard.general.string = getLogsText()
                             showCopyAlert = true
@@ -67,9 +88,9 @@ struct LogsView: View {
     private var contentBody: some View {
         if filteredEntries.isEmpty {
             ContentUnavailableView {
-                Label("No Logs", systemImage: "doc.text.magnifyingglass")
+                Label(searchText.isEmpty ? "No Logs" : "No Matching Logs", systemImage: "doc.text.magnifyingglass")
             } description: {
-                Text("Logs will appear here as the app runs.")
+                Text(searchText.isEmpty ? "Logs will appear here as the app runs." : "Try a different search term or filter.")
             }
         } else {
             logsList
@@ -78,24 +99,34 @@ struct LogsView: View {
 
     @ViewBuilder
     private var logsList: some View {
-        List(filteredEntries, id: \.id) { entry in
-            logListRow(for: entry)
+        ScrollViewReader { proxy in
+            List(filteredEntries, id: \.id) { entry in
+                logListRow(for: entry)
+                    .id(entry.id)
+            }
+            .listStyle(.plain)
+            .onChange(of: filteredEntries.count) { _, _ in
+                if isFollowing, let last = filteredEntries.last {
+                    proxy.scrollTo(last.id, anchor: .bottom)
+                }
+            }
+            .onChange(of: isFollowing) { _, following in
+                if following, let last = filteredEntries.last {
+                    withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                }
+            }
         }
-        .listStyle(.plain)
     }
 
     private func logListRow(for entry: LogStore.Entry) -> some View {
-        let timeFormatter = DateFormatter()
-        timeFormatter.dateFormat = "HH:mm:ss.SSS"
-
-        return HStack(spacing: 12) {
+        HStack(spacing: 12) {
             Circle()
                 .fill(levelColors[entry.level] ?? .gray)
                 .frame(width: 8, height: 8)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text(timeFormatter.string(from: entry.timestamp))
+                    Text(Self.timeFormatter.string(from: entry.timestamp))
                         .font(.caption)
                         .foregroundStyle(.secondary)
 

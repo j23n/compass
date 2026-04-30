@@ -38,6 +38,12 @@ struct CompassApp: App {
             fatalError("Failed to create ModelContainer: \(error)")
         }
 
+        // Forward every BLE log entry into the shared in-app log store.
+        BLELogger.sink = { level, category, message in
+            let storeLevel = LogStore.Entry.Level(rawValue: level.rawValue) ?? .debug
+            LogStore.shared.append(level: storeLevel, category: category, message: message)
+        }
+
         // Always use the real device manager for BLE communication
         let deviceManager: any DeviceManagerProtocol = GarminDeviceManager()
         AppLogger.app.debug("Using GarminDeviceManager")
