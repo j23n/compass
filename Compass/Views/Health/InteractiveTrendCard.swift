@@ -227,7 +227,7 @@ struct InteractiveTrendCard: View {
                     .foregroundStyle(Color.secondary.opacity(0.4))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
                     .annotation(position: .top, spacing: 4, overflowResolution: .init(x: .fit, y: .disabled)) {
-                        calloutView(value: valueFormatter(b.display), date: b.date)
+                        calloutView(value: barCalloutValue(b), date: b.date)
                     }
             }
         }
@@ -256,6 +256,12 @@ struct InteractiveTrendCard: View {
                         .onEnded { _ in selectedBucket = nil })
             }
         }
+    }
+
+    private func barCalloutValue(_ b: TrendBucket) -> String {
+        useBarChart
+            ? valueFormatter(b.display)
+            : "\(valueFormatter(b.low)) – \(valueFormatter(b.high))"
     }
 
     // MARK: - Shared callout
