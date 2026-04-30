@@ -42,7 +42,7 @@ public final class Course {
     ///   Other       : 8 km/h, no altitude factor
     public var estimatedDuration: TimeInterval {
         let km = totalDistance / 1_000
-        let m  = totalAscent ?? 0
+        let m  = (totalAscent ?? 0) + (totalDescent ?? 0)
         let hours: Double
         switch sport {
         case .walking, .hiking:
