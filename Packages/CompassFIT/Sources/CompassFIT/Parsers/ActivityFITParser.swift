@@ -96,14 +96,15 @@ public struct ActivityFITParser: Sendable {
     // MARK: - Private helpers
 
     private func parseTrackPoint(from fields: [UInt8: FITFieldValue]) -> TrackPoint? {
-        guard let timestamp = fields[Self.recordTimestamp].flatMap(FITTimestamp.date(from:)),
-              let latSemi = fields[Self.recordLatitude]?.intValue,
-              let lonSemi = fields[Self.recordLongitude]?.intValue else {
+        guard let timestamp = fields[Self.recordTimestamp].flatMap(FITTimestamp.date(from:)) else {
             return nil
         }
 
-        let latitude = Double(latSemi) * Self.semicirclesToDegrees
-        let longitude = Double(lonSemi) * Self.semicirclesToDegrees
+        // GPS is optional — indoor/treadmill activities have HR/cadence but no coordinates.
+        let latSemi = fields[Self.recordLatitude]?.intValue
+        let lonSemi = fields[Self.recordLongitude]?.intValue
+        let latitude  = latSemi.map  { Double($0) * Self.semicirclesToDegrees } ?? 0.0
+        let longitude = lonSemi.map { Double($0) * Self.semicirclesToDegrees } ?? 0.0
 
         // Altitude: stored with scale 5, offset 500.
         let altitude: Double? = fields[Self.recordAltitude]?.doubleValue.map { ($0 / 5.0) - 500.0 }
