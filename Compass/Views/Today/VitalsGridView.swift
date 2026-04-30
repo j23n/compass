@@ -119,6 +119,7 @@ struct VitalsGridView: View {
                 color: .green,
                 icon: "figure.walk",
                 data: steps.history,
+                useBarChart: true,
                 valueFormatter: { steps in
                     let n = Int(steps)
                     return n >= 1000
@@ -150,6 +151,7 @@ struct VitalsGridView: View {
                 color: .teal,
                 icon: "figure.run",
                 data: activeMinutes.history,
+                useBarChart: true,
                 valueFormatter: { "\(Int($0)) min" }
             )
         } label: {

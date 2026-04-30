@@ -33,12 +33,32 @@ struct HealthView: View {
         let cal = Calendar.current
         let start: Date
         switch selectedRange {
-        case .week:        start = cal.date(byAdding: .day,   value:  -7, to: now)!
-        case .month:       start = cal.date(byAdding: .month, value:  -1, to: now)!
-        case .threeMonths: start = cal.date(byAdding: .month, value:  -3, to: now)!
-        case .year:        start = cal.date(byAdding: .year,  value:  -1, to: now)!
+        case .day:   start = cal.date(byAdding: .day,   value:  -1, to: now)!
+        case .week:  start = cal.date(byAdding: .day,   value:  -7, to: now)!
+        case .month: start = cal.date(byAdding: .month, value:  -1, to: now)!
+        case .year:  start = cal.date(byAdding: .year,  value:  -1, to: now)!
         }
         return start...now
+    }
+
+    private func monthlySum(_ points: [TrendDataPoint]) -> [TrendDataPoint] {
+        let cal = Calendar.current
+        let groups = Dictionary(grouping: points) {
+            cal.dateInterval(of: .month, for: $0.date)?.start ?? $0.date
+        }
+        return groups.map { TrendDataPoint(date: $0.key, value: $0.value.reduce(0) { $0 + $1.value }) }
+            .sorted { $0.date < $1.date }
+    }
+
+    private func monthlyAverage(_ points: [TrendDataPoint]) -> [TrendDataPoint] {
+        let cal = Calendar.current
+        let groups = Dictionary(grouping: points) {
+            cal.dateInterval(of: .month, for: $0.date)?.start ?? $0.date
+        }
+        return groups.compactMap { key, pts in
+            guard !pts.isEmpty else { return nil }
+            return TrendDataPoint(date: key, value: pts.reduce(0) { $0 + $1.value } / Double(pts.count))
+        }.sorted { $0.date < $1.date }
     }
 
     // MARK: - Data points
@@ -59,10 +79,11 @@ struct HealthView: View {
 
     private var sleepDurationData: [TrendDataPoint] {
         let range = dateRange
-        return allSleep
+        let daily = allSleep
             .filter { range.contains($0.startDate) }
             .map { TrendDataPoint(date: $0.startDate, value: $0.endDate.timeIntervalSince($0.startDate) / 3600.0) }
             .sorted { $0.date < $1.date }
+        return selectedRange == .year ? monthlyAverage(daily) : daily
     }
 
     private var bodyBatteryData: [TrendDataPoint] {
@@ -81,16 +102,18 @@ struct HealthView: View {
 
     private var stepsData: [TrendDataPoint] {
         let range = dateRange
-        return allSteps
+        let daily = allSteps
             .filter { range.contains($0.date) }
             .map { TrendDataPoint(date: $0.date, value: Double($0.steps)) }
+        return selectedRange == .year ? monthlySum(daily) : daily
     }
 
     private var activeMinutesData: [TrendDataPoint] {
         let range = dateRange
-        return allSteps
+        let daily = allSteps
             .filter { range.contains($0.date) }
             .map { TrendDataPoint(date: $0.date, value: Double($0.intensityMinutes)) }
+        return selectedRange == .year ? monthlySum(daily) : daily
     }
 
     // MARK: - Body
@@ -109,6 +132,7 @@ struct HealthView: View {
                         color: .red,
                         unit: "bpm",
                         data: restingHRData,
+                        selectedRange: selectedRange,
                         valueFormatter: { "\(Int($0)) bpm" }
                     )
                     InteractiveTrendCard(
@@ -117,6 +141,7 @@ struct HealthView: View {
                         color: .purple,
                         unit: "ms",
                         data: hrvData,
+                        selectedRange: selectedRange,
                         valueFormatter: { "\(Int($0)) ms" }
                     )
 
@@ -129,6 +154,7 @@ struct HealthView: View {
                         unit: "hr",
                         data: sleepDurationData,
                         useBarChart: true,
+                        selectedRange: selectedRange,
                         valueFormatter: { String(format: "%.1f hr", $0) }
                     )
 
@@ -140,6 +166,7 @@ struct HealthView: View {
                         color: .blue,
                         unit: "",
                         data: bodyBatteryData,
+                        selectedRange: selectedRange,
                         valueFormatter: { "\(Int($0))" }
                     )
                     InteractiveTrendCard(
@@ -148,6 +175,7 @@ struct HealthView: View {
                         color: .orange,
                         unit: "",
                         data: stressData,
+                        selectedRange: selectedRange,
                         valueFormatter: { "\(Int($0))" }
                     )
 
@@ -160,6 +188,7 @@ struct HealthView: View {
                         unit: "steps",
                         data: stepsData,
                         useBarChart: true,
+                        selectedRange: selectedRange,
                         valueFormatter: { "\(Int($0))" }
                     )
                     InteractiveTrendCard(
@@ -169,6 +198,7 @@ struct HealthView: View {
                         unit: "min",
                         data: activeMinutesData,
                         useBarChart: true,
+                        selectedRange: selectedRange,
                         valueFormatter: { "\(Int($0)) min" }
                     )
                 }

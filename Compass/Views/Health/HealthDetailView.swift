@@ -8,10 +8,33 @@ struct HealthDetailView: View {
     var color: Color = .blue
     var icon: String = "heart.fill"
     let data: [TrendDataPoint]
+    var useBarChart: Bool = false
+    var initialRange: TrendTimeRange = .week
     var valueFormatter: @Sendable (Double) -> String = { String(format: "%.0f", $0) }
 
-    @State private var selectedRange: TrendTimeRange = .week
+    @State private var selectedRange: TrendTimeRange
     @State private var selectedDataPoint: TrendDataPoint?
+
+    init(
+        metricTitle: String,
+        metricUnit: String,
+        color: Color = .blue,
+        icon: String = "heart.fill",
+        data: [TrendDataPoint],
+        useBarChart: Bool = false,
+        initialRange: TrendTimeRange = .week,
+        valueFormatter: @escaping @Sendable (Double) -> String = { String(format: "%.0f", $0) }
+    ) {
+        self.metricTitle = metricTitle
+        self.metricUnit = metricUnit
+        self.color = color
+        self.icon = icon
+        self.data = data
+        self.useBarChart = useBarChart
+        self.initialRange = initialRange
+        self.valueFormatter = valueFormatter
+        _selectedRange = State(initialValue: initialRange)
+    }
 
     private var averageValue: Double {
         guard !data.isEmpty else { return 0 }
@@ -20,6 +43,8 @@ struct HealthDetailView: View {
 
     private var minValue: Double { data.min(by: { $0.value < $1.value })?.value ?? 0 }
     private var maxValue: Double { data.max(by: { $0.value < $1.value })?.value ?? 0 }
+
+    private var barUnit: Calendar.Component { selectedRange == .year ? .month : .day }
 
     var body: some View {
         ScrollView {
@@ -92,27 +117,30 @@ struct HealthDetailView: View {
                 .frame(height: 300)
             } else {
                 Chart {
-                    ForEach(data) { point in
-                        AreaMark(
-                            x: .value("Date", point.date),
-                            y: .value("Value", point.value)
-                        )
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [color.opacity(0.3), color.opacity(0.0)],
-                                startPoint: .top,
-                                endPoint: .bottom
+                    if useBarChart {
+                        ForEach(data) { point in
+                            BarMark(
+                                x: .value("Date", point.date, unit: barUnit),
+                                y: .value("Value", point.value)
                             )
-                        )
-                        .interpolationMethod(.catmullRom)
-
-                        LineMark(
-                            x: .value("Date", point.date),
-                            y: .value("Value", point.value)
-                        )
-                        .foregroundStyle(color)
-                        .interpolationMethod(.catmullRom)
-                        .lineStyle(StrokeStyle(lineWidth: 2.5))
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [color.opacity(0.85), color.opacity(0.45)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
+                            .cornerRadius(4)
+                        }
+                    } else {
+                        ForEach(data) { point in
+                            PointMark(
+                                x: .value("Date", point.date),
+                                y: .value("Value", point.value)
+                            )
+                            .foregroundStyle(color.opacity(0.75))
+                            .symbolSize(35)
+                        }
                     }
 
                     if let selected = selectedDataPoint {
@@ -129,9 +157,11 @@ struct HealthDetailView: View {
                     }
                 }
                 .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 6)) { _ in
+                    AxisMarks(values: .automatic(desiredCount: selectedRange == .year ? 12 : 6)) { _ in
                         AxisGridLine()
-                        AxisValueLabel(format: .dateTime.month(.abbreviated).day())
+                        AxisValueLabel(format: selectedRange == .year
+                            ? .dateTime.month(.abbreviated)
+                            : .dateTime.month(.abbreviated).day())
                     }
                 }
                 .chartYAxis {
@@ -168,7 +198,9 @@ struct HealthDetailView: View {
                 .font(.caption)
                 .fontWeight(.semibold)
                 .foregroundStyle(.primary)
-            Text(pt.date, format: .dateTime.month(.abbreviated).day().hour().minute())
+            Text(pt.date, format: selectedRange == .year
+                ? .dateTime.month(.abbreviated).year()
+                : .dateTime.month(.abbreviated).day().hour().minute())
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }

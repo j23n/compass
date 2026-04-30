@@ -11,6 +11,7 @@ struct InteractiveTrendCard: View {
     let unit: String
     let data: [TrendDataPoint]
     var useBarChart: Bool = false
+    var selectedRange: TrendTimeRange = .week
     let valueFormatter: @Sendable (Double) -> String
 
     @State private var selectedPoint: TrendDataPoint?
@@ -19,6 +20,17 @@ struct InteractiveTrendCard: View {
         if let pt = selectedPoint { return valueFormatter(pt.value) }
         if let last = data.last { return valueFormatter(last.value) }
         return "--"
+    }
+
+    private var barUnit: Calendar.Component { selectedRange == .year ? .month : .day }
+
+    private var axisDesiredCount: Int {
+        switch selectedRange {
+        case .day:   return 6
+        case .week:  return 7
+        case .month: return 6
+        case .year:  return 12
+        }
     }
 
     var body: some View {
@@ -31,6 +43,8 @@ struct InteractiveTrendCard: View {
                     color: color,
                     icon: icon,
                     data: data,
+                    useBarChart: useBarChart,
+                    initialRange: selectedRange,
                     valueFormatter: valueFormatter
                 )
             } label: {
@@ -95,7 +109,7 @@ struct InteractiveTrendCard: View {
             if useBarChart {
                 ForEach(data) { point in
                     BarMark(
-                        x: .value("Date", point.date, unit: .day),
+                        x: .value("Date", point.date, unit: barUnit),
                         y: .value("Value", point.value)
                     )
                     .foregroundStyle(
@@ -109,26 +123,12 @@ struct InteractiveTrendCard: View {
                 }
             } else {
                 ForEach(data) { point in
-                    AreaMark(
+                    PointMark(
                         x: .value("Date", point.date),
                         y: .value("Value", point.value)
                     )
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [color.opacity(0.3), color.opacity(0.0)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    .interpolationMethod(.catmullRom)
-
-                    LineMark(
-                        x: .value("Date", point.date),
-                        y: .value("Value", point.value)
-                    )
-                    .foregroundStyle(color)
-                    .interpolationMethod(.catmullRom)
-                    .lineStyle(StrokeStyle(lineWidth: 2.5))
+                    .foregroundStyle(color.opacity(0.75))
+                    .symbolSize(25)
                 }
             }
 
@@ -142,8 +142,8 @@ struct InteractiveTrendCard: View {
             }
         }
         .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: 4)) { _ in
-                AxisValueLabel(format: .dateTime.month(.abbreviated).day())
+            AxisMarks(values: .automatic(desiredCount: axisDesiredCount)) { _ in
+                AxisValueLabel(format: xAxisFormat)
             }
         }
         .chartYAxis {
@@ -171,13 +171,28 @@ struct InteractiveTrendCard: View {
         }
     }
 
+    private var xAxisFormat: Date.FormatStyle {
+        switch selectedRange {
+        case .day:         return .dateTime.hour()
+        case .week, .month: return .dateTime.month(.abbreviated).day()
+        case .year:        return .dateTime.month(.abbreviated)
+        }
+    }
+
     private func callout(_ pt: TrendDataPoint) -> some View {
-        VStack(spacing: 2) {
+        let dateFormat: Date.FormatStyle = {
+            switch selectedRange {
+            case .day:         return .dateTime.hour().minute()
+            case .week, .month: return .dateTime.month(.abbreviated).day()
+            case .year:        return .dateTime.month(.abbreviated).year()
+            }
+        }()
+        return VStack(spacing: 2) {
             Text(valueFormatter(pt.value))
                 .font(.caption)
                 .fontWeight(.semibold)
                 .foregroundStyle(.primary)
-            Text(pt.date, format: .dateTime.month(.abbreviated).day().hour().minute())
+            Text(pt.date, format: dateFormat)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }

@@ -3,9 +3,9 @@ import Charts
 
 /// Time range options for trend charts.
 enum TrendTimeRange: String, CaseIterable, Identifiable {
+    case day = "Day"
     case week = "Week"
     case month = "Month"
-    case threeMonths = "3 Mo"
     case year = "Year"
 
     var id: String { rawValue }
@@ -51,25 +51,12 @@ struct TrendChartView: View {
     private var chartContent: some View {
         Chart {
             ForEach(data) { point in
-                LineMark(
+                PointMark(
                     x: .value("Date", point.date),
                     y: .value("Value", point.value)
                 )
-                .foregroundStyle(color)
-                .interpolationMethod(.catmullRom)
-
-                AreaMark(
-                    x: .value("Date", point.date),
-                    y: .value("Value", point.value)
-                )
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [color.opacity(0.2), color.opacity(0.0)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .interpolationMethod(.catmullRom)
+                .foregroundStyle(color.opacity(0.75))
+                .symbolSize(30)
             }
 
             if let selected = selectedDataPoint {

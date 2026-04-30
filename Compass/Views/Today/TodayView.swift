@@ -64,7 +64,7 @@ struct TodayView: View {
             .filter { $0.timestamp >= weekAgo && $0.context == .resting }
             .map { TrendDataPoint(date: $0.timestamp, value: Double($0.bpm)) }
         let current = todayRestingHR.min(by: { $0.bpm < $1.bpm })?.bpm
-        let sparkline = todayRestingHR.suffix(20).map { Double($0.bpm) }
+        let sparkline = todayRestingHR.map { Double($0.bpm) }
         return VitalsMetric(current: current, sparkline: sparkline, history: history)
     }
 
@@ -79,7 +79,7 @@ struct TodayView: View {
             .filter { $0.timestamp >= weekAgo }
             .map { TrendDataPoint(date: $0.timestamp, value: Double($0.level)) }
         let current = todayBodyBattery.last?.level
-        let sparkline = todayBodyBattery.suffix(30).map { Double($0.level) }
+        let sparkline = todayBodyBattery.map { Double($0.level) }
         return VitalsMetric(current: current, sparkline: sparkline, history: history)
     }
 
@@ -94,7 +94,7 @@ struct TodayView: View {
             .filter { $0.timestamp >= weekAgo }
             .map { TrendDataPoint(date: $0.timestamp, value: Double($0.stressScore)) }
         let current = todayStress.last?.stressScore
-        let sparkline = todayStress.suffix(30).map { Double($0.stressScore) }
+        let sparkline = todayStress.map { Double($0.stressScore) }
         return VitalsMetric(current: current, sparkline: sparkline, history: history)
     }
 
