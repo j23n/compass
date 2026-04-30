@@ -16,9 +16,9 @@ public enum BLELogLevel: String, Sendable {
 /// The app layer may register a `sink` closure to forward every BLE log entry
 /// into the in-app log viewer (LogStore). BLELogger itself has no dependency
 /// on any app-layer type.
-enum BLELogger {
+public enum BLELogger {
     /// Optional cross-module sink. Set once at app startup; never mutated after that.
-    nonisolated(unsafe) static var sink: (@Sendable (BLELogLevel, String, String) -> Void)?
+    public nonisolated(unsafe) static var sink: (@Sendable (BLELogLevel, String, String) -> Void)?
 
     static let transport = BLELoggerCategory(category: "transport")
     static let gfdi      = BLELoggerCategory(category: "gfdi")
