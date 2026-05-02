@@ -709,20 +709,4 @@ final class SyncCoordinator {
         UserDefaults.standard.set(true, forKey: "stepSamplesDeduped_v1")
     }
 
-    /// Check whether the course's file is still present on the watch.
-    /// Matches by FIT byte size, which is stable even after the watch renames/reindexes the file.
-    /// Returns `nil` if not connected or the directory query failed.
-    func checkCourseOnWatch(course: Course) async -> Bool? {
-        guard case .connected = connectionState else { return nil }
-        guard let fitSize = course.watchFITSize else { return nil }
-        do {
-            let files = try await deviceManager.listCourseFiles()
-            let found = files.contains { Int($0.size) == fitSize }
-            if !found { course.uploadedToWatch = false }
-            return found
-        } catch {
-            AppLogger.sync.warning("Course presence check failed: \(error.localizedDescription)")
-            return nil
-        }
-    }
-}
+(End of file - total 700 lines)

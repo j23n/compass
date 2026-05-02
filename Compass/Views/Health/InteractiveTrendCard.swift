@@ -48,6 +48,19 @@ struct InteractiveTrendCard: View {
 
     private var xUnit: Calendar.Component { selectedRange == .year ? .month : .day }
 
+    private func bucketCenterDate(_ date: Date) -> Date {
+        let cal = Calendar.current
+        switch xUnit {
+        case .hour:  return cal.date(byAdding: .minute, value: 30, to: date) ?? date
+        case .day:   return cal.date(byAdding: .hour,   value: 12, to: date) ?? date
+        case .month:
+            let range = cal.range(of: .day, in: .month, for: date) ?? 1..<31
+            let half  = range.count / 2
+            return cal.date(byAdding: .day, value: half, to: date) ?? date
+        default: return date
+        }
+    }
+
     private var xDomain: ClosedRange<Date> {
         let cal = Calendar.current
         let now = Date()
@@ -231,7 +244,7 @@ struct InteractiveTrendCard: View {
                 .cornerRadius(3)
             }
             if let b = selectedBucket {
-                RuleMark(x: .value("Selected", b.date, unit: xUnit))
+                RuleMark(x: .value("Selected", bucketCenterDate(b.date)))
                     .foregroundStyle(Color.secondary.opacity(0.4))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
                     .annotation(position: .top, spacing: 4, overflowResolution: .init(x: .fit, y: .disabled)) {

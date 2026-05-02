@@ -223,6 +223,8 @@ All 7 cases recognised by Compass. Verified in source: `FileMetadata.swift:65–
 Rows whose `fileFlags & 0x10 != 0` are marked archived and skipped by the sync
 session (`FileSyncSession.swift:71–78`).
 
+Note: Compass cannot verify presence of uploaded courses on the watch; the root directory does not list them (course sub-type 6 is upload-only direction). Prior code that attempted this check (`SyncCoordinator.checkCourseOnWatch`, `DeviceManagerProtocol.listCourseFiles()`, `FileSyncSession.listFiles(ofType:)`) has been removed. The `Course.uploadedToWatch` flag only indicates whether Compass has ever uploaded the course.
+
 ---
 
 ## 10. SetFileFlagsMessage (5008, phone → watch) — ARCHIVE

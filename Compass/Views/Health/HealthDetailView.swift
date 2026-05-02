@@ -72,11 +72,25 @@ struct HealthDetailView: View {
 
     // MARK: - Display helpers
 
+    private var sourceValues: [Double] {
+        selectedRange == .day ? filteredData.map(\.value) : buckets.map(\.display)
+    }
+
     private var averageDisplay: Double {
-        let src = selectedRange == .day ? filteredData.map(\.value) : buckets.map(\.display)
+        let src = sourceValues
         guard !src.isEmpty else { return 0 }
         return src.reduce(0, +) / Double(src.count)
     }
+
+    private var stdDevDisplay: Double {
+        let v = sourceValues
+        guard v.count > 1 else { return 0 }
+        let mean = v.reduce(0, +) / Double(v.count)
+        let variance = v.reduce(0) { $0 + pow($1 - mean, 2) } / Double(v.count - 1)
+        return sqrt(variance)
+    }
+
+    private var sampleCount: Int { sourceValues.count }
 
     private var minDisplay: Double {
         selectedRange == .day
@@ -129,6 +143,19 @@ struct HealthDetailView: View {
     // MARK: - x-axis helpers
 
     private var xUnit: Calendar.Component { selectedRange == .year ? .month : .day }
+
+    private func bucketCenterDate(_ date: Date) -> Date {
+        let cal = Calendar.current
+        switch xUnit {
+        case .hour:  return cal.date(byAdding: .minute, value: 30, to: date) ?? date
+        case .day:   return cal.date(byAdding: .hour,   value: 12, to: date) ?? date
+        case .month:
+            let range = cal.range(of: .day, in: .month, for: date) ?? 1..<31
+            let half  = range.count / 2
+            return cal.date(byAdding: .day, value: half, to: date) ?? date
+        default: return date
+        }
+    }
 
     private var xDomain: ClosedRange<Date> { activeDateRange }
 
@@ -328,7 +355,7 @@ struct HealthDetailView: View {
                 .cornerRadius(4)
             }
             if let b = selectedBucket {
-                RuleMark(x: .value("Selected", b.date, unit: xUnit))
+                RuleMark(x: .value("Selected", bucketCenterDate(b.date)))
                     .foregroundStyle(Color.secondary.opacity(0.4))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
                     .annotation(position: .top, spacing: 4, overflowResolution: .init(x: .fit, y: .disabled)) {
@@ -399,35 +426,46 @@ struct HealthDetailView: View {
     private var statisticsSection: some View {
         let hasData = selectedRange == .day ? !filteredData.isEmpty : !buckets.isEmpty
         if hasData {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 12) {
                 Text("Statistics").font(.headline)
-                Grid(horizontalSpacing: 16, verticalSpacing: 12) {
-                    GridRow {
-                        statItem(label: "Average", value: valueFormatter(averageDisplay))
-                        statItem(label: "Min",     value: valueFormatter(minDisplay))
-                        statItem(label: "Max",     value: valueFormatter(maxDisplay))
-                    }
+                Grid(alignment: .leadingFirstTextBaseline,
+                     horizontalSpacing: 24,
+                     verticalSpacing: 10) {
+                    statRow("Mean",    valueFormatter(averageDisplay))
+                    Divider()
+                    statRow("Std Dev", valueFormatter(stdDevDisplay))
+                    Divider()
+                    statRow("Min",     valueFormatter(minDisplay))
+                    Divider()
+                    statRow("Max",     valueFormatter(maxDisplay))
+                    Divider()
+                    statRow("Count",   String(sampleCount))
                 }
             }
             .padding()
-            .background {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(.background)
-                    .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 2)
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(.separator, lineWidth: 0.5)
-            }
+            .background(card)
         }
     }
 
-    private func statItem(label: String, value: String) -> some View {
-        VStack(spacing: 4) {
-            Text(label).font(.caption).foregroundStyle(.secondary)
-            Text(value).font(.title3).fontWeight(.semibold)
+    @ViewBuilder
+    private func statRow(_ label: String, _ value: String) -> some View {
+        GridRow {
+            Text(label)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .gridColumnAlignment(.leading)
+            Text(value)
+                .font(.subheadline).fontWeight(.semibold)
+                .monospacedDigit()
+                .gridColumnAlignment(.trailing)
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .frame(maxWidth: .infinity)
+    }
+
+    private var card: some View {
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .fill(.background)
+            .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 2)
     }
 
     // MARK: - Data list

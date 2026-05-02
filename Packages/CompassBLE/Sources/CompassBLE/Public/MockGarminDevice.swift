@@ -265,11 +265,6 @@ public actor MockGarminDevice: DeviceManagerProtocol {
         return 1
     }
 
-    public func listCourseFiles() async throws -> [FileEntry] {
-        guard _isConnected else { throw SyncError.notConnected }
-        return []
-    }
-
     public var isConnected: Bool {
         _isConnected
     }

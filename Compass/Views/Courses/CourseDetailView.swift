@@ -10,15 +10,11 @@ struct CourseDetailView: View {
     @Environment(SyncCoordinator.self) private var syncCoordinator
     @Environment(\.modelContext) private var modelContext
 
-    @State private var selectedSport: Sport
     @State private var uploadError: String?
-    @State private var isRenaming = false
-    @State private var draftName = ""
-    @State private var watchPresence: Bool? = nil  // nil=unknown, true=on watch, false=not found
+    @State private var isEditing = false
 
     init(course: Course) {
         self.course = course
-        self._selectedSport = State(initialValue: course.sport)
     }
 
     var body: some View {
@@ -52,10 +48,6 @@ struct CourseDetailView: View {
                 StatsGrid(course: course)
                     .padding(.horizontal)
 
-                // Sport picker
-                sportSection
-                    .padding(.horizontal)
-
                 // Upload button
                 uploadSection
                     .padding(.horizontal)
@@ -74,47 +66,14 @@ struct CourseDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button {
-                    draftName = course.name
-                    isRenaming = true
-                } label: {
+                Button { isEditing = true } label: {
                     Image(systemName: "pencil")
                 }
             }
         }
-        .task {
-            watchPresence = await syncCoordinator.checkCourseOnWatch(course: course)
+        .sheet(isPresented: $isEditing) {
+            CourseEditView(course: course)
         }
-        .alert("Rename Course", isPresented: $isRenaming) {
-            TextField("Name", text: $draftName)
-            Button("Save") {
-                let trimmed = draftName.trimmingCharacters(in: .whitespaces)
-                if !trimmed.isEmpty { course.name = trimmed }
-            }
-            Button("Cancel", role: .cancel) { }
-        }
-    }
-
-    private var sportSection: some View {
-        HStack {
-            Text("Sport")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Picker("Sport", selection: $selectedSport) {
-                ForEach(Sport.allCases, id: \.self) { sport in
-                    Label(sport.displayName, systemImage: sport.systemImage)
-                        .tag(sport)
-                }
-            }
-            .pickerStyle(.menu)
-            .onChange(of: selectedSport) { _, new in
-                course.sport = new
-            }
-        }
-        .padding()
-        .background(Color(.systemGray6))
-        .cornerRadius(10)
     }
 
     private var poiSection: some View {
@@ -174,8 +133,13 @@ struct CourseDetailView: View {
             }()
 
             // Watch presence indicator (shown when we know the state)
-            if course.uploadedToWatch {
-                watchStatusRow(isConnected: isConnected)
+            if course.uploadedToWatch, let date = course.lastUploadDate {
+                HStack(spacing: 8) {
+                    Image(systemName: "applewatch").foregroundStyle(.secondary)
+                    Text("Last uploaded \(date.formatted(date: .abbreviated, time: .omitted))")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
             }
 
             Button(action: performUpload) {
@@ -219,44 +183,8 @@ struct CourseDetailView: View {
                         .font(.caption)
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
-                .onAppear {
-                    watchPresence = true
-                }
             }
         }
-    }
-
-    @ViewBuilder
-    private func watchStatusRow(isConnected: Bool) -> some View {
-        HStack(spacing: 8) {
-            switch watchPresence {
-            case .none:
-                if isConnected {
-                    ProgressView().scaleEffect(0.7)
-                    Text("Checking watch…")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Image(systemName: "applewatch").foregroundStyle(.secondary)
-                    if let date = course.lastUploadDate {
-                        Text("Last uploaded \(date.formatted(date: .abbreviated, time: .omitted))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            case .some(true):
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                Text("On your watch")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            case .some(false):
-                Image(systemName: "exclamationmark.circle").foregroundStyle(.orange)
-                Text("Not found on watch")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .center)
     }
 
     private func performUpload() {
@@ -299,7 +227,6 @@ struct CourseDetailView: View {
 
         do {
             try fitData.write(to: tempURL)
-            watchPresence = nil
             syncCoordinator.uploadCourse(fitURL: tempURL, fitSize: fitData.count, course: course)
         } catch {
             uploadError = error.localizedDescription
@@ -335,13 +262,13 @@ struct StatsGrid: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            Text("Course Stats")
+            Text("Stats")
                 .font(.headline)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             LazyVGrid(
-                columns: [GridItem(.flexible()), GridItem(.flexible())],
-                spacing: 12
+                columns: Array(repeating: GridItem(.flexible()), count: 3),
+                spacing: 10
             ) {
                 StatCell(
                     title: "Distance",
