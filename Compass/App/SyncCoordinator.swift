@@ -708,5 +708,4 @@ final class SyncCoordinator {
 
         UserDefaults.standard.set(true, forKey: "stepSamplesDeduped_v1")
     }
-
-(End of file - total 700 lines)
+}
