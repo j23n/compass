@@ -15,8 +15,7 @@ struct StatCell: View {
 
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text(value)
-                    .font(.title2)
-                    .fontWeight(.bold)
+                    .font(.headline)
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
@@ -29,7 +28,7 @@ struct StatCell: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
+        .padding(.vertical, 8)
         .background {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(.background)

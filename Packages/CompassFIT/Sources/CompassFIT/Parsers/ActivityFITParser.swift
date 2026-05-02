@@ -109,21 +109,32 @@ public struct ActivityFITParser: Sendable {
     /// Maps FIT sport / sub_sport string enums to CompassData `Sport`.
     private func mapSport(from session: FitMessage) -> Sport {
         let subSport = session.interpretedField(key: "sub_sport")?.name
+        let sport    = session.interpretedField(key: "sport")?.name
+
         switch subSport {
-        case "yoga", "pilates":     return .yoga
-        case "strength_training":   return .strength
+        case "yoga", "pilates":   return .yoga
+        case "strength_training": return .strength
+        case "mountaineering":    return .climbing
         default: break
         }
 
-        let sport = session.interpretedField(key: "sport")?.name
+        if sport == "cycling", subSport == "mountain" || subSport == "downhill" {
+            return .mtb
+        }
+
         switch sport {
-        case "running":           return .running
-        case "cycling":           return .cycling
-        case "swimming":          return .swimming
-        case "walking":           return .walking
-        case "hiking":            return .hiking
-        case "fitness_equipment": return .cardio
-        default:                  return .other
+        case "running":                 return .running
+        case "cycling":                 return .cycling
+        case "swimming":                return .swimming
+        case "walking":                 return .walking
+        case "hiking":                  return .hiking
+        case "rowing":                  return .rowing
+        case "kayaking":                return .kayaking
+        case "snowboarding":            return .snowboarding
+        case "stand_up_paddleboarding": return .sup
+        case "boating":                 return .boating
+        case "fitness_equipment":       return .cardio
+        default:                        return .other
         }
     }
 
