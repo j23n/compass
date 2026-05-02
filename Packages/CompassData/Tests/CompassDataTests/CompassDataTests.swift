@@ -43,7 +43,7 @@ struct CompassDataTests {
             sport: .running,
             distance: 10_000,
             duration: 3600,
-            totalCalories: 650,
+            activeCalories: 650,
             avgHeartRate: 155,
             maxHeartRate: 180,
             totalAscent: 120,
@@ -71,7 +71,7 @@ struct CompassDataTests {
             sport: .cycling,
             distance: 15_000,
             duration: 1800,
-            totalCalories: 400
+            activeCalories: 400
         )
         context.insert(activity)
 

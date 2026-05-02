@@ -12,7 +12,7 @@ public final class Activity {
     public var sport: Sport
     public var distance: Double
     public var duration: TimeInterval
-    public var totalCalories: Double
+    public var activeCalories: Double
     public var avgHeartRate: Int?
     public var maxHeartRate: Int?
     public var totalAscent: Double?
@@ -29,7 +29,7 @@ public final class Activity {
         sport: Sport,
         distance: Double,
         duration: TimeInterval,
-        totalCalories: Double,
+        activeCalories: Double,
         avgHeartRate: Int? = nil,
         maxHeartRate: Int? = nil,
         totalAscent: Double? = nil,
@@ -43,7 +43,7 @@ public final class Activity {
         self.sport = sport
         self.distance = distance
         self.duration = duration
-        self.totalCalories = totalCalories
+        self.activeCalories = activeCalories
         self.avgHeartRate = avgHeartRate
         self.maxHeartRate = maxHeartRate
         self.totalAscent = totalAscent

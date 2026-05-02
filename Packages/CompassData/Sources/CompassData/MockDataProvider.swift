@@ -155,7 +155,7 @@ public struct MockDataProvider: Sendable {
                 sport: sport,
                 distance: distanceMeters,
                 duration: durationSeconds,
-                totalCalories: calories,
+                activeCalories: calories,
                 avgHeartRate: avgHR,
                 maxHeartRate: maxHR,
                 totalAscent: ascent,

@@ -22,7 +22,7 @@ public struct ActivityFITParser: Sendable {
     private static let fieldStartTime: UInt8 = 2
     private static let fieldTotalElapsedTime: UInt8 = 7   // in ms (scale 1000)
     private static let fieldTotalDistance: UInt8 = 9       // in cm (scale 100)
-    private static let fieldTotalCalories: UInt8 = 11      // kcal
+    private static let fieldActiveCalories: UInt8 = 11     // kcal — active calories burned during session (not BMR)
     private static let fieldAvgHeartRate: UInt8 = 16
     private static let fieldMaxHeartRate: UInt8 = 17
     private static let fieldTotalAscent: UInt8 = 22        // meters
@@ -144,7 +144,7 @@ public struct ActivityFITParser: Sendable {
         let distanceRaw = session[Self.fieldTotalDistance]?.doubleValue ?? 0
         let distance = (distanceRaw >= Double(UInt32.max)) ? 0.0 : distanceRaw / 100.0
 
-        let totalCalories = session[Self.fieldTotalCalories]?.doubleValue ?? 0
+        let activeCalories = session[Self.fieldActiveCalories]?.doubleValue ?? 0
         let avgHR = session[Self.fieldAvgHeartRate]?.intValue
         let maxHR = session[Self.fieldMaxHeartRate]?.intValue
         let ascent = session[Self.fieldTotalAscent]?.doubleValue
@@ -158,7 +158,7 @@ public struct ActivityFITParser: Sendable {
             sport: sport,
             distance: distance,
             duration: duration,
-            totalCalories: totalCalories,
+            activeCalories: activeCalories,
             avgHeartRate: avgHR,
             maxHeartRate: maxHR,
             totalAscent: ascent,

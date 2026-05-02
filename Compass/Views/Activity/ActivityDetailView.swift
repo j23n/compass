@@ -93,7 +93,7 @@ struct ActivityDetailView: View {
     }
 
     private var caloriesString: String {
-        activity.totalCalories > 0 ? "\(Int(activity.totalCalories))" : "--"
+        activity.activeCalories > 0 ? "\(Int(activity.activeCalories))" : "--"
     }
 
     // MARK: - Track-point data (timestamp-based, for chart interaction)
@@ -294,7 +294,7 @@ struct ActivityDetailView: View {
                     }
                 }
                 GridRow {
-                    StatCell(title: "Calories", value: caloriesString, unit: "kcal")
+                    StatCell(title: "Active Cal", value: caloriesString, unit: "kcal")
                     StatCell(title: "Time", value: durationString)
                 }
             }
@@ -313,7 +313,7 @@ struct ActivityDetailView: View {
                     StatCell(title: "Max HR", value: activity.maxHeartRate.map { "\($0)" } ?? "--", unit: "bpm")
                 }
                 GridRow {
-                    StatCell(title: "Calories", value: caloriesString, unit: "kcal")
+                    StatCell(title: "Active Cal", value: caloriesString, unit: "kcal")
                     StatCell(title: "Time", value: durationString)
                 }
             }
@@ -332,7 +332,7 @@ struct ActivityDetailView: View {
                     StatCell(title: "Max HR", value: activity.maxHeartRate.map { "\($0)" } ?? "--", unit: "bpm")
                 }
                 GridRow {
-                    StatCell(title: "Calories", value: caloriesString, unit: "kcal")
+                    StatCell(title: "Active Cal", value: caloriesString, unit: "kcal")
                     StatCell(title: "Time", value: durationString)
                 }
             }
@@ -344,7 +344,7 @@ struct ActivityDetailView: View {
             Grid(horizontalSpacing: 12, verticalSpacing: 12) {
                 GridRow {
                     StatCell(title: "Time", value: durationString)
-                    StatCell(title: "Calories", value: caloriesString, unit: "kcal")
+                    StatCell(title: "Active Cal", value: caloriesString, unit: "kcal")
                 }
                 GridRow {
                     StatCell(title: "Avg HR", value: activity.avgHeartRate.map { "\($0)" } ?? "--", unit: "bpm")
@@ -366,7 +366,7 @@ struct ActivityDetailView: View {
                     StatCell(title: "Max HR", value: activity.maxHeartRate.map { "\($0)" } ?? "--", unit: "bpm")
                 }
                 GridRow {
-                    StatCell(title: "Calories", value: caloriesString, unit: "kcal")
+                    StatCell(title: "Active Cal", value: caloriesString, unit: "kcal")
                     StatCell(title: "Time", value: durationString)
                 }
             }
@@ -617,7 +617,7 @@ struct ActivityDetailView: View {
         sport: .running,
         distance: 5230,
         duration: 1725,
-        totalCalories: 420,
+        activeCalories: 420,
         avgHeartRate: 156,
         maxHeartRate: 178,
         totalAscent: 82,
