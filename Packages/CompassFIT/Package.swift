@@ -8,13 +8,16 @@ let package = Package(
         .library(name: "CompassFIT", targets: ["CompassFIT"]),
     ],
     dependencies: [
+        .package(name: "FitFileParser", path: "../FitFileParser"),
         .package(name: "CompassData", path: "../CompassData"),
     ],
     targets: [
         .target(
             name: "CompassFIT",
-            dependencies: ["CompassData"],
-            resources: [.process("Resources")]
+            dependencies: [
+                .product(name: "FitFileParser", package: "FitFileParser"),
+                "CompassData",
+            ]
         ),
         .testTarget(
             name: "CompassFITTests",

@@ -196,10 +196,9 @@ actor FileUploadSession {
     }
 }
 
-// MARK: - FITCRC (imported from CompassFIT)
+// MARK: - FITCRC
 
-/// Stub for FITCRC if not available from CompassFIT; the real implementation
-/// is in CompassFIT.FITDecoder.
+/// CRC-16 used by the FIT file format.
 enum FITCRC {
     private static let table: [UInt16] = {
         var t = [UInt16](repeating: 0, count: 16)

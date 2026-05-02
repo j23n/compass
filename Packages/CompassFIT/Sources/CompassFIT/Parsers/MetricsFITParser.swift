@@ -1,5 +1,6 @@
 import Foundation
 import os
+import FitFileParser
 import CompassData
 
 /// A lightweight HRV result (not tied to SwiftData).
@@ -13,72 +14,40 @@ public struct HRVResult: Sendable, Equatable {
     }
 }
 
-/// Parses Garmin `/GARMIN/Metrics/*.fit` files for HRV (Heart Rate Variability) data.
+/// Parses Garmin `/GARMIN/Metrics/*.fit` files for HRV data.
 ///
-/// Reads HRV messages (mesg_num 78) which contain RMSSD values.
+/// - hrv (78): per-beat R-R intervals (seconds, scale already applied). One sample per record.
+/// - hrv_status_summary (370): nightly HRV stats; we use `last_night_average` (ms).
 public struct MetricsFITParser: Sendable {
 
     private static let logger = Logger(subsystem: "com.compass.fit", category: "MetricsFITParser")
 
-    // FIT HRV message number
-    private static let hrvMessageNum: UInt16 = 78
-    // HRV status summary (Garmin-specific)
-    private static let hrvStatusSummaryMessageNum: UInt16 = 370
+    public init() {}
 
-    // HRV (78) field numbers
-    private static let fieldTimestamp: UInt8 = 253
-    private static let hrvValue: UInt8 = 0  // time in ms between beats (R-R interval array)
-
-    // HRV status summary fields
-    private static let weeklyAverage: UInt8 = 0
-    private static let lastNightAverage: UInt8 = 1
-    private static let lastNight5MinHigh: UInt8 = 2
-    private static let rmssdField: UInt8 = 3
-
-    private let overlay: FieldNameOverlay
-
-    public init(overlay: FieldNameOverlay = FieldNameOverlay()) {
-        self.overlay = overlay
-    }
-
-    /// Parses a metrics FIT file and returns HRV samples.
-    ///
-    /// - Parameter data: Raw bytes of the FIT file.
-    /// - Returns: An array of ``HRVResult`` values.
     public func parse(data: Data) async throws -> [HRVResult] {
-        let decoder = FITDecoder()
-        let fitFile = try decoder.decode(data: data)
+        let fitFile = FitFile(data: data, parsingType: .generic)
 
         var results: [HRVResult] = []
         var currentTimestamp: Date?
 
         for message in fitFile.messages {
-            switch message.globalMessageNumber {
-            case Self.hrvMessageNum:
-                // HRV messages may carry a timestamp, or inherit from a preceding timestamp message.
-                if let ts = message.fields[Self.fieldTimestamp].flatMap(FITTimestamp.date(from:)) {
-                    currentTimestamp = ts
-                }
-                if let rmssd = extractRMSSD(from: message.fields),
-                   let timestamp = currentTimestamp {
-                    results.append(HRVResult(timestamp: timestamp, rmssd: rmssd))
+            switch message.messageType {
+            case .hrv:
+                // hrv (78) has no timestamp field; inherits from preceding messages.
+                if let rr = extractRRInterval(from: message), let ts = currentTimestamp {
+                    results.append(HRVResult(timestamp: ts, rmssd: rr))
                 }
 
-            case Self.hrvStatusSummaryMessageNum:
-                // Garmin HRV status summary - extract RMSSD if present.
-                if let ts = message.fields[Self.fieldTimestamp].flatMap(FITTimestamp.date(from:)),
-                   let rmssd = message.fields[Self.rmssdField]?.doubleValue {
-                    results.append(HRVResult(timestamp: ts, rmssd: rmssd))
+            case .hrv_status_summary:
+                if let ts = message.interpretedField(key: "timestamp")?.time,
+                   let avg = message.interpretedField(key: "last_night_average")?.value
+                            ?? message.interpretedField(key: "last_night_average")?.valueUnit?.value {
+                    results.append(HRVResult(timestamp: ts, rmssd: avg))
                 }
 
             default:
-                // Update running timestamp from any message that carries one.
-                if let ts = message.fields[Self.fieldTimestamp].flatMap(FITTimestamp.date(from:)) {
+                if let ts = message.interpretedField(key: "timestamp")?.time {
                     currentTimestamp = ts
-                }
-                let enriched = overlay.apply(toMessage: message.globalMessageNumber, fields: message.fields)
-                if enriched.messageName == nil && message.globalMessageNumber > 100 {
-                    Self.logger.debug("Unknown metrics message \(message.globalMessageNumber)")
                 }
             }
         }
@@ -88,17 +57,20 @@ public struct MetricsFITParser: Sendable {
 
     // MARK: - Private helpers
 
-    /// Extracts an RMSSD value from an HRV message.
-    ///
-    /// The standard FIT HRV message field 0 contains R-R intervals in ms (as uint16 arrays).
-    /// We compute RMSSD from consecutive differences when multiple values are present,
-    /// or use the single value directly if only one is available.
-    private func extractRMSSD(from fields: [UInt8: FITFieldValue]) -> Double? {
-        // If the field is a single numeric value, treat it as an R-R interval / RMSSD.
-        if let value = fields[Self.hrvValue]?.doubleValue {
-            // Filter out invalid values (0xFFFF = invalid in FIT).
-            guard value > 0, value < 65535 else { return nil }
-            return value
+    /// Extracts a single R-R interval (seconds) from an hrv message.
+    /// `time` is a pipe-delimited array via `.name`; fall back to `.value` for scalar.
+    private func extractRRInterval(from message: FitMessage) -> Double? {
+        let fv = message.interpretedField(key: "time")
+        if let str = fv?.name {
+            for piece in str.split(separator: "|") {
+                if let v = Double(piece), (0.3...2.0).contains(v) {
+                    return v
+                }
+            }
+            return nil
+        }
+        if let v = fv?.value, (0.3...2.0).contains(v) {
+            return v
         }
         return nil
     }

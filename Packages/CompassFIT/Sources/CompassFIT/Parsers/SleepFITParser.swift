@@ -1,28 +1,15 @@
 import Foundation
 import os
+import FitFileParser
 import CompassData
-
-/// A minute-resolution sleep level sample from Garmin msg 274 (sleep_level).
-/// One record per minute; this is the primary staging mechanism for Instinct Solar firmware.
-public struct SleepLevelSample: Sendable {
-    /// 0=unmeasurable, 1=awake, 2=light, 3=deep, 4=REM
-    public let level: Int
-    public let timestamp: Date
-
-    public init(timestamp: Date, level: Int) {
-        self.timestamp = timestamp
-        self.level = level
-    }
-}
 
 /// A lightweight sleep-parsing result (not tied to SwiftData).
 public struct SleepResult: Sendable {
     public let startDate: Date
     public let endDate: Date
+    /// Overall sleep score 0–100 from sleep_assessment (346) `overall_sleep_score`, or nil if absent.
     public let score: Int?
     public let stages: [SleepStageResult]
-    /// All minute-resolution level samples from msg 274 (empty if file uses msg 275 staging).
-    public let rawLevelSamples: [SleepLevelSample]
     public let recoveryScore: Int?
     public let qualifier: String?
 
@@ -31,7 +18,6 @@ public struct SleepResult: Sendable {
         endDate: Date,
         score: Int?,
         stages: [SleepStageResult],
-        rawLevelSamples: [SleepLevelSample] = [],
         recoveryScore: Int? = nil,
         qualifier: String? = nil
     ) {
@@ -39,7 +25,6 @@ public struct SleepResult: Sendable {
         self.endDate = endDate
         self.score = score
         self.stages = stages
-        self.rawLevelSamples = rawLevelSamples
         self.recoveryScore = recoveryScore
         self.qualifier = qualifier
     }
@@ -60,250 +45,149 @@ public struct SleepStageResult: Sendable {
 
 /// Parses Garmin `/GARMIN/Sleep/*.fit` files into sleep session data.
 ///
-/// Handles:
-/// - sleep_data_info (273) for session-level data (score, start/end)
-/// - sleep_level (274) for minute-by-minute staging (primary on Instinct Solar)
-/// - sleep_stage (275) for stage entries (fallback if no 274 records)
-/// - sleep_assessment (276) for overall quality — field dump pending field map
-/// - sleep_restless_moments (382) for restless periods
+/// Messages dispatched (FitFileParser names):
+/// - sleep_data_info (273): session start (UTC `timestamp`)
+/// - sleep_level (275): per-sample stage records (`sleep_level` enum: awake/light/deep/rem)
+/// - sleep_data_raw (274): opaque sensor blobs — skipped
+/// - sleep_session_end (276, no SDK constant): session end timestamp
+/// - sleep_assessment (346): `overall_sleep_score` (0–100)
 public struct SleepFITParser: Sendable {
 
     private static let logger = Logger(subsystem: "com.compass.fit", category: "SleepFITParser")
 
-    // Garmin-specific message numbers
-    private static let sleepDataInfoMessageNum: UInt16 = 273
-    private static let sleepStageMessageNum: UInt16 = 275
-    private static let sleepLevelMessageNum: UInt16 = 274
-    private static let sleepAssessmentMessageNum: UInt16 = 276
-    private static let sleepRestlessMomentsMessageNum: UInt16 = 382
-
-    // Common field numbers
-    private static let fieldTimestamp: UInt8 = 253
-
-    // sleep_data_info (273) fields — corrected from live Instinct Solar 1G captures:
-    // field 253 = timestamp = sleep start; field 2 = sleep end; field 1 = score (0–100);
-    // field 0 is a quality-category enum (0–3), not the numeric score.
-    private static let sleepScore: UInt8 = 1
-    private static let sleepStartTime: UInt8 = 253
-    private static let sleepEndTime: UInt8 = 2
-
-    // sleep_stage (275) fields
-    private static let stageType: UInt8 = 0
-    private static let stageDuration: UInt8 = 1
-
-    // sleep_level (274) fields
-    private static let sleepLevelField: UInt8 = 0
+    /// Msg 276 has no named constant in the FIT SDK; live data shows field 253 = session end.
+    private static let sleepSessionEnd: FitMessageType = 276
 
     /// Minimum session duration to be considered valid (10 minutes).
     private static let minimumDuration: TimeInterval = 600
 
-    private let overlay: FieldNameOverlay
+    public init() {}
 
-    public init(overlay: FieldNameOverlay = FieldNameOverlay()) {
-        self.overlay = overlay
-    }
-
-    /// Parses a sleep FIT file and returns a ``SleepResult``, or `nil` if no valid sleep data was found.
-    ///
-    /// - Parameter data: Raw bytes of the FIT file.
-    /// - Returns: A ``SleepResult`` with stages, or `nil` for empty/degenerate files.
     public func parse(data: Data) async throws -> SleepResult? {
-        let decoder = FITDecoder()
-        let fitFile = try decoder.decode(data: data)
+        let fitFile = FitFile(data: data, parsingType: .generic)
 
-        var sleepInfo: [UInt8: FITFieldValue]?
-        var rawStages: [(timestamp: Date, stageValue: Int, durationSeconds: Int?)] = []
-        var levelSamples: [SleepLevelSample] = []
+        var sessionStart: Date?
+        var sessionEnd: Date?
+        var overallScore: Int?
+        var rawStages: [(timestamp: Date, stage: SleepStageType)] = []
 
         for message in fitFile.messages {
-            switch message.globalMessageNumber {
-            case Self.sleepDataInfoMessageNum:
-                if sleepInfo == nil {
-                    sleepInfo = message.fields
+            switch message.messageType {
+            case .sleep_data_info:
+                if sessionStart == nil,
+                   let ts = message.interpretedField(key: "timestamp")?.time {
+                    sessionStart = ts
                 }
 
-            case Self.sleepStageMessageNum:
-                if let stage = parseSleepStage(from: message.fields) {
+            case .sleep_level:
+                if let stage = parseSleepStage(from: message) {
                     rawStages.append(stage)
                 }
 
-            case Self.sleepLevelMessageNum:
-                if let sample = parseSleepLevel(from: message.fields) {
-                    levelSamples.append(sample)
+            case .sleep_data_raw:
+                break  // 20-byte opaque sensor blob
+
+            case Self.sleepSessionEnd:
+                if let ts = message.interpretedField(key: "timestamp")?.time {
+                    sessionEnd = ts
                 }
 
-            case Self.sleepAssessmentMessageNum:
-                // Field dump — once field map is confirmed, replace with full decode
-                for (fieldNum, value) in message.fields.sorted(by: { $0.key < $1.key }) {
-                    Self.logger.debug("MSG276 field[\(fieldNum)] = \(String(describing: value))")
+            case .sleep_assessment:
+                if let v = message.interpretedField(key: "overall_sleep_score")?.value, v > 0 {
+                    overallScore = Int(v)
                 }
 
-            case Self.sleepRestlessMomentsMessageNum:
-                Self.logger.debug("Sleep restless moment found")
+            case .sleep_restless_moments:
+                Self.logger.debug("Sleep restless moment record")
 
             default:
-                let enriched = overlay.apply(toMessage: message.globalMessageNumber, fields: message.fields)
-                if enriched.messageName == nil {
-                    Self.logger.debug("Unknown sleep message \(message.globalMessageNumber)")
-                }
+                break
             }
         }
 
-        guard sleepInfo != nil || !levelSamples.isEmpty else {
-            Self.logger.warning("No usable sleep data found in FIT file (no msg 273 or 274 records)")
+        guard sessionStart != nil || !rawStages.isEmpty else {
+            Self.logger.warning("No usable sleep data (no msg 273 or 275)")
             return nil
         }
 
-        return buildSleepResult(from: sleepInfo, rawStages: rawStages, levelSamples: levelSamples)
+        return buildSleepResult(
+            sessionStart: sessionStart,
+            sessionEnd: sessionEnd,
+            rawStages: rawStages,
+            score: overallScore
+        )
     }
 
     // MARK: - Private helpers
 
-    private func parseSleepStage(from fields: [UInt8: FITFieldValue]) -> (timestamp: Date, stageValue: Int, durationSeconds: Int?)? {
-        guard let timestamp = fields[Self.fieldTimestamp].flatMap(FITTimestamp.date(from:)),
-              let stageValue = fields[Self.stageType]?.intValue else {
+    private func parseSleepStage(from message: FitMessage) -> (timestamp: Date, stage: SleepStageType)? {
+        guard let timestamp = message.interpretedField(key: "timestamp")?.time,
+              let name = message.interpretedField(key: "sleep_level")?.name,
+              let stage = mapSleepStageString(name) else {
             return nil
         }
-        // Duration is optional: the Instinct Solar omits field 1; spans are derived from timestamps.
-        let duration = fields[Self.stageDuration]?.intValue
-        return (timestamp: timestamp, stageValue: stageValue, durationSeconds: duration)
+        return (timestamp, stage)
     }
 
-    private func parseSleepLevel(from fields: [UInt8: FITFieldValue]) -> SleepLevelSample? {
-        guard let timestamp = fields[Self.fieldTimestamp].flatMap(FITTimestamp.date(from:)),
-              let level = fields[Self.sleepLevelField]?.intValue else {
+    private func mapSleepStageString(_ name: String) -> SleepStageType? {
+        switch name {
+        case "awake": return .awake
+        case "light": return .light
+        case "deep":  return .deep
+        case "rem":   return .rem
+        case "unmeasurable": return nil
+        default:
+            Self.logger.warning("Unknown sleep_level value: \(name)")
             return nil
         }
-        return SleepLevelSample(timestamp: timestamp, level: level)
     }
 
     private func buildSleepResult(
-        from info: [UInt8: FITFieldValue]?,
-        rawStages: [(timestamp: Date, stageValue: Int, durationSeconds: Int?)],
-        levelSamples: [SleepLevelSample]
+        sessionStart: Date?,
+        sessionEnd: Date?,
+        rawStages: [(timestamp: Date, stage: SleepStageType)],
+        score: Int?
     ) -> SleepResult? {
-        let score = info?[Self.sleepScore]?.intValue
+        let sortedStages = rawStages.sorted { $0.timestamp < $1.timestamp }
 
-        // Derive session bounds: prefer msg 273 explicit times, then msg 274 level samples,
-        // then msg 275 stage timestamps as last resort.
         let startDate: Date
         let endDate: Date
 
-        if let info = info,
-           let start = info[Self.sleepStartTime].flatMap(FITTimestamp.date(from:)),
-           let end = info[Self.sleepEndTime].flatMap(FITTimestamp.date(from:)),
-           end > start {
+        if let start = sessionStart {
             startDate = start
-            endDate = end
-        } else if !levelSamples.isEmpty {
-            startDate = levelSamples.first!.timestamp
-            // Each level record = 1 minute; add 60s to include the last minute
-            endDate = levelSamples.last!.timestamp.addingTimeInterval(60)
-        } else if !rawStages.isEmpty {
-            let sorted = rawStages.sorted { $0.timestamp < $1.timestamp }
-            startDate = sorted.first!.timestamp
-            let last = sorted.last!
-            if let dur = last.durationSeconds {
-                endDate = last.timestamp.addingTimeInterval(TimeInterval(dur))
-            } else {
+            if let end = sessionEnd, end > start {
+                endDate = end
+            } else if let last = sortedStages.last {
                 endDate = last.timestamp.addingTimeInterval(60)
+            } else {
+                Self.logger.warning("Cannot determine session end (no msg 276 and no stage records)")
+                return nil
             }
+        } else if let first = sortedStages.first {
+            startDate = first.timestamp
+            endDate = sessionEnd ?? sortedStages.last!.timestamp.addingTimeInterval(60)
         } else {
-            Self.logger.warning("Cannot determine session bounds — no level samples or stage records")
             return nil
         }
 
-        // Filter degenerate sessions (unworn watch, Jan ghost entries, etc.)
         let duration = endDate.timeIntervalSince(startDate)
         guard duration >= Self.minimumDuration else {
-            Self.logger.warning("Skipping degenerate sleep session (duration: \(Int(duration))s < \(Int(Self.minimumDuration))s)")
+            Self.logger.warning("Skipping degenerate sleep session (duration: \(Int(duration))s)")
             return nil
         }
 
-        // Prefer msg 274 minute-level samples for staging; fall back to msg 275 if absent.
-        let stages: [SleepStageResult]
-        if !levelSamples.isEmpty {
-            stages = buildStagesFromLevelSamples(levelSamples)
-        } else {
-            // Sort by timestamp; each stage spans to the next stage's start (or session end for the last).
-            let sorted = rawStages.sorted { $0.timestamp < $1.timestamp }
-            stages = sorted.enumerated().compactMap { i, raw in
-                guard let stageType = mapSleepStage(raw.stageValue) else { return nil }
-                let stageEnd: Date
-                if let dur = raw.durationSeconds {
-                    stageEnd = raw.timestamp.addingTimeInterval(TimeInterval(dur))
-                } else if i + 1 < sorted.count {
-                    stageEnd = sorted[i + 1].timestamp
-                } else {
-                    stageEnd = endDate
-                }
-                return SleepStageResult(startDate: raw.timestamp, endDate: stageEnd, stage: stageType)
-            }
+        let stages: [SleepStageResult] = sortedStages.enumerated().map { i, raw in
+            let stageEnd = i + 1 < sortedStages.count
+                ? sortedStages[i + 1].timestamp
+                : endDate
+            return SleepStageResult(startDate: raw.timestamp, endDate: stageEnd, stage: raw.stage)
         }
 
         return SleepResult(
             startDate: startDate,
             endDate: endDate,
             score: score,
-            stages: stages,
-            rawLevelSamples: levelSamples
+            stages: stages
         )
-    }
-
-    /// Collapses consecutive same-level msg 274 records into ``SleepStageResult`` spans.
-    ///
-    /// Level 0 (unmeasurable) is skipped. Each record represents 60 seconds.
-    private func buildStagesFromLevelSamples(_ samples: [SleepLevelSample]) -> [SleepStageResult] {
-        guard !samples.isEmpty else { return [] }
-
-        var stages: [SleepStageResult] = []
-        var groupStart = samples[0].timestamp
-        var currentLevel = samples[0].level
-
-        for i in 1..<samples.count {
-            let sample = samples[i]
-            if sample.level != currentLevel {
-                if let stageType = mapLevelToStageType(currentLevel) {
-                    let groupEnd = samples[i - 1].timestamp.addingTimeInterval(60)
-                    stages.append(SleepStageResult(startDate: groupStart, endDate: groupEnd, stage: stageType))
-                }
-                groupStart = sample.timestamp
-                currentLevel = sample.level
-            }
-        }
-
-        // Flush the last group
-        if let stageType = mapLevelToStageType(currentLevel) {
-            let groupEnd = samples.last!.timestamp.addingTimeInterval(60)
-            stages.append(SleepStageResult(startDate: groupStart, endDate: groupEnd, stage: stageType))
-        }
-
-        return stages
-    }
-
-    /// Maps msg 274 level values to `SleepStageType`.
-    /// 0=unmeasurable (returns nil), 1=awake, 2=light, 3=deep, 4=REM
-    private func mapLevelToStageType(_ level: Int) -> SleepStageType? {
-        switch level {
-        case 1: return .awake
-        case 2: return .light
-        case 3: return .deep
-        case 4: return .rem
-        default: return nil
-        }
-    }
-
-    /// Maps Garmin msg 275 sleep stage enum values to `SleepStageType`.
-    /// 0=deep, 1=light, 2=REM, 3=awake
-    private func mapSleepStage(_ value: Int) -> SleepStageType? {
-        switch value {
-        case 0: return .deep
-        case 1: return .light
-        case 2: return .rem
-        case 3: return .awake
-        default:
-            Self.logger.warning("Unknown sleep stage value: \(value)")
-            return nil
-        }
     }
 }
