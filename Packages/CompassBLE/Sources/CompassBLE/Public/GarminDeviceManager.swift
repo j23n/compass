@@ -32,7 +32,7 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
     private var maxPacketSize: Int = 375
 
     /// Guards against concurrent syncs (phone-initiated cancels any watch-initiated task).
-    private var activeSyncTask: Task<[URL], Error>?
+    private var activeSyncTask: Task<[(url: URL, fileIndex: UInt16)], Error>?
 
     /// Tracks whether we have completed a full pairing handshake at least once.
     /// Suppresses PAIR_COMPLETE / SETUP_WIZARD_COMPLETE on subsequent reconnects.
@@ -52,8 +52,8 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
     /// Called when the watch sends FIND_MY_PHONE_REQUEST or FIND_MY_PHONE_CANCEL.
     private var findMyPhoneHandler: (@Sendable (FindMyPhoneEvent) -> Void)?
 
-    /// Called when a watch-initiated sync completes with the downloaded file URLs.
-    private var watchInitiatedSyncHandler: (@Sendable ([URL]) async -> Void)?
+    /// Called when a watch-initiated sync completes with (url, fileIndex) pairs.
+    private var watchInitiatedSyncHandler: (@Sendable ([(url: URL, fileIndex: UInt16)]) async -> Void)?
 
     /// Prevents overlapping WeatherKit fetches when the watch retransmits every 5 s.
     private var weatherRequestInFlight = false
@@ -82,7 +82,9 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
         findMyPhoneHandler = handler
     }
 
-    public func setWatchInitiatedSyncHandler(_ handler: (@Sendable ([URL]) async -> Void)?) {
+    public func setWatchInitiatedSyncHandler(
+        _ handler: (@Sendable ([(url: URL, fileIndex: UInt16)]) async -> Void)?
+    ) {
         watchInitiatedSyncHandler = handler
     }
 
@@ -338,20 +340,21 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
 
         let client = gfdiClient
         let pktSize = maxPacketSize
-        let task = Task<[URL], Error> {
+        let task = Task<[(url: URL, fileIndex: UInt16)], Error> {
             let session = FileSyncSession(client: client, maxPacketSize: pktSize)
-            return try await session.run(
+            let pairs = try await session.run(
                 directories: Set(FITDirectory.allCases),
                 progress: nil,
                 watchInitiated: true
             )
+            return pairs.map { (url: $0.url, fileIndex: $0.entry.fileIndex) }
         }
         activeSyncTask = task
         Task { [weak self] in
-            let urls = (try? await task.value) ?? []
+            let pairs = (try? await task.value) ?? []
             await self?.clearActiveSyncTask()
-            if !urls.isEmpty {
-                await self?.watchInitiatedSyncHandler?(urls)
+            if !pairs.isEmpty {
+                await self?.watchInitiatedSyncHandler?(pairs)
             }
         }
     }
@@ -570,7 +573,7 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
     public func pullFITFiles(
         directories: Set<FITDirectory>,
         progress: AsyncStream<SyncProgress>.Continuation?
-    ) async throws -> [URL] {
+    ) async throws -> [(url: URL, fileIndex: UInt16)] {
         guard _isConnected else {
             progress?.yield(.failed(SyncError.notConnected))
             throw SyncError.notConnected
@@ -582,13 +585,23 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
 
         let client = gfdiClient
         let pktSize = maxPacketSize
-        let task = Task<[URL], Error> {
+        let task = Task<[(url: URL, fileIndex: UInt16)], Error> {
             let session = FileSyncSession(client: client, maxPacketSize: pktSize)
-            return try await session.run(directories: directories, progress: progress, watchInitiated: false)
+            let pairs = try await session.run(directories: directories, progress: progress, watchInitiated: false)
+            return pairs.map { (url: $0.url, fileIndex: $0.entry.fileIndex) }
         }
         activeSyncTask = task
         defer { activeSyncTask = nil }
         return try await task.value
+    }
+
+    /// Send the archive flag for one file after it has been successfully parsed and
+    /// persisted by the app layer.  Silently no-ops if not connected.
+    public func archiveFITFile(fileIndex: UInt16) async {
+        guard _isConnected else { return }
+        let flagMsg = SetFileFlagsMessage(fileIndex: fileIndex).toMessage()
+        _ = try? await gfdiClient.sendAndWait(flagMsg, awaitType: .response, timeout: .seconds(5))
+        BLELogger.sync.debug("Sync: archived fileIndex=\(fileIndex)")
     }
 
     public func cancelSync() async {

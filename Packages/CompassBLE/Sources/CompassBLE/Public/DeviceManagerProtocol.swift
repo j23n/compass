@@ -31,11 +31,17 @@ public protocol DeviceManagerProtocol: Sendable {
     /// - Parameters:
     ///   - directories: The set of FIT directories to sync.
     ///   - progress: Optional continuation to receive progress updates.
-    /// - Returns: URLs of the downloaded FIT files in a temporary directory.
+    /// - Returns: (tempFileURL, fileIndex) pairs for each downloaded FIT file.
+    ///   The caller must call `archiveFITFile(fileIndex:)` for each entry after
+    ///   successfully persisting its content.
     func pullFITFiles(
         directories: Set<FITDirectory>,
         progress: AsyncStream<SyncProgress>.Continuation?
-    ) async throws -> [URL]
+    ) async throws -> [(url: URL, fileIndex: UInt16)]
+
+    /// Send the archive flag to the watch for one file after it has been
+    /// successfully parsed and persisted.  No-op when not connected.
+    func archiveFITFile(fileIndex: UInt16) async
 
     /// Upload a course FIT file to the connected device.
     /// - Parameter url: Local URL of the FIT file to upload.
@@ -57,9 +63,11 @@ public protocol DeviceManagerProtocol: Sendable {
     /// Throws if not connected or the BLE write fails.
     func sendRaw(message: GFDIMessage) async throws
 
-    /// Register a handler called with downloaded file URLs after a watch-initiated sync completes.
-    /// The default implementation is a no-op; only real device managers need to implement it.
-    func setWatchInitiatedSyncHandler(_ handler: (@Sendable ([URL]) async -> Void)?) async
+    /// Register a handler called with (url, fileIndex) pairs after a watch-initiated
+    /// sync completes.  The default implementation is a no-op.
+    func setWatchInitiatedSyncHandler(
+        _ handler: (@Sendable ([(url: URL, fileIndex: UInt16)]) async -> Void)?
+    ) async
 
     /// Cancel any in-flight sync task.
     func cancelSync() async
@@ -72,7 +80,10 @@ public protocol DeviceManagerProtocol: Sendable {
 }
 
 extension DeviceManagerProtocol {
-    public func setWatchInitiatedSyncHandler(_ handler: (@Sendable ([URL]) async -> Void)?) async {}
+    public func setWatchInitiatedSyncHandler(
+        _ handler: (@Sendable ([(url: URL, fileIndex: UInt16)]) async -> Void)?
+    ) async {}
+    public func archiveFITFile(fileIndex: UInt16) async {}
     public func cancelSync() async {}
     public func notifyBackground() async {}
     public func notifyForeground() async {}

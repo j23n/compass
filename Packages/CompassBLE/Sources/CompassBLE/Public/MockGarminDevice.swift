@@ -179,7 +179,7 @@ public actor MockGarminDevice: DeviceManagerProtocol {
     public func pullFITFiles(
         directories: Set<FITDirectory>,
         progress: AsyncStream<SyncProgress>.Continuation?
-    ) async throws -> [URL] {
+    ) async throws -> [(url: URL, fileIndex: UInt16)] {
         BLELogger.sync.info("[Mock] Pulling FIT files from \(directories.count) directories")
 
         guard _isConnected else {
@@ -190,10 +190,12 @@ public actor MockGarminDevice: DeviceManagerProtocol {
 
         progress?.yield(.starting)
 
-        var allURLs: [URL] = []
+        var allPairs: [(url: URL, fileIndex: UInt16)] = []
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("CompassBLE-Mock-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+        var nextFileIndex: UInt16 = 1
 
         for directory in directories.sorted(by: { $0.rawValue < $1.rawValue }) {
             progress?.yield(.listing(directory: directory))
@@ -237,17 +239,22 @@ public actor MockGarminDevice: DeviceManagerProtocol {
                 // Write to temp file
                 let fileURL = tempDir.appendingPathComponent(fileName)
                 try fitData.write(to: fileURL)
-                allURLs.append(fileURL)
+                allPairs.append((url: fileURL, fileIndex: nextFileIndex))
+                nextFileIndex += 1
             }
         }
 
         progress?.yield(.parsing)
         try await Task.sleep(for: .milliseconds(200))
 
-        progress?.yield(.completed(fileCount: allURLs.count))
-        BLELogger.sync.info("[Mock] Pulled \(allURLs.count) files")
+        progress?.yield(.completed(fileCount: allPairs.count))
+        BLELogger.sync.info("[Mock] Pulled \(allPairs.count) files")
 
-        return allURLs
+        return allPairs
+    }
+
+    public func archiveFITFile(fileIndex: UInt16) async {
+        BLELogger.sync.debug("[Mock] archiveFITFile fileIndex=\(fileIndex)")
     }
 
     public func uploadCourse(_ url: URL) async throws -> UInt16 {

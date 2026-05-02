@@ -372,4 +372,8 @@ public enum SyncError: Error, Sendable {
     case offsetMismatch(expected: UInt32, received: UInt32)
     case downloadFailed(fileIndex: UInt16, reason: String)
     case timeout
+    /// No chunk arrived within the per-chunk deadline (BLE suspended or watch out of range).
+    case chunkTimeout
+    /// The chunk stream closed before the last-chunk flag was received.
+    case streamEnded
 }

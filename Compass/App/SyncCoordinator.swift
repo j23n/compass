@@ -340,9 +340,9 @@ final class SyncCoordinator {
         }
         phoneLocationService.startUpdating()
 
-        await gm.setWatchInitiatedSyncHandler { [weak self] urls in
+        await gm.setWatchInitiatedSyncHandler { [weak self] entries in
             guard let self else { return }
-            await self.processWatchInitiatedURLs(urls)
+            await self.processWatchInitiatedURLs(entries)
         }
 
         AppLogger.sync.info("Watch services wired: weather, find-my-phone, music, phone-location")
@@ -411,17 +411,17 @@ final class SyncCoordinator {
             // Pull FIT files
             let directories: Set<FITDirectory> = [.activity, .monitor, .sleep, .metrics]
             AppLogger.sync.debug("Requesting FIT files from directories: \(directories.map(\.rawValue).joined(separator: ", "))")
-            let fitURLs = try await deviceManager.pullFITFiles(
+            let fitEntries = try await deviceManager.pullFITFiles(
                 directories: directories,
                 progress: continuation
             )
             continuation.finish()
             progressTask.cancel()
 
-            AppLogger.sync.info("Received \(fitURLs.count) FIT file(s), beginning parse")
+            AppLogger.sync.info("Received \(fitEntries.count) FIT file(s), beginning parse")
 
-            state = .syncing(description: "Parsing \(fitURLs.count) files...")
-            let count = await processFITFiles(fitURLs, context: context)
+            state = .syncing(description: "Parsing \(fitEntries.count) files...")
+            let count = await processFITFiles(fitEntries, context: context)
 
             state = .completed(fileCount: count)
             AppLogger.sync.info("Sync completed: \(count) files processed")
@@ -440,18 +440,25 @@ final class SyncCoordinator {
     }
 
     @discardableResult
-    private func processFITFiles(_ urls: [URL], context: ModelContext) async -> Int {
-        var savedURLs: [URL] = []
-        for url in urls {
-            if let saved = try? FITFileStore.shared.save(from: url) {
-                savedURLs.append(saved)
+    private func processFITFiles(
+        _ entries: [(url: URL, fileIndex: UInt16)],
+        context: ModelContext
+    ) async -> Int {
+        // Copy temp files to persistent storage first, preserving fileIndex for archive calls.
+        var savedEntries: [(url: URL, fileIndex: UInt16)] = []
+        for entry in entries {
+            if let saved = try? FITFileStore.shared.save(from: entry.url) {
+                savedEntries.append((url: saved, fileIndex: entry.fileIndex))
                 AppLogger.sync.debug("Saved FIT file: \(saved.lastPathComponent)")
             } else {
-                AppLogger.sync.warning("Failed to save FIT file: \(url.lastPathComponent)")
+                AppLogger.sync.warning("Failed to save FIT file: \(entry.url.lastPathComponent)")
             }
         }
 
-        for url in savedURLs {
+        for savedEntry in savedEntries {
+            let url = savedEntry.url
+            let fileIndex = savedEntry.fileIndex
+
             guard let fileData = try? Data(contentsOf: url) else {
                 AppLogger.sync.warning("Could not read FIT file at: \(url.lastPathComponent)")
                 continue
@@ -459,9 +466,15 @@ final class SyncCoordinator {
             let filename = url.lastPathComponent.lowercased()
             AppLogger.sync.debug("Parsing file: \(filename) (\(fileData.count) bytes)")
 
+            // parsedOK is set to true when the parser succeeds.  Only then do we archive
+            // the file on the watch — ensuring a parse failure leaves the file available
+            // for re-download on the next sync.
+            var parsedOK = false
+
             if filename.contains("activity") || filename.contains("act") {
                 let parser = ActivityFITParser()
                 if let activity = try? await parser.parse(data: fileData) {
+                    parsedOK = true
                     let activityStart = activity.startDate
                     var activityCheck = FetchDescriptor<Activity>(
                         predicate: #Predicate<Activity> { act in
@@ -470,17 +483,18 @@ final class SyncCoordinator {
                     )
                     activityCheck.fetchLimit = 1
                     let existingActivities = (try? context.fetch(activityCheck)) ?? []
-                    guard existingActivities.isEmpty else {
+                    if existingActivities.isEmpty {
+                        activity.sourceFileName = url.lastPathComponent
+                        context.insert(activity)
+                        AppLogger.sync.debug("Inserted activity: \(activity.sport.displayName)")
+                    } else {
                         AppLogger.sync.debug("Skipping duplicate activity at \(activity.startDate)")
-                        continue
                     }
-                    activity.sourceFileName = url.lastPathComponent
-                    context.insert(activity)
-                    AppLogger.sync.debug("Inserted activity: \(activity.sport.displayName)")
                 }
             } else if filename.contains("monitor") || filename.contains("mon") {
                 let parser = MonitoringFITParser()
                 if let results = try? await parser.parse(data: fileData) {
+                    parsedOK = true
                     if !results.heartRateSamples.isEmpty {
                         let firstTS = results.heartRateSamples.first!.timestamp
                         let lastTS = results.heartRateSamples.last!.timestamp
@@ -558,6 +572,7 @@ final class SyncCoordinator {
             } else if filename.contains("sleep") || filename.contains("slp") {
                 let parser = SleepFITParser()
                 if let result = try? await parser.parse(data: fileData) {
+                    parsedOK = true
                     let lowerBound = result.startDate.addingTimeInterval(-3600)
                     let upperBound = result.startDate.addingTimeInterval(3600)
                     var sleepCheck = FetchDescriptor<SleepSession>(
@@ -567,33 +582,34 @@ final class SyncCoordinator {
                     )
                     sleepCheck.fetchLimit = 1
                     let existingSessions = (try? context.fetch(sleepCheck)) ?? []
-                    guard existingSessions.isEmpty else {
-                        AppLogger.sync.debug("Skipping duplicate sleep session near \(result.startDate)")
-                        continue
-                    }
-                    let session = SleepSession(
-                        id: UUID(),
-                        startDate: result.startDate,
-                        endDate: result.endDate,
-                        score: result.score,
-                        recoveryScore: result.recoveryScore,
-                        qualifier: result.qualifier
-                    )
-                    context.insert(session)
-                    for stageResult in result.stages {
-                        let stage = SleepStage(
-                            startDate: stageResult.startDate,
-                            endDate: stageResult.endDate,
-                            stage: stageResult.stage,
-                            session: session
+                    if existingSessions.isEmpty {
+                        let session = SleepSession(
+                            id: UUID(),
+                            startDate: result.startDate,
+                            endDate: result.endDate,
+                            score: result.score,
+                            recoveryScore: result.recoveryScore,
+                            qualifier: result.qualifier
                         )
-                        context.insert(stage)
+                        context.insert(session)
+                        for stageResult in result.stages {
+                            let stage = SleepStage(
+                                startDate: stageResult.startDate,
+                                endDate: stageResult.endDate,
+                                stage: stageResult.stage,
+                                session: session
+                            )
+                            context.insert(stage)
+                        }
+                        AppLogger.sync.debug("Inserted sleep session: \(result.startDate) – \(result.endDate) with \(result.stages.count) stage(s)")
+                    } else {
+                        AppLogger.sync.debug("Skipping duplicate sleep session near \(result.startDate)")
                     }
-                    AppLogger.sync.debug("Inserted sleep session: \(result.startDate) – \(result.endDate) with \(result.stages.count) stage(s)")
                 }
             } else if filename.contains("metric") || filename.contains("met") {
                 let parser = MetricsFITParser()
                 if let results = try? await parser.parse(data: fileData) {
+                    parsedOK = true
                     for sample in results {
                         context.insert(HRVSample(timestamp: sample.timestamp, rmssd: sample.rmssd, context: .resting))
                     }
@@ -602,19 +618,25 @@ final class SyncCoordinator {
             } else {
                 AppLogger.sync.warning("Unrecognized FIT filename pattern: \(filename)")
             }
+
+            // Archive on the watch only after a successful parse.  A failed parse leaves
+            // the file unarchived so the next sync can retry it.
+            if parsedOK {
+                await deviceManager.archiveFITFile(fileIndex: fileIndex)
+            }
         }
 
         try? context.save()
         AppLogger.sync.info("SwiftData save complete")
         lastSyncDate = Date()
-        return savedURLs.count
+        return savedEntries.count
     }
 
-    private func processWatchInitiatedURLs(_ urls: [URL]) async {
+    private func processWatchInitiatedURLs(_ entries: [(url: URL, fileIndex: UInt16)]) async {
         beginBackgroundTask()
         defer { endBackgroundTask() }
         let context = ModelContext(modelContainer)
-        await processFITFiles(urls, context: context)
+        await processFITFiles(entries, context: context)
     }
 
     /// - Parameter fitSize: Byte count of the encoded FIT — stored as a stable watch-side identifier.

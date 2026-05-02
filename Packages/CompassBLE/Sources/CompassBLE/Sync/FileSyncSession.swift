@@ -23,8 +23,7 @@ import os
 ///   watch → FileTransferData × N
 ///   phone → FileTransferDataACK per chunk
 ///   phone saves FIT bytes to temp file
-///   phone → SetFileFlagsMessage (5008, ARCHIVE=0x10)
-///   watch → SetFileFlagsStatus ACK
+///   [archive flag sent by caller after successful parse]
 ///
 /// phone → SystemEvent(SYNC_COMPLETE)
 /// ```
@@ -35,6 +34,9 @@ actor FileSyncSession {
     private let client: GFDIClient
     private let maxPacketSize: Int
 
+    /// No chunk received within this window → abort and throw `SyncError.chunkTimeout`.
+    private static let chunkTimeout: Duration = .seconds(30)
+
     /// Default per Gadgetbridge `FileTransferHandler.java:62`.
     init(client: GFDIClient, maxPacketSize: Int = 375) {
         self.client = client
@@ -43,7 +45,9 @@ actor FileSyncSession {
 
     // MARK: - Entry point
 
-    /// Run a complete sync and return local temp-file URLs for each downloaded FIT.
+    /// Run a complete sync and return (tempFileURL, directoryEntry) pairs for each
+    /// downloaded FIT.  The caller is responsible for archiving each file on the watch
+    /// after successfully persisting its content.
     ///
     /// - Parameters:
     ///   - directories: Which FIT directories to pull (activity / monitor / sleep / metrics).
@@ -54,7 +58,7 @@ actor FileSyncSession {
         directories: Set<FITDirectory>,
         progress: AsyncStream<SyncProgress>.Continuation?,
         watchInitiated: Bool = false
-    ) async throws -> [URL] {
+    ) async throws -> [(url: URL, entry: DirectoryEntry)] {
         let trigger = watchInitiated ? "watch-initiated" : "phone-initiated"
         let dirNames = directories.map(\.rawValue).sorted().joined(separator: ", ")
         BLELogger.sync.info("Sync: starting (\(trigger)) directories=[\(dirNames)]")
@@ -65,37 +69,39 @@ actor FileSyncSession {
         }
 
         // Download and parse the root directory.
-        let allEntries = try await downloadDirectory(progress: progress)
+        var allEntries = try await downloadDirectory(progress: progress)
 
         // Filter to the requested file types, skip already-archived files.
-        var wanted: [DirectoryEntry] = []
-        for entry in allEntries {
-            let typeStr = entry.fitFileType.map(String.init(describing:)) ?? "unknown(dt=\(entry.fileDataType) st=\(entry.fileSubType))"
-            let tsFormatter = ISO8601DateFormatter()
-            tsFormatter.formatOptions = [.withFullDate, .withTime, .withColonSeparatorInTime]
-            tsFormatter.timeZone = TimeZone(identifier: "UTC")
-            let tsStr = tsFormatter.string(from: entry.date)
-                .replacingOccurrences(of: "T", with: "-")
-                .replacingOccurrences(of: ":", with: "-")
-            BLELogger.sync.info("Sync:   #\(entry.fileIndex) \(typeStr) \(entry.fileSize)B \(tsStr) \(entry.isArchived ? "[archived]" : "[new]")")
+        logDirectoryEntries(allEntries)
+        var wanted = filterEntries(allEntries, for: directories)
 
-            if entry.isArchived { continue }
-            guard let ft = entry.fitFileType else { continue }
-            guard let fileDir = ft.directory, directories.contains(fileDir) else { continue }
-            wanted.append(entry)
+        // Task 2: if all entries look like a not-ready placeholder (zero-size, unknown type),
+        // wait 4 s and re-request the directory once.  Covers the case where the watch returns
+        // a stub entry immediately after waking from sleep before its filesystem is ready.
+        if wanted.isEmpty && directoryLooksUnready(allEntries) {
+            BLELogger.sync.info("Sync: directory looks unready (all entries unknown/zero-size); retrying in 4s")
+            try await Task.sleep(for: .seconds(4))
+            allEntries = try await downloadDirectory(progress: progress)
+            logDirectoryEntries(allEntries)
+            wanted = filterEntries(allEntries, for: directories)
+            BLELogger.sync.info("Sync: retry directory has \(allEntries.count) entries, \(wanted.count) wanted")
         }
 
-        var downloadedURLs: [URL] = []
+        var downloadedPairs: [(url: URL, entry: DirectoryEntry)] = []
         var failedCount = 0
 
         for entry in wanted {
             try Task.checkCancellation()
             do {
                 let url = try await downloadFile(entry: entry, progress: progress)
-                downloadedURLs.append(url)
-                try await archiveFile(entry: entry)
+                downloadedPairs.append((url: url, entry: entry))
             } catch is CancellationError {
                 throw CancellationError()
+            } catch SyncError.chunkTimeout, SyncError.streamEnded {
+                // BLE stopped delivering chunks — abort the entire sync session.
+                BLELogger.sync.warning("Sync: chunk timeout/stream-ended — sending SYNC_COMPLETE and aborting")
+                try? await client.send(message: SystemEventMessage(eventType: .syncComplete).toMessage())
+                throw SyncError.chunkTimeout
             } catch {
                 // Per Gadgetbridge: skip failed files, don't abort the whole sync.
                 BLELogger.sync.error("Sync: skipping fileIndex=\(entry.fileIndex) after error: \(error)")
@@ -109,11 +115,11 @@ actor FileSyncSession {
         logSyncSummary(
             allEntries: allEntries,
             wanted: wanted,
-            downloadedURLs: downloadedURLs,
+            downloadedPairs: downloadedPairs,
             failedCount: failedCount
         )
-        progress?.yield(.completed(fileCount: downloadedURLs.count))
-        return downloadedURLs
+        progress?.yield(.completed(fileCount: downloadedPairs.count))
+        return downloadedPairs
     }
 
     // MARK: - Directory listing (read-only, no download or archive)
@@ -126,6 +132,26 @@ actor FileSyncSession {
             guard let ft = entry.fitFileType, ft == fileType else { return nil }
             return FileEntry(index: entry.fileIndex, fileType: ft, size: entry.fileSize, date: entry.date)
         }
+    }
+
+    // MARK: - Filter / unready helpers
+
+    private func filterEntries(
+        _ entries: [DirectoryEntry],
+        for directories: Set<FITDirectory>
+    ) -> [DirectoryEntry] {
+        entries.filter { entry in
+            guard !entry.isArchived, let ft = entry.fitFileType, let dir = ft.directory else { return false }
+            return directories.contains(dir)
+        }
+    }
+
+    /// Returns `true` when every entry in the directory looks like a "not-ready" placeholder:
+    /// unknown FIT type AND zero file size.  Observed on Instinct Solar immediately after
+    /// waking from sleep before its filesystem is ready.
+    private func directoryLooksUnready(_ entries: [DirectoryEntry]) -> Bool {
+        guard !entries.isEmpty else { return false }
+        return entries.allSatisfy { $0.fitFileType == nil && $0.fileSize == 0 }
     }
 
     // MARK: - Filter handshake (watch-initiated path only)
@@ -184,8 +210,11 @@ actor FileSyncSession {
 
     // MARK: - Core chunk-download loop (shared by directory and file downloads)
 
-    /// Send a `DownloadRequest` for `fileIndex`, receive all chunks, return the
-    /// reassembled bytes.
+    /// Send a `DownloadRequest` for `fileIndex`, receive all chunks with a per-chunk
+    /// timeout, return the reassembled bytes.
+    ///
+    /// Throws `SyncError.chunkTimeout` if no chunk arrives within `chunkTimeout`.
+    /// Throws `SyncError.streamEnded` if the stream closes before the last-chunk flag.
     ///
     /// The subscription is unsubscribed synchronously (within the same actor hop) before
     /// this method returns, so the next caller's `subscribe` cannot race against a deferred
@@ -232,7 +261,17 @@ actor FileSyncSession {
             var runningCRC: UInt16 = 0
             var chunkIndex = 0
 
-            for await chunkMsg in chunkStream {
+            // Task 3: replace bare `for await` with a per-chunk timeout wrapper.
+            // Each iteration creates a fresh iterator from the shared AsyncStream buffer,
+            // which is correct: AsyncStream items are consumed in FIFO order regardless of
+            // how many iterator instances share the same underlying storage.
+            while !Task.isCancelled {
+                let chunkMsg = try await withChunkTimeout {
+                    var iter = chunkStream.makeAsyncIterator()
+                    guard let msg = await iter.next() else { throw SyncError.streamEnded }
+                    return msg
+                }
+
                 try Task.checkCancellation()
                 let chunk = try FileTransferDataMessage.decode(from: chunkMsg)
 
@@ -292,6 +331,8 @@ actor FileSyncSession {
         } catch {
             if error is CancellationError {
                 BLELogger.sync.info("Sync: cancelled by user")
+            } else if case SyncError.chunkTimeout = error {
+                BLELogger.sync.warning("Sync: \(label) chunk timeout — aborting transfer")
             }
             // Tell the watch to stop transmitting so its chunks don't bleed into
             // the next file's subscription.
@@ -307,14 +348,24 @@ actor FileSyncSession {
         return buffer
     }
 
-    // MARK: - Archive flag
+    // MARK: - Per-chunk timeout helper
 
-    private func archiveFile(entry: DirectoryEntry) async throws {
-        let flagMsg = SetFileFlagsMessage(fileIndex: entry.fileIndex).toMessage()
-        // Brief timeout — watch may not ACK promptly; ignore the error if it times out.
-        // Like DownloadRequestStatus, the ACK arrives as a full RESPONSE(0x1388), not compact-typed.
-        _ = try? await client.sendAndWait(flagMsg, awaitType: .response, timeout: .seconds(5))
-        BLELogger.sync.debug("Sync: archived fileIndex=\(entry.fileIndex)")
+    /// Race `operation` against a `chunkTimeout` deadline.  If the deadline fires first,
+    /// throws `SyncError.chunkTimeout`.  If the operation completes first, cancels the
+    /// timer and returns the result.
+    private func withChunkTimeout<T: Sendable>(
+        operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(for: Self.chunkTimeout)
+                throw SyncError.chunkTimeout
+            }
+            let result = try await group.next()!
+            group.cancelAll()
+            return result
+        }
     }
 
     // MARK: - Sync summary
@@ -322,7 +373,7 @@ actor FileSyncSession {
     private func logSyncSummary(
         allEntries: [DirectoryEntry],
         wanted: [DirectoryEntry],
-        downloadedURLs: [URL],
+        downloadedPairs: [(url: URL, entry: DirectoryEntry)],
         failedCount: Int
     ) {
         let archived   = allEntries.filter(\.isArchived).count
@@ -331,17 +382,16 @@ actor FileSyncSession {
 
         // Per-type breakdown of what was successfully saved.
         var byType: [String: (files: Int, bytes: Int)] = [:]
-        for url in downloadedURLs {
-            let name = url.deletingPathExtension().lastPathComponent
-            let typeName = name.components(separatedBy: "_").first ?? "unknown"
-            let bytes = (try? Data(contentsOf: url).count) ?? 0
+        for pair in downloadedPairs {
+            let typeName = pair.entry.fitFileType.map(String.init(describing:)) ?? "unknown"
+            let bytes = (try? Data(contentsOf: pair.url).count) ?? 0
             let cur = byType[typeName] ?? (files: 0, bytes: 0)
             byType[typeName] = (files: cur.files + 1, bytes: cur.bytes + bytes)
         }
 
         var lines: [String] = ["─── Sync complete ───"]
         lines.append("  directory : \(allEntries.count) entries")
-        lines.append("  requested : \(wanted.count)  |  saved: \(downloadedURLs.count)  |  failed: \(failedCount)")
+        lines.append("  requested : \(wanted.count)  |  saved: \(downloadedPairs.count)  |  failed: \(failedCount)")
         lines.append("  skipped   : \(archived) already-archived, \(unknown) unknown type, \(notWanted) not in sync set")
         if !byType.isEmpty {
             lines.append("  by type:")
@@ -351,6 +401,21 @@ actor FileSyncSession {
         }
         lines.append("─────────────────────")
         BLELogger.sync.info("\(lines.joined(separator: "\n"))")
+    }
+
+    // MARK: - Directory entry logging
+
+    private func logDirectoryEntries(_ entries: [DirectoryEntry]) {
+        let tsFormatter = ISO8601DateFormatter()
+        tsFormatter.formatOptions = [.withFullDate, .withTime, .withColonSeparatorInTime]
+        tsFormatter.timeZone = TimeZone(identifier: "UTC")
+        for entry in entries {
+            let typeStr = entry.fitFileType.map(String.init(describing:)) ?? "unknown(dt=\(entry.fileDataType) st=\(entry.fileSubType))"
+            let tsStr = tsFormatter.string(from: entry.date)
+                .replacingOccurrences(of: "T", with: "-")
+                .replacingOccurrences(of: ":", with: "-")
+            BLELogger.sync.info("Sync:   #\(entry.fileIndex) \(typeStr) \(entry.fileSize)B \(tsStr) \(entry.isArchived ? "[archived]" : "[new]")")
+        }
     }
 
     // MARK: - Temp-file storage
