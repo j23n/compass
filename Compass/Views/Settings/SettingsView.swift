@@ -12,6 +12,9 @@ struct SettingsView: View {
     @Query(sort: \ConnectedDevice.name)
     private var connectedDevices: [ConnectedDevice]
 
+    @State private var showDeleteConfirmation = false
+    @State private var deviceToDelete: ConnectedDevice?
+
     private var device: ConnectedDevice? {
         connectedDevices.first
     }
@@ -24,7 +27,7 @@ struct SettingsView: View {
     private var connectionDotColor: Color {
         switch syncCoordinator.connectionState {
         case .connected: .green
-        case .connecting: .orange
+        case .connecting, .reconnecting: .orange
         case .disconnected, .failed: .gray
         }
     }
@@ -33,6 +36,7 @@ struct SettingsView: View {
         switch syncCoordinator.connectionState {
         case .connected: "Connected"
         case .connecting: "Connecting..."
+        case .reconnecting: "Reconnecting…"
         case .disconnected: "Not connected"
         case .failed: "Connection failed"
         }
@@ -41,7 +45,7 @@ struct SettingsView: View {
     private var connectionStatusColor: Color {
         switch syncCoordinator.connectionState {
         case .connected: .green
-        case .connecting: .orange
+        case .connecting, .reconnecting: .orange
         case .disconnected, .failed: .secondary
         }
     }
@@ -65,6 +69,16 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
+            .confirmationDialog("Remove Watch?", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
+                Button("Remove", role: .destructive) {
+                    if let device = deviceToDelete {
+                        Task { await syncCoordinator.removeDevice(device, context: modelContext) }
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This will disconnect your Garmin watch and remove it from Compass. To also remove it from iOS Bluetooth, go to Settings → Bluetooth.")
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") {
@@ -112,9 +126,23 @@ struct SettingsView: View {
                 }
                 .swipeActions(edge: .trailing) {
                     Button(role: .destructive) {
-                        Task { await syncCoordinator.removeDevice(device, context: modelContext) }
+                        deviceToDelete = device
+                        showDeleteConfirmation = true
                     } label: {
                         Label("Remove", systemImage: "trash")
+                    }
+                }
+
+                if case .connected = syncCoordinator.connectionState {
+                    Button("Disconnect") {
+                        Task { await syncCoordinator.manualDisconnect() }
+                    }
+                    .foregroundStyle(.red)
+                }
+
+                if case .disconnected = syncCoordinator.connectionState {
+                    Button("Reconnect") {
+                        syncCoordinator.manualReconnect()
                     }
                 }
 
@@ -440,7 +468,11 @@ struct PairingSheet: View {
 }
 
 #Preview {
+    let container = try! ModelContainer(
+        for: ConnectedDevice.self,
+        configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+    )
     SettingsView()
-        .environment(SyncCoordinator(deviceManager: MockGarminDevice()))
-        .modelContainer(for: [ConnectedDevice.self], inMemory: true)
+        .environment(SyncCoordinator(deviceManager: MockGarminDevice(), modelContainer: container))
+        .modelContainer(container)
 }

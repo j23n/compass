@@ -56,4 +56,24 @@ public protocol DeviceManagerProtocol: Sendable {
     /// Send an arbitrary GFDI message to the connected device.
     /// Throws if not connected or the BLE write fails.
     func sendRaw(message: GFDIMessage) async throws
+
+    /// Register a handler called with downloaded file URLs after a watch-initiated sync completes.
+    /// The default implementation is a no-op; only real device managers need to implement it.
+    func setWatchInitiatedSyncHandler(_ handler: (@Sendable ([URL]) async -> Void)?) async
+
+    /// Cancel any in-flight sync task.
+    func cancelSync() async
+
+    /// Notify the watch that the app entered the background.
+    func notifyBackground() async
+
+    /// Notify the watch that the app returned to the foreground.
+    func notifyForeground() async
+}
+
+extension DeviceManagerProtocol {
+    public func setWatchInitiatedSyncHandler(_ handler: (@Sendable ([URL]) async -> Void)?) async {}
+    public func cancelSync() async {}
+    public func notifyBackground() async {}
+    public func notifyForeground() async {}
 }

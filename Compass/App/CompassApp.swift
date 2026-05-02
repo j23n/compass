@@ -7,6 +7,7 @@ import CompassBLE
 struct CompassApp: App {
     let container: ModelContainer
     @State private var syncCoordinator: SyncCoordinator
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         AppLogger.app.info("CompassApp initializing")
@@ -48,7 +49,7 @@ struct CompassApp: App {
         let deviceManager: any DeviceManagerProtocol = GarminDeviceManager()
         AppLogger.app.debug("Using GarminDeviceManager")
 
-        _syncCoordinator = State(initialValue: SyncCoordinator(deviceManager: deviceManager))
+        _syncCoordinator = State(initialValue: SyncCoordinator(deviceManager: deviceManager, modelContainer: container))
         AppLogger.app.info("CompassApp initialization complete")
     }
 
@@ -58,5 +59,8 @@ struct CompassApp: App {
                 .environment(syncCoordinator)
         }
         .modelContainer(container)
+        .onChange(of: scenePhase) { _, newPhase in
+            Task { await syncCoordinator.handleScenePhase(newPhase) }
+        }
     }
 }

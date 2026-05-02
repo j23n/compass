@@ -120,6 +120,9 @@ public actor BluetoothCentral {
     /// Called after an unexpected BLE disconnect so upper layers can update state.
     private var disconnectHandler: (@Sendable (Error?) -> Void)?
 
+    /// Periodic RSSI poll — detects silent link loss before the 6 s supervision timeout.
+    private var rssiTask: Task<Void, Never>?
+
     // MARK: - Init
 
     public init() {}
@@ -128,6 +131,27 @@ public actor BluetoothCentral {
     /// Pass `nil` to unregister (e.g., before a clean `disconnect()` call).
     public func setDisconnectHandler(_ handler: (@Sendable (Error?) -> Void)?) {
         disconnectHandler = handler
+    }
+
+    // MARK: - RSSI Heartbeat
+
+    /// Poll RSSI every 15 s to detect silent link loss.
+    /// CoreBluetooth fires `didDisconnectPeripheral` when `readRSSI` fails,
+    /// which propagates up through `didDisconnect` and triggers reconnect.
+    public func startRSSIPolling() {
+        rssiTask?.cancel()
+        rssiTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(15))
+                guard let p = connectedPeripheral else { break }
+                p.readRSSI()
+            }
+        }
+    }
+
+    public func stopRSSIPolling() {
+        rssiTask?.cancel()
+        rssiTask = nil
     }
 
     // MARK: - Internal: Ensure Central Manager
@@ -142,7 +166,10 @@ public actor BluetoothCentral {
             self.poweredOnContinuation = continuation
             let adapter = CentralManagerDelegateAdapter(central: self)
             self.delegateAdapter = adapter
-            self.centralManager = CBCentralManager(delegate: adapter, queue: nil)
+            let options: [String: Any] = [
+                CBCentralManagerOptionRestoreIdentifierKey: "com.compass.app.central"
+            ]
+            self.centralManager = CBCentralManager(delegate: adapter, queue: nil, options: options)
         }
 
         BLELogger.transport.info("CBCentralManager powered on")
@@ -205,7 +232,9 @@ public actor BluetoothCentral {
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             self.connectionContinuation = continuation
-            self.centralManager?.connect(peripherals, options: nil)
+            self.centralManager?.connect(peripherals, options: [
+                CBConnectPeripheralOptionEnableAutoReconnect: true
+            ])
         }
 
         self.connectedPeripheral = peripherals
@@ -424,6 +453,35 @@ public actor BluetoothCentral {
 
     // MARK: - Delegate Callbacks (called by adapter)
 
+    func didRestoreState(peripheralIDs: [UUID]) {
+        BLELogger.transport.info("State restoration triggered with \(peripheralIDs.count) peripheral(s)")
+
+        guard let id = peripheralIDs.first,
+              let peripheral = centralManager?.retrievePeripherals(withIdentifiers: [id]).first else {
+            BLELogger.transport.warning("State restoration: peripheral not retrievable")
+            disconnectHandler?(nil)
+            return
+        }
+
+        connectedPeripheral = peripheral
+        peripheral.delegate = delegateAdapter
+        BLELogger.transport.info("Restored peripheral: \(peripheral.identifier)")
+
+        // Re-acquire characteristics from the peripheral's already-restored services.
+        for service in peripheral.services ?? [] {
+            for c in service.characteristics ?? [] {
+                if c.uuid == Self.writeUUID { writeCharacteristic = c }
+                if c.uuid == Self.notifyUUID { notifyCharacteristic = c }
+            }
+        }
+        BLELogger.transport.info(
+            "Restored characteristics — write: \(writeCharacteristic != nil), notify: \(notifyCharacteristic != nil)"
+        )
+
+        // Fire the disconnect handler so GarminDeviceManager re-runs the handshake.
+        disconnectHandler?(nil)
+    }
+
     func didUpdateState(_ state: CBManagerState) {
         BLELogger.transport.info("Central manager state: \(state.rawValue)")
         switch state {
@@ -519,6 +577,13 @@ public actor BluetoothCentral {
         notificationContinuation?.yield(data)
     }
 
+    func didReadRSSI(error: Error?) {
+        if let error {
+            BLELogger.transport.info("RSSI read failed — treating as disconnect: \(error.localizedDescription)")
+            didDisconnect(error: error)
+        }
+    }
+
     func didWriteValue(error: Error?) {
         let completed = inflightWrite
         inflightWrite = nil
@@ -550,6 +615,11 @@ private final class CentralManagerDelegateAdapter: NSObject, CBCentralManagerDel
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         Task { await self.central?.didUpdateState(central.state) }
+    }
+
+    func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+        let ids = (dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] ?? []).map(\.identifier)
+        Task { await self.central?.didRestoreState(peripheralIDs: ids) }
     }
 
     func centralManager(
@@ -599,5 +669,9 @@ private final class CentralManagerDelegateAdapter: NSObject, CBCentralManagerDel
 
     func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
         Task { await self.central?.didBecomeReadyToWrite() }
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didReadRSSI RSSI: NSNumber, error: (any Error)?) {
+        Task { await self.central?.didReadRSSI(error: error) }
     }
 }

@@ -1,5 +1,7 @@
 import Foundation
 import SwiftData
+import SwiftUI
+import UIKit
 import UserNotifications
 import CompassData
 import CompassBLE
@@ -51,6 +53,7 @@ final class SyncCoordinator {
     var progress: Double = 0
 
     let deviceManager: any DeviceManagerProtocol
+    private let modelContainer: ModelContainer
 
     /// The last device we successfully connected to, kept for auto-reconnect.
     private var lastConnectedDevice: PairedDevice?
@@ -58,6 +61,7 @@ final class SyncCoordinator {
     private var connectionMonitorTask: Task<Void, Never>?
     private var reconnectRetryTask: Task<Void, Never>?
     private var syncTask: Task<Void, Never>?
+    private var bgTaskID: UIBackgroundTaskIdentifier = .invalid
 
     // MARK: - Watch Services
 
@@ -66,7 +70,8 @@ final class SyncCoordinator {
     private let musicService         = MusicService()
     private let phoneLocationService = PhoneLocationService()
 
-    init(deviceManager: any DeviceManagerProtocol) {
+    init(deviceManager: any DeviceManagerProtocol, modelContainer: ModelContainer) {
+        self.modelContainer = modelContainer
         self.deviceManager = deviceManager
         AppLogger.sync.debug("SyncCoordinator initialized with \(String(describing: type(of: deviceManager)))")
 
@@ -217,7 +222,7 @@ final class SyncCoordinator {
     /// Single connection attempt: sets connectionState and handles errors.
     private func attemptConnect(_ device: PairedDevice) async {
         AppLogger.sync.info("Connecting to \(device.name)")
-        connectionState = .connecting
+        connectionState = .reconnecting
         do {
             try await deviceManager.connect(device)
             connectionState = .connected(deviceName: device.name)
@@ -226,6 +231,20 @@ final class SyncCoordinator {
             AppLogger.sync.error("Connect failed: \(error.localizedDescription)")
             connectionState = .disconnected
         }
+    }
+
+    func manualDisconnect() async {
+        reconnectRetryTask?.cancel()
+        reconnectRetryTask = nil
+        await deviceManager.disconnect()
+        connectionState = .disconnected
+        AppLogger.sync.info("Manual disconnect")
+        // lastConnectedDevice preserved — user can reconnect
+    }
+
+    func manualReconnect() {
+        guard lastConnectedDevice != nil else { return }
+        startAutoReconnect()
     }
 
     /// Disconnect and delete the paired device record from SwiftData.
@@ -248,6 +267,37 @@ final class SyncCoordinator {
         state = .idle
         progress = 0
         AppLogger.sync.info("Sync cancelled by user")
+        Task { await deviceManager.cancelSync() }
+    }
+
+    // MARK: - Background Execution
+
+    private func beginBackgroundTask() {
+        guard bgTaskID == .invalid else { return }
+        bgTaskID = UIApplication.shared.beginBackgroundTask(withName: "com.compass.sync") { [weak self] in
+            self?.cancelSync()
+            self?.endBackgroundTask()
+        }
+    }
+
+    private func endBackgroundTask() {
+        guard bgTaskID != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(bgTaskID)
+        bgTaskID = .invalid
+    }
+
+    func handleScenePhase(_ phase: ScenePhase) async {
+        switch phase {
+        case .background:
+            await deviceManager.notifyBackground()
+        case .active:
+            await deviceManager.notifyForeground()
+            if case .disconnected = connectionState {
+                startAutoReconnect()
+            }
+        default:
+            break
+        }
     }
 
     // MARK: - Watch Service Wiring
@@ -290,6 +340,11 @@ final class SyncCoordinator {
         }
         phoneLocationService.startUpdating()
 
+        await gm.setWatchInitiatedSyncHandler { [weak self] urls in
+            guard let self else { return }
+            await self.processWatchInitiatedURLs(urls)
+        }
+
         AppLogger.sync.info("Watch services wired: weather, find-my-phone, music, phone-location")
     }
 
@@ -299,6 +354,7 @@ final class SyncCoordinator {
             await gm.setWeatherProvider(nil)
             await gm.setMusicCommandHandler(nil)
             await gm.setFindMyPhoneHandler(nil)
+            await gm.setWatchInitiatedSyncHandler(nil)
         }
         musicService.stopObserving()
         phoneLocationService.stopUpdating()
@@ -314,10 +370,13 @@ final class SyncCoordinator {
             return
         }
 
+        deduplicateStepSamplesIfNeeded(context: context)
         AppLogger.sync.info("Starting sync")
         state = .syncing(description: "Starting sync...")
 
         syncTask = Task {
+            self.beginBackgroundTask()
+            defer { self.endBackgroundTask() }
             do {
             // Create progress stream
             let (stream, continuation) = AsyncStream<SyncProgress>.makeStream()
@@ -361,199 +420,11 @@ final class SyncCoordinator {
 
             AppLogger.sync.info("Received \(fitURLs.count) FIT file(s), beginning parse")
 
-            // Save FIT files to persistent storage
-            var savedURLs: [URL] = []
-            for url in fitURLs {
-                if let saved = try? FITFileStore.shared.save(from: url) {
-                    savedURLs.append(saved)
-                    AppLogger.sync.debug("Saved FIT file: \(saved.lastPathComponent)")
-                } else {
-                    AppLogger.sync.warning("Failed to save FIT file: \(url.lastPathComponent)")
-                }
-            }
-
-            // Parse FIT files and write to SwiftData
             state = .syncing(description: "Parsing \(fitURLs.count) files...")
+            let count = await processFITFiles(fitURLs, context: context)
 
-            // Track sleep session starts inserted in this batch (saves not flushed until end of loop)
-            var batchInsertedSleepStarts: [TimeInterval] = []
-
-            for url in savedURLs {
-                guard let fileData = try? Data(contentsOf: url) else {
-                    AppLogger.sync.warning("Could not read FIT file at: \(url.lastPathComponent)")
-                    continue
-                }
-                let filename = url.lastPathComponent.lowercased()
-                AppLogger.sync.debug("Parsing file: \(filename) (\(fileData.count) bytes)")
-
-                if filename.contains("activity") || filename.contains("act") {
-                    let parser = ActivityFITParser()
-                    if let activity = try? await parser.parse(data: fileData) {
-                        // Dedup: skip if an activity with the same start date already exists
-                        let activityStart = activity.startDate
-                        var activityCheck = FetchDescriptor<Activity>(
-                            predicate: #Predicate<Activity> { act in
-                                act.startDate == activityStart
-                            }
-                        )
-                        activityCheck.fetchLimit = 1
-                        let existingActivities = (try? context.fetch(activityCheck)) ?? []
-                        guard existingActivities.isEmpty else {
-                            AppLogger.sync.debug("Skipping duplicate activity at \(activity.startDate)")
-                            continue
-                        }
-                        activity.sourceFileName = url.lastPathComponent
-                        context.insert(activity)
-                        AppLogger.sync.debug("Inserted activity: \(activity.sport.displayName)")
-                    }
-                } else if filename.contains("monitor") || filename.contains("mon") {
-                    let parser = MonitoringFITParser()
-                    if let results = try? await parser.parse(data: fileData) {
-                        // HR samples — file-range dedup: skip if any HR exists in this file's span
-                        if !results.heartRateSamples.isEmpty {
-                            let firstTS = results.heartRateSamples.first!.timestamp
-                            let lastTS = results.heartRateSamples.last!.timestamp
-                            var hrCheck = FetchDescriptor<HeartRateSample>(
-                                predicate: #Predicate<HeartRateSample> { hr in
-                                    hr.timestamp >= firstTS && hr.timestamp <= lastTS
-                                }
-                            )
-                            hrCheck.fetchLimit = 1
-                            let existingHR = (try? context.fetch(hrCheck)) ?? []
-                            if existingHR.isEmpty {
-                                for sample in results.heartRateSamples {
-                                    context.insert(HeartRateSample(timestamp: sample.timestamp, bpm: sample.bpm, context: .resting))
-                                }
-                            }
-                        }
-                        for sample in results.stressSamples {
-                            context.insert(StressSample(timestamp: sample.timestamp, stressScore: sample.stressScore))
-                        }
-                        for sample in results.bodyBatterySamples {
-                            context.insert(CompassData.BodyBatterySample(timestamp: sample.timestamp, level: sample.level))
-                        }
-                        for sample in results.respirationSamples {
-                            context.insert(CompassData.RespirationSample(timestamp: sample.timestamp, breathsPerMinute: sample.breathsPerMinute))
-                        }
-                        // Day-aggregate monitoring intervals into one StepCount per calendar day
-                        let calendar = Calendar.current
-                        var dayIntervals: [Date: [MonitoringInterval]] = [:]
-                        for interval in results.intervals {
-                            let dayStart = calendar.startOfDay(for: interval.timestamp)
-                            dayIntervals[dayStart, default: []].append(interval)
-                        }
-                        // Per-interval step samples for intraday chart — dedup by time range
-                        if !results.intervals.isEmpty {
-                            let firstTS = results.intervals.first!.timestamp
-                            let lastTS  = results.intervals.last!.timestamp
-                            var stepSampleCheck = FetchDescriptor<CompassData.StepSample>(
-                                predicate: #Predicate<CompassData.StepSample> { s in
-                                    s.timestamp >= firstTS && s.timestamp <= lastTS
-                                }
-                            )
-                            stepSampleCheck.fetchLimit = 1
-                            let existingStepSamples = (try? context.fetch(stepSampleCheck)) ?? []
-                            if existingStepSamples.isEmpty {
-                                for interval in results.intervals where interval.steps > 0 {
-                                    context.insert(CompassData.StepSample(
-                                        timestamp: interval.timestamp,
-                                        steps: interval.steps
-                                    ))
-                                }
-                            }
-                        }
-
-                        var insertedDays = 0
-                        for (day, dayData) in dayIntervals {
-                            let daySteps = dayData.reduce(0) { $0 + $1.steps }
-                            let dayIntensityMinutes = dayData.reduce(0) { $0 + $1.intensityMinutes }
-                            let dayCalories = dayData.reduce(0.0) { $0 + $1.activeCalories }
-                            // Upsert: update existing record for this day if present
-                            let dayDate = day
-                            var stepCheck = FetchDescriptor<CompassData.StepCount>(
-                                predicate: #Predicate<CompassData.StepCount> { count in
-                                    count.date == dayDate
-                                }
-                            )
-                            stepCheck.fetchLimit = 1
-                            let existingCounts = (try? context.fetch(stepCheck)) ?? []
-                            if let existing = existingCounts.first {
-                                existing.steps = daySteps
-                                existing.intensityMinutes = dayIntensityMinutes
-                                existing.calories = dayCalories
-                            } else {
-                                context.insert(CompassData.StepCount(date: day, steps: daySteps, intensityMinutes: dayIntensityMinutes, calories: dayCalories))
-                                insertedDays += 1
-                            }
-                        }
-                        AppLogger.sync.debug("Inserted monitoring data: \(results.heartRateSamples.count) HR, \(results.stressSamples.count) stress, \(results.bodyBatterySamples.count) BB, \(results.respirationSamples.count) resp, \(results.intervals.count) intervals → \(insertedDays) day(s)")
-                    }
-                } else if filename.contains("sleep") || filename.contains("slp") {
-                    let parser = SleepFITParser()
-                    if let result = try? await parser.parse(data: fileData) {
-                        // Dedup: skip if a session exists with startDate within ±1 hour —
-                        // check both persisted records and sessions inserted earlier in this batch
-                        // (batch inserts are invisible to fetch until context.save())
-                        let lowerBound = result.startDate.addingTimeInterval(-3600)
-                        let upperBound = result.startDate.addingTimeInterval(3600)
-                        let inBatch = batchInsertedSleepStarts.contains {
-                            abs($0 - result.startDate.timeIntervalSince1970) <= 3600
-                        }
-                        guard !inBatch else {
-                            AppLogger.sync.debug("Skipping duplicate sleep session (in-batch) near \(result.startDate)")
-                            continue
-                        }
-                        var sleepCheck = FetchDescriptor<SleepSession>(
-                            predicate: #Predicate<SleepSession> { s in
-                                s.startDate >= lowerBound && s.startDate <= upperBound
-                            }
-                        )
-                        sleepCheck.fetchLimit = 1
-                        let existingSessions = (try? context.fetch(sleepCheck)) ?? []
-                        guard existingSessions.isEmpty else {
-                            AppLogger.sync.debug("Skipping duplicate sleep session near \(result.startDate)")
-                            continue
-                        }
-                        batchInsertedSleepStarts.append(result.startDate.timeIntervalSince1970)
-                        let session = SleepSession(
-                            id: UUID(),
-                            startDate: result.startDate,
-                            endDate: result.endDate,
-                            score: result.score,
-                            recoveryScore: result.recoveryScore,
-                            qualifier: result.qualifier
-                        )
-                        context.insert(session)
-                        for stageResult in result.stages {
-                            let stage = SleepStage(
-                                startDate: stageResult.startDate,
-                                endDate: stageResult.endDate,
-                                stage: stageResult.stage,
-                                session: session
-                            )
-                            context.insert(stage)
-                        }
-                        AppLogger.sync.debug("Inserted sleep session: \(result.startDate) – \(result.endDate) with \(result.stages.count) stage(s)")
-                    }
-                } else if filename.contains("metric") || filename.contains("met") {
-                    let parser = MetricsFITParser()
-                    if let results = try? await parser.parse(data: fileData) {
-                        for sample in results {
-                            context.insert(HRVSample(timestamp: sample.timestamp, rmssd: sample.rmssd, context: .resting))
-                        }
-                        AppLogger.sync.debug("Inserted \(results.count) HRV samples")
-                    }
-                } else {
-                    AppLogger.sync.warning("Unrecognized FIT filename pattern: \(filename)")
-                }
-            }
-
-            try? context.save()
-            AppLogger.sync.info("SwiftData save complete")
-
-            lastSyncDate = Date()
-            state = .completed(fileCount: savedURLs.count)
-            AppLogger.sync.info("Sync completed: \(savedURLs.count) files processed")
+            state = .completed(fileCount: count)
+            AppLogger.sync.info("Sync completed: \(count) files processed")
 
             // Reset to idle after a delay
             try? await Task.sleep(for: .seconds(3))
@@ -566,6 +437,184 @@ final class SyncCoordinator {
                 state = .idle
             }
         }
+    }
+
+    @discardableResult
+    private func processFITFiles(_ urls: [URL], context: ModelContext) async -> Int {
+        var savedURLs: [URL] = []
+        for url in urls {
+            if let saved = try? FITFileStore.shared.save(from: url) {
+                savedURLs.append(saved)
+                AppLogger.sync.debug("Saved FIT file: \(saved.lastPathComponent)")
+            } else {
+                AppLogger.sync.warning("Failed to save FIT file: \(url.lastPathComponent)")
+            }
+        }
+
+        for url in savedURLs {
+            guard let fileData = try? Data(contentsOf: url) else {
+                AppLogger.sync.warning("Could not read FIT file at: \(url.lastPathComponent)")
+                continue
+            }
+            let filename = url.lastPathComponent.lowercased()
+            AppLogger.sync.debug("Parsing file: \(filename) (\(fileData.count) bytes)")
+
+            if filename.contains("activity") || filename.contains("act") {
+                let parser = ActivityFITParser()
+                if let activity = try? await parser.parse(data: fileData) {
+                    let activityStart = activity.startDate
+                    var activityCheck = FetchDescriptor<Activity>(
+                        predicate: #Predicate<Activity> { act in
+                            act.startDate == activityStart
+                        }
+                    )
+                    activityCheck.fetchLimit = 1
+                    let existingActivities = (try? context.fetch(activityCheck)) ?? []
+                    guard existingActivities.isEmpty else {
+                        AppLogger.sync.debug("Skipping duplicate activity at \(activity.startDate)")
+                        continue
+                    }
+                    activity.sourceFileName = url.lastPathComponent
+                    context.insert(activity)
+                    AppLogger.sync.debug("Inserted activity: \(activity.sport.displayName)")
+                }
+            } else if filename.contains("monitor") || filename.contains("mon") {
+                let parser = MonitoringFITParser()
+                if let results = try? await parser.parse(data: fileData) {
+                    if !results.heartRateSamples.isEmpty {
+                        let firstTS = results.heartRateSamples.first!.timestamp
+                        let lastTS = results.heartRateSamples.last!.timestamp
+                        var hrCheck = FetchDescriptor<HeartRateSample>(
+                            predicate: #Predicate<HeartRateSample> { hr in
+                                hr.timestamp >= firstTS && hr.timestamp <= lastTS
+                            }
+                        )
+                        hrCheck.fetchLimit = 1
+                        let existingHR = (try? context.fetch(hrCheck)) ?? []
+                        if existingHR.isEmpty {
+                            for sample in results.heartRateSamples {
+                                context.insert(HeartRateSample(timestamp: sample.timestamp, bpm: sample.bpm, context: .resting))
+                            }
+                        }
+                    }
+                    for sample in results.stressSamples {
+                        context.insert(StressSample(timestamp: sample.timestamp, stressScore: sample.stressScore))
+                    }
+                    for sample in results.bodyBatterySamples {
+                        context.insert(CompassData.BodyBatterySample(timestamp: sample.timestamp, level: sample.level))
+                    }
+                    for sample in results.respirationSamples {
+                        context.insert(CompassData.RespirationSample(timestamp: sample.timestamp, breathsPerMinute: sample.breathsPerMinute))
+                    }
+                    let calendar = Calendar.current
+                    var dayIntervals: [Date: [MonitoringInterval]] = [:]
+                    for interval in results.intervals {
+                        let dayStart = calendar.startOfDay(for: interval.timestamp)
+                        dayIntervals[dayStart, default: []].append(interval)
+                    }
+                    if !results.intervals.isEmpty {
+                        let firstTS = results.intervals.first!.timestamp
+                        let lastTS  = results.intervals.last!.timestamp
+                        var stepSampleCheck = FetchDescriptor<CompassData.StepSample>(
+                            predicate: #Predicate<CompassData.StepSample> { s in
+                                s.timestamp >= firstTS && s.timestamp <= lastTS
+                            }
+                        )
+                        stepSampleCheck.fetchLimit = 1
+                        let existingStepSamples = (try? context.fetch(stepSampleCheck)) ?? []
+                        if existingStepSamples.isEmpty {
+                            for interval in results.intervals where interval.steps > 0 {
+                                context.insert(CompassData.StepSample(
+                                    timestamp: interval.timestamp,
+                                    steps: interval.steps
+                                ))
+                            }
+                        }
+                    }
+                    var insertedDays = 0
+                    for (day, dayData) in dayIntervals {
+                        let daySteps = dayData.reduce(0) { $0 + $1.steps }
+                        let dayIntensityMinutes = dayData.reduce(0) { $0 + $1.intensityMinutes }
+                        let dayCalories = dayData.reduce(0.0) { $0 + $1.activeCalories }
+                        let dayDate = day
+                        var stepCheck = FetchDescriptor<CompassData.StepCount>(
+                            predicate: #Predicate<CompassData.StepCount> { count in
+                                count.date == dayDate
+                            }
+                        )
+                        stepCheck.fetchLimit = 1
+                        let existingCounts = (try? context.fetch(stepCheck)) ?? []
+                        if let existing = existingCounts.first {
+                            existing.steps = daySteps
+                            existing.intensityMinutes = dayIntensityMinutes
+                            existing.calories = dayCalories
+                        } else {
+                            context.insert(CompassData.StepCount(date: day, steps: daySteps, intensityMinutes: dayIntensityMinutes, calories: dayCalories))
+                            insertedDays += 1
+                        }
+                    }
+                    AppLogger.sync.debug("Inserted monitoring data: \(results.heartRateSamples.count) HR, \(results.stressSamples.count) stress, \(results.bodyBatterySamples.count) BB, \(results.respirationSamples.count) resp, \(results.intervals.count) intervals → \(insertedDays) day(s)")
+                }
+            } else if filename.contains("sleep") || filename.contains("slp") {
+                let parser = SleepFITParser()
+                if let result = try? await parser.parse(data: fileData) {
+                    let lowerBound = result.startDate.addingTimeInterval(-3600)
+                    let upperBound = result.startDate.addingTimeInterval(3600)
+                    var sleepCheck = FetchDescriptor<SleepSession>(
+                        predicate: #Predicate<SleepSession> { s in
+                            s.startDate >= lowerBound && s.startDate <= upperBound
+                        }
+                    )
+                    sleepCheck.fetchLimit = 1
+                    let existingSessions = (try? context.fetch(sleepCheck)) ?? []
+                    guard existingSessions.isEmpty else {
+                        AppLogger.sync.debug("Skipping duplicate sleep session near \(result.startDate)")
+                        continue
+                    }
+                    let session = SleepSession(
+                        id: UUID(),
+                        startDate: result.startDate,
+                        endDate: result.endDate,
+                        score: result.score,
+                        recoveryScore: result.recoveryScore,
+                        qualifier: result.qualifier
+                    )
+                    context.insert(session)
+                    for stageResult in result.stages {
+                        let stage = SleepStage(
+                            startDate: stageResult.startDate,
+                            endDate: stageResult.endDate,
+                            stage: stageResult.stage,
+                            session: session
+                        )
+                        context.insert(stage)
+                    }
+                    AppLogger.sync.debug("Inserted sleep session: \(result.startDate) – \(result.endDate) with \(result.stages.count) stage(s)")
+                }
+            } else if filename.contains("metric") || filename.contains("met") {
+                let parser = MetricsFITParser()
+                if let results = try? await parser.parse(data: fileData) {
+                    for sample in results {
+                        context.insert(HRVSample(timestamp: sample.timestamp, rmssd: sample.rmssd, context: .resting))
+                    }
+                    AppLogger.sync.debug("Inserted \(results.count) HRV samples")
+                }
+            } else {
+                AppLogger.sync.warning("Unrecognized FIT filename pattern: \(filename)")
+            }
+        }
+
+        try? context.save()
+        AppLogger.sync.info("SwiftData save complete")
+        lastSyncDate = Date()
+        return savedURLs.count
+    }
+
+    private func processWatchInitiatedURLs(_ urls: [URL]) async {
+        beginBackgroundTask()
+        defer { endBackgroundTask() }
+        let context = ModelContext(modelContainer)
+        await processFITFiles(urls, context: context)
     }
 
     /// - Parameter fitSize: Byte count of the encoded FIT — stored as a stable watch-side identifier.
@@ -604,6 +653,38 @@ final class SyncCoordinator {
                 state = .idle
             }
         }
+    }
+
+    // MARK: - Data hygiene
+
+    /// Removes duplicate StepSample rows (same timestamp) accumulated before per-timestamp dedup
+    /// was introduced. Runs once, guarded by a UserDefaults flag.
+    private func deduplicateStepSamplesIfNeeded(context: ModelContext) {
+        let key = "stepSamplesDeduped_v1"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+
+        let all = (try? context.fetch(FetchDescriptor<CompassData.StepSample>(
+            sortBy: [SortDescriptor(\.timestamp)]
+        ))) ?? []
+
+        var seen: [TimeInterval: CompassData.StepSample] = [:]
+        var duplicates: [CompassData.StepSample] = []
+        for sample in all {
+            let key = sample.timestamp.timeIntervalSince1970
+            if seen[key] != nil {
+                duplicates.append(sample)
+            } else {
+                seen[key] = sample
+            }
+        }
+
+        if !duplicates.isEmpty {
+            duplicates.forEach { context.delete($0) }
+            try? context.save()
+            AppLogger.sync.info("Deduplication: removed \(duplicates.count) duplicate StepSample rows")
+        }
+
+        UserDefaults.standard.set(true, forKey: "stepSamplesDeduped_v1")
     }
 
     /// Check whether the course's file is still present on the watch.

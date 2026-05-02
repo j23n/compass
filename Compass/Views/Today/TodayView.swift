@@ -213,7 +213,7 @@ struct TodayView: View {
     private var connectionDotColor: Color {
         switch syncCoordinator.connectionState {
         case .connected: .green
-        case .connecting: .orange
+        case .connecting, .reconnecting: .orange
         case .disconnected, .failed: .gray
         }
     }
@@ -222,6 +222,7 @@ struct TodayView: View {
         switch syncCoordinator.connectionState {
         case .connected(let name): "Connected to \(name)"
         case .connecting: "Connecting..."
+        case .reconnecting: "Reconnecting…"
         case .disconnected: "Watch not connected"
         case .failed: "Connection failed"
         }
@@ -298,18 +299,13 @@ struct TodayView: View {
 }
 
 #Preview {
+    let container = try! ModelContainer(
+        for: ConnectedDevice.self, Activity.self, TrackPoint.self, SleepSession.self,
+             SleepStage.self, HeartRateSample.self, BodyBatterySample.self,
+             StressSample.self, StepCount.self, StepSample.self,
+        configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+    )
     TodayView()
-        .environment(SyncCoordinator(deviceManager: MockGarminDevice()))
-        .modelContainer(for: [
-            ConnectedDevice.self,
-            Activity.self,
-            TrackPoint.self,
-            SleepSession.self,
-            SleepStage.self,
-            HeartRateSample.self,
-            BodyBatterySample.self,
-            StressSample.self,
-            StepCount.self,
-            StepSample.self,
-        ], inMemory: true)
+        .environment(SyncCoordinator(deviceManager: MockGarminDevice(), modelContainer: container))
+        .modelContainer(container)
 }

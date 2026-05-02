@@ -3,6 +3,7 @@ import Foundation
 public enum ConnectionState: Equatable, Sendable {
     case disconnected
     case connecting
+    case reconnecting
     case connected(deviceName: String)
     case failed(String)
 
@@ -10,6 +11,7 @@ public enum ConnectionState: Equatable, Sendable {
         switch (lhs, rhs) {
         case (.disconnected, .disconnected): true
         case (.connecting, .connecting): true
+        case (.reconnecting, .reconnecting): true
         case (.connected(let a), .connected(let b)): a == b
         case (.failed(let a), .failed(let b)): a == b
         default: false

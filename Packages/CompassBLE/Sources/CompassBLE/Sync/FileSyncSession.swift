@@ -70,37 +70,32 @@ actor FileSyncSession {
         // Filter to the requested file types, skip already-archived files.
         var wanted: [DirectoryEntry] = []
         for entry in allEntries {
-            if entry.isArchived {
-                BLELogger.sync.debug(
-                    "Sync: skipping fileIndex=\(entry.fileIndex) — already archived"
-                )
-                continue
-            }
-            guard let ft = entry.fitFileType else {
-                BLELogger.sync.debug(
-                    "Sync: skipping fileIndex=\(entry.fileIndex) — dataType=\(entry.fileDataType) subType=\(entry.fileSubType) not a known FIT type"
-                )
-                continue
-            }
-            guard let fileDir = ft.directory, directories.contains(fileDir) else {
-                BLELogger.sync.debug(
-                    "Sync: skipping fileIndex=\(entry.fileIndex) — type=\(ft) not in requested directories"
-                )
-                continue
-            }
+            let typeStr = entry.fitFileType.map(String.init(describing:)) ?? "unknown(dt=\(entry.fileDataType) st=\(entry.fileSubType))"
+            let tsFormatter = ISO8601DateFormatter()
+            tsFormatter.formatOptions = [.withFullDate, .withTime, .withColonSeparatorInTime]
+            tsFormatter.timeZone = TimeZone(identifier: "UTC")
+            let tsStr = tsFormatter.string(from: entry.date)
+                .replacingOccurrences(of: "T", with: "-")
+                .replacingOccurrences(of: ":", with: "-")
+            BLELogger.sync.info("Sync:   #\(entry.fileIndex) \(typeStr) \(entry.fileSize)B \(tsStr) \(entry.isArchived ? "[archived]" : "[new]")")
+
+            if entry.isArchived { continue }
+            guard let ft = entry.fitFileType else { continue }
+            guard let fileDir = ft.directory, directories.contains(fileDir) else { continue }
             wanted.append(entry)
         }
-
-        BLELogger.sync.info("Sync: \(wanted.count) file(s) to download (of \(allEntries.count) in directory)")
 
         var downloadedURLs: [URL] = []
         var failedCount = 0
 
         for entry in wanted {
+            try Task.checkCancellation()
             do {
                 let url = try await downloadFile(entry: entry, progress: progress)
                 downloadedURLs.append(url)
                 try await archiveFile(entry: entry)
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 // Per Gadgetbridge: skip failed files, don't abort the whole sync.
                 BLELogger.sync.error("Sync: skipping fileIndex=\(entry.fileIndex) after error: \(error)")
@@ -139,10 +134,9 @@ actor FileSyncSession {
         BLELogger.sync.debug("Sync: sending FilterMessage")
         let statusMsg = try await client.sendAndWait(
             FilterMessage().toMessage(),
-            awaitType: .directoryFilter,
+            awaitType: .response,
             timeout: .seconds(10)
         )
-        // Status frame is a compact-typed RESPONSE for 5007 — just check it arrived.
         BLELogger.sync.debug("Sync: FilterStatus received (payload \(statusMsg.payload.count) bytes)")
     }
 
@@ -161,15 +155,6 @@ actor FileSyncSession {
 
         let entries = try DirectoryEntry.parseAll(from: rawBody)
         BLELogger.sync.info("Sync: directory has \(entries.count) entries (\(rawBody.count) bytes)")
-
-        for entry in entries {
-            let typeStr = entry.fitFileType.map(String.init(describing:)) ?? "unknown(\(entry.fileDataType)/\(entry.fileSubType))"
-            let archivedStr = entry.isArchived ? " [archived]" : ""
-            BLELogger.sync.info(
-                "Sync:   entry fileIndex=\(entry.fileIndex) type=\(typeStr) size=\(entry.fileSize)B date=\(entry.date)\(archivedStr)"
-            )
-        }
-
         return entries
     }
 
@@ -248,6 +233,7 @@ actor FileSyncSession {
             var chunkIndex = 0
 
             for await chunkMsg in chunkStream {
+                try Task.checkCancellation()
                 let chunk = try FileTransferDataMessage.decode(from: chunkMsg)
 
                 guard chunk.dataOffset == buffer.count else {
@@ -304,6 +290,9 @@ actor FileSyncSession {
             BLELogger.sync.info("Sync: \(label) — complete (\(chunkIndex) chunks, \(buffer.count)B, finalCRC=0x\(String(format: "%04X", runningCRC)))")
 
         } catch {
+            if error is CancellationError {
+                BLELogger.sync.info("Sync: cancelled by user")
+            }
             // Tell the watch to stop transmitting so its chunks don't bleed into
             // the next file's subscription.
             let abortAck = FileTransferDataACK(transferStatus: .abort, nextDataOffset: UInt32(buffer.count))

@@ -34,6 +34,10 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
     /// Guards against concurrent syncs (phone-initiated cancels any watch-initiated task).
     private var activeSyncTask: Task<[URL], Error>?
 
+    /// Tracks whether we have completed a full pairing handshake at least once.
+    /// Suppresses PAIR_COMPLETE / SETUP_WIZARD_COMPLETE on subsequent reconnects.
+    private var hasConnectedOnce: Bool = false
+
     // MARK: - Service Callbacks (set by the app layer after connect)
 
     /// Called when the watch sends a WEATHER_REQUEST.  The closure should
@@ -47,6 +51,9 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
 
     /// Called when the watch sends FIND_MY_PHONE_REQUEST or FIND_MY_PHONE_CANCEL.
     private var findMyPhoneHandler: (@Sendable (FindMyPhoneEvent) -> Void)?
+
+    /// Called when a watch-initiated sync completes with the downloaded file URLs.
+    private var watchInitiatedSyncHandler: (@Sendable ([URL]) async -> Void)?
 
     /// Prevents overlapping WeatherKit fetches when the watch retransmits every 5 s.
     private var weatherRequestInFlight = false
@@ -73,6 +80,10 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
 
     public func setFindMyPhoneHandler(_ handler: (@Sendable (FindMyPhoneEvent) -> Void)?) {
         findMyPhoneHandler = handler
+    }
+
+    public func setWatchInitiatedSyncHandler(_ handler: (@Sendable ([URL]) async -> Void)?) {
+        watchInitiatedSyncHandler = handler
     }
 
     /// Push one or more MUSIC_CONTROL_ENTITY_UPDATE messages to the watch.
@@ -137,6 +148,7 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
     // MARK: - Pairing
 
     public func pair(_ device: DiscoveredDevice) async throws -> PairedDevice {
+        hasConnectedOnce = false
         BLELogger.auth.info("Pairing with: \(device.name) (\(device.identifier))")
 
         try await central.connect(identifier: device.identifier)
@@ -177,6 +189,7 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
             )
             _connectedDevice = paired
             connectionStateContinuation?.yield(.connected(deviceName: paired.name))
+            await central.startRSSIPolling()
             BLELogger.auth.info("Pairing complete: \(paired.name)")
             return paired
         } catch {
@@ -334,10 +347,12 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
             )
         }
         activeSyncTask = task
-        // Observe completion in a separate task to clear the reference when done.
         Task { [weak self] in
-            _ = try? await task.value
+            let urls = (try? await task.value) ?? []
             await self?.clearActiveSyncTask()
+            if !urls.isEmpty {
+                await self?.watchInitiatedSyncHandler?(urls)
+            }
         }
     }
 
@@ -428,13 +443,11 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
         try? await client.send(message: response.toMessage())
     }
 
-    /// The device-initiated GFDI handshake (after ML init has assigned a handle).
+    /// Phase 1 of the GFDI handshake — always runs on both first pair and reconnect.
     ///
-    /// Per `docs/gadgetbridge-instinct-pairing.md` §10 — the watch initiates,
-    /// host replies with a **bare 9-byte ACK** for DEVICE_INFORMATION (no
-    /// host-info echo!), then ACK + own CONFIGURATION for CONFIGURATION,
-    /// then SYSTEM_EVENT bursts.
-    private func runHandshake() async throws -> DeviceInformationMessage {
+    /// Handles DEVICE_INFORMATION, CONFIGURATION exchange, SUPPORTED_FILE_TYPES_REQUEST,
+    /// and DEVICE_SETTINGS. Does NOT send pairing lifecycle events.
+    private func runHandshakePreamble() async throws -> DeviceInformationMessage {
         BLELogger.auth.debug("Handshake: waiting for DEVICE_INFORMATION")
         let devInfoMsg = try await gfdiClient.waitForMessage(type: .deviceInformation, timeout: .seconds(15))
         let devInfo = try DeviceInformationMessage.decode(from: devInfoMsg.payload)
@@ -468,30 +481,36 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
         // idle wait after our CONFIGURATION echo — its session timeout is
         // shorter than that. See `docs/gadgetbridge-instinct-pairing.md`.
 
-        // Post-init burst (matches Gadgetbridge `completeInitialization()`,
-        // see `docs/gadgetbridge-instinct-pairing.md` §10 step 10):
-        //   1. SUPPORTED_FILE_TYPES_REQUEST — required; the watch's state
-        //      machine waits for this after CONFIGURATION before accepting
-        //      SYSTEM_EVENTs. Sending SYNC_READY before this caused the
-        //      watch to disconnect cleanly.
-        //   2. DEVICE_SETTINGS — auto-upload + weather toggles.
-        //   3. SYNC_READY → PAIR_COMPLETE → SYNC_COMPLETE → SETUP_WIZARD_COMPLETE.
-        //
-        // We skip `TIME_UPDATED` for now: Gadgetbridge sends it with a 4-byte
-        // Garmin-epoch timestamp (`javaMillisToGarminTimestamp(...)`) when the
-        // `syncTime` pref is enabled. It is optional, and the value field is
-        // a different size from the lifecycle events.
+        // SUPPORTED_FILE_TYPES_REQUEST is required; the watch's state machine
+        // waits for this after CONFIGURATION before accepting SYSTEM_EVENTs.
         BLELogger.auth.debug("Sending SUPPORTED_FILE_TYPES_REQUEST")
         try await gfdiClient.send(message: SupportedFileTypesRequestMessage().toMessage())
 
         BLELogger.auth.debug("Sending DEVICE_SETTINGS")
         try await gfdiClient.send(message: SetDeviceSettingsMessage.defaults().toMessage())
 
-        BLELogger.auth.debug("Sending SYNC_READY / PAIR_COMPLETE / SYNC_COMPLETE / SETUP_WIZARD_COMPLETE")
-        try await gfdiClient.send(message: SystemEventMessage(eventType: .syncReady).toMessage())
-        try await gfdiClient.send(message: SystemEventMessage(eventType: .pairComplete).toMessage())
-        try await gfdiClient.send(message: SystemEventMessage(eventType: .syncComplete).toMessage())
-        try await gfdiClient.send(message: SystemEventMessage(eventType: .setupWizardComplete).toMessage())
+        return devInfo
+    }
+
+    /// The device-initiated GFDI handshake (after ML init has assigned a handle).
+    ///
+    /// Calls `runHandshakePreamble()` then sends pairing lifecycle events only on
+    /// the first successful connect. On reconnects, sends only SYNC_READY so the
+    /// watch home screen appears immediately without re-running the setup wizard.
+    private func runHandshake() async throws -> DeviceInformationMessage {
+        let devInfo = try await runHandshakePreamble()
+
+        if !hasConnectedOnce {
+            BLELogger.auth.debug("Sending SYNC_READY / PAIR_COMPLETE / SYNC_COMPLETE / SETUP_WIZARD_COMPLETE")
+            try await gfdiClient.send(message: SystemEventMessage(eventType: .syncReady).toMessage())
+            try await gfdiClient.send(message: SystemEventMessage(eventType: .pairComplete).toMessage())
+            try await gfdiClient.send(message: SystemEventMessage(eventType: .syncComplete).toMessage())
+            try await gfdiClient.send(message: SystemEventMessage(eventType: .setupWizardComplete).toMessage())
+            hasConnectedOnce = true
+        } else {
+            BLELogger.auth.debug("Reconnect: sending SYNC_READY only (skipping pairing events)")
+            try await gfdiClient.send(message: SystemEventMessage(eventType: .syncReady).toMessage())
+        }
 
         return devInfo
     }
@@ -526,6 +545,7 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
         _isConnected = true
         _connectedDevice = device
         connectionStateContinuation?.yield(.connected(deviceName: device.name))
+        await central.startRSSIPolling()
         BLELogger.transport.info("Reconnected to: \(device.name)")
     }
 
@@ -536,6 +556,7 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
         _isConnected = false
         _connectedDevice = nil
         connectionStateContinuation?.yield(.disconnected)
+        await central.stopRSSIPolling()
         await central.setDisconnectHandler(nil)
         await gfdiClient.stopReceiving()
         // Release the watch's GFDI handle before tearing down BLE so its
@@ -568,6 +589,21 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
         activeSyncTask = task
         defer { activeSyncTask = nil }
         return try await task.value
+    }
+
+    public func cancelSync() async {
+        activeSyncTask?.cancel()
+        activeSyncTask = nil
+    }
+
+    public func notifyBackground() async {
+        guard _isConnected else { return }
+        try? await gfdiClient.send(message: SystemEventMessage(eventType: .hostDidEnterBackground).toMessage())
+    }
+
+    public func notifyForeground() async {
+        guard _isConnected else { return }
+        try? await gfdiClient.send(message: SystemEventMessage(eventType: .hostDidEnterForeground).toMessage())
     }
 
     public func uploadCourse(_ url: URL) async throws -> UInt16 {
