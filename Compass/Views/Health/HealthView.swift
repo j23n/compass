@@ -26,71 +26,52 @@ struct HealthView: View {
     @Query(sort: \StepCount.date)
     private var allSteps: [StepCount]
 
-    // MARK: - Date range
+    @Query(sort: \StepSample.timestamp)
+    private var allStepSamples: [StepSample]
 
-    private var dateRange: ClosedRange<Date> {
-        let now = Date()
-        let cal = Calendar.current
-        let start: Date
-        switch selectedRange {
-        case .day:   start = cal.startOfDay(for: now)
-        case .week:  start = cal.date(byAdding: .day,   value:  -6, to: cal.startOfDay(for: now))!
-        case .month: start = cal.date(byAdding: .day,   value: -29, to: cal.startOfDay(for: now))!
-        case .year:  start = cal.date(byAdding: .year,  value:  -1, to: now)!
-        }
-        return start...now
-    }
-
-    // MARK: - Data points
+    // MARK: - Data points (all-time; filtering happens inside InteractiveTrendCard / HealthDetailView)
 
     private var restingHRData: [TrendDataPoint] {
-        let range = dateRange
-        return allHeartRate
-            .filter { $0.context == .resting && range.contains($0.timestamp) }
+        allHeartRate
+            .filter { $0.context == .resting }
             .map { TrendDataPoint(date: $0.timestamp, value: Double($0.bpm)) }
     }
 
     private var hrvData: [TrendDataPoint] {
-        let range = dateRange
-        return allHRV
-            .filter { range.contains($0.timestamp) }
-            .map { TrendDataPoint(date: $0.timestamp, value: $0.rmssd) }
+        allHRV.map { TrendDataPoint(date: $0.timestamp, value: $0.rmssd) }
     }
 
     private var sleepDurationData: [TrendDataPoint] {
-        let range = dateRange
-        return allSleep
-            .filter { range.contains($0.startDate) }
+        allSleep
             .map { TrendDataPoint(date: $0.startDate, value: $0.endDate.timeIntervalSince($0.startDate) / 3600.0) }
             .sorted { $0.date < $1.date }
     }
 
     private var bodyBatteryData: [TrendDataPoint] {
-        let range = dateRange
-        return allBodyBattery
-            .filter { range.contains($0.timestamp) }
-            .map { TrendDataPoint(date: $0.timestamp, value: Double($0.level)) }
+        allBodyBattery.map { TrendDataPoint(date: $0.timestamp, value: Double($0.level)) }
     }
 
     private var stressData: [TrendDataPoint] {
-        let range = dateRange
-        return allStress
-            .filter { range.contains($0.timestamp) }
-            .map { TrendDataPoint(date: $0.timestamp, value: Double($0.stressScore)) }
+        allStress.map { TrendDataPoint(date: $0.timestamp, value: Double($0.stressScore)) }
     }
 
+    /// Hourly step bins from StepSample — works for Day view (per-hour) and
+    /// Week/Month/Year (makeTrendBuckets aggregates to daily totals automatically).
     private var stepsData: [TrendDataPoint] {
-        let range = dateRange
-        return allSteps
-            .filter { range.contains($0.date) }
-            .map { TrendDataPoint(date: $0.date, value: Double($0.steps)) }
+        let cal = Calendar.current
+        let grouped = Dictionary(grouping: allStepSamples) { sample in
+            cal.dateInterval(of: .hour, for: sample.timestamp)?.start
+                ?? cal.startOfDay(for: sample.timestamp)
+        }
+        return grouped
+            .map { hourStart, samples in
+                TrendDataPoint(date: hourStart, value: Double(samples.reduce(0) { $0 + $1.steps }))
+            }
+            .sorted { $0.date < $1.date }
     }
 
     private var activeMinutesData: [TrendDataPoint] {
-        let range = dateRange
-        return allSteps
-            .filter { range.contains($0.date) }
-            .map { TrendDataPoint(date: $0.date, value: Double($0.intensityMinutes)) }
+        allSteps.map { TrendDataPoint(date: $0.date, value: Double($0.intensityMinutes)) }
     }
 
     // MARK: - Body
@@ -222,5 +203,6 @@ struct HealthView: View {
             BodyBatterySample.self,
             StressSample.self,
             StepCount.self,
+            StepSample.self,
         ], inMemory: true)
 }

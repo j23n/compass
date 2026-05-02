@@ -2,46 +2,98 @@ import SwiftUI
 import Charts
 
 /// Fullscreen chart detail for a single health metric.
-/// Day range → scatter plot. Week / Month / Year → ranged bar chart.
+/// Day range → scatter (hourly). Week / Month / Year → ranged bar chart.
+/// Supports back/forward navigation through historical periods.
 struct HealthDetailView: View {
     let metricTitle: String
     let metricUnit: String
     var color: Color = .blue
     var icon: String = "heart.fill"
-    let data: [TrendDataPoint]
+    let data: [TrendDataPoint]      // all historical data — detail view filters internally
     var useBarChart: Bool = false
     var initialRange: TrendTimeRange = .week
     var valueFormatter: @Sendable (Double) -> String = { String(format: "%.0f", $0) }
 
+    @State private var selectedRange: TrendTimeRange
+    @State private var offset: Int = 0
     @State private var selectedPoint: TrendDataPoint?
     @State private var selectedBucket: TrendBucket?
 
-    private var buckets: [TrendBucket] {
-        makeTrendBuckets(from: data, range: initialRange, isSum: useBarChart)
+    init(metricTitle: String, metricUnit: String, color: Color = .blue, icon: String = "heart.fill",
+         data: [TrendDataPoint], useBarChart: Bool = false, initialRange: TrendTimeRange = .week,
+         valueFormatter: @escaping @Sendable (Double) -> String = { String(format: "%.0f", $0) }) {
+        self.metricTitle = metricTitle
+        self.metricUnit = metricUnit
+        self.color = color
+        self.icon = icon
+        self.data = data
+        self.useBarChart = useBarChart
+        self.initialRange = initialRange
+        self.valueFormatter = valueFormatter
+        _selectedRange = State(initialValue: initialRange)
     }
 
+    // MARK: - Filtered data
+
+    private var activeDateRange: ClosedRange<Date> { dateRange(for: selectedRange, offset: offset) }
+
+    private var filteredData: [TrendDataPoint] {
+        let r = activeDateRange
+        return data.filter { r.contains($0.date) }
+    }
+
+    private var buckets: [TrendBucket] {
+        makeTrendBuckets(from: data, range: selectedRange, isSum: useBarChart, offset: offset)
+    }
+
+    // Hourly buckets for the Day list view (keeps list to ≤24 rows regardless of sample density)
+    private var dayHourBuckets: [TrendBucket] {
+        guard selectedRange == .day else { return [] }
+        let cal = Calendar.current
+        let r = activeDateRange
+        let start = r.lowerBound
+        return (0..<24).compactMap { h in
+            let s = cal.date(byAdding: .hour, value: h, to: start)!
+            let e = cal.date(byAdding: .hour, value: 1, to: s)!
+            guard s < r.upperBound else { return nil }
+            let vals = filteredData.filter { $0.date >= s && $0.date < e }.map(\.value)
+            guard !vals.isEmpty else { return nil }
+            if useBarChart {
+                let total = vals.reduce(0, +)
+                return TrendBucket(date: s, low: 0, high: total, display: total)
+            } else {
+                let lo = vals.min()!, hi = vals.max()!
+                return TrendBucket(date: s, low: lo, high: hi, display: vals.reduce(0, +) / Double(vals.count))
+            }
+        }
+    }
+
+    private var listBuckets: [TrendBucket] { selectedRange == .day ? dayHourBuckets : buckets }
+
+    // MARK: - Display helpers
+
     private var averageDisplay: Double {
-        let src = initialRange == .day ? data.map(\.value) : buckets.map(\.display)
+        let src = selectedRange == .day ? filteredData.map(\.value) : buckets.map(\.display)
         guard !src.isEmpty else { return 0 }
         return src.reduce(0, +) / Double(src.count)
     }
 
     private var minDisplay: Double {
-        initialRange == .day
-            ? (data.min(by: { $0.value < $1.value })?.value ?? 0)
+        selectedRange == .day
+            ? (filteredData.min(by: { $0.value < $1.value })?.value ?? 0)
             : (buckets.min(by: { $0.low < $1.low })?.low ?? 0)
     }
 
     private var maxDisplay: Double {
-        initialRange == .day
-            ? (data.max(by: { $0.value < $1.value })?.value ?? 0)
+        selectedRange == .day
+            ? (filteredData.max(by: { $0.value < $1.value })?.value ?? 0)
             : (buckets.max(by: { $0.high < $1.high })?.high ?? 0)
     }
 
     private var headerValue: String {
-        if initialRange == .day {
+        if selectedRange == .day {
             return selectedPoint.map { valueFormatter($0.value) }
-                ?? data.last.map { valueFormatter($0.value) }
+                ?? filteredData.last.map { valueFormatter($0.value) }
                 ?? "--"
         } else {
             return selectedBucket.map { valueFormatter($0.display) }
@@ -51,33 +103,37 @@ struct HealthDetailView: View {
     }
 
     private var headerDate: Date? {
-        initialRange == .day ? selectedPoint?.date : selectedBucket?.date
+        selectedRange == .day ? selectedPoint?.date : selectedBucket?.date
+    }
+
+    private var periodLabel: String {
+        let r = activeDateRange
+        let cal = Calendar.current
+        switch selectedRange {
+        case .day:
+            if offset == 0 { return "Today" }
+            if offset == -1 { return "Yesterday" }
+            return r.lowerBound.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
+        case .week:
+            let end = cal.date(byAdding: .day, value: -1, to: r.upperBound)!
+            return "\(r.lowerBound.formatted(.dateTime.month(.abbreviated).day())) – \(end.formatted(.dateTime.month(.abbreviated).day()))"
+        case .month:
+            let end = cal.date(byAdding: .day, value: -1, to: r.upperBound)!
+            return "\(r.lowerBound.formatted(.dateTime.month(.abbreviated).day())) – \(end.formatted(.dateTime.month(.abbreviated).day()))"
+        case .year:
+            let end = cal.date(byAdding: .month, value: -1, to: r.upperBound)!
+            return "\(r.lowerBound.formatted(.dateTime.month(.abbreviated).year())) – \(end.formatted(.dateTime.month(.abbreviated).year()))"
+        }
     }
 
     // MARK: - x-axis helpers
 
-    private var xUnit: Calendar.Component { initialRange == .year ? .month : .day }
+    private var xUnit: Calendar.Component { selectedRange == .year ? .month : .day }
 
-    private var xDomain: ClosedRange<Date> {
-        let cal = Calendar.current
-        let now = Date()
-        let todayStart = cal.startOfDay(for: now)
-        let todayEnd   = cal.date(byAdding: .day, value: 1, to: todayStart)!
-        switch initialRange {
-        case .day:
-            return todayStart...todayEnd
-        case .week:
-            return cal.date(byAdding: .day, value: -6, to: todayStart)!...todayEnd
-        case .month:
-            return cal.date(byAdding: .day, value: -29, to: todayStart)!...todayEnd
-        case .year:
-            let thisMonth = cal.date(from: cal.dateComponents([.year, .month], from: now))!
-            return cal.date(byAdding: .month, value: -11, to: thisMonth)!...todayEnd
-        }
-    }
+    private var xDomain: ClosedRange<Date> { activeDateRange }
 
     private var calloutFormat: Date.FormatStyle {
-        switch initialRange {
+        switch selectedRange {
         case .day:   return .dateTime.hour().minute()
         case .week:  return .dateTime.weekday(.abbreviated).month(.abbreviated).day()
         case .month: return .dateTime.month(.abbreviated).day()
@@ -91,13 +147,24 @@ struct HealthDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 headerSection
+                navigationControls
                 chartSection
                 statisticsSection
+                if !listBuckets.isEmpty {
+                    dataListSection
+                }
             }
             .padding()
         }
         .navigationTitle(metricTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: selectedRange) { _, _ in offset = 0; clearSelection() }
+        .onChange(of: offset) { _, _ in clearSelection() }
+    }
+
+    private func clearSelection() {
+        selectedPoint = nil
+        selectedBucket = nil
     }
 
     // MARK: - Header
@@ -129,29 +196,79 @@ struct HealthDetailView: View {
         }
     }
 
+    // MARK: - Navigation controls
+
+    private var navigationControls: some View {
+        HStack(spacing: 8) {
+            Button {
+                offset -= 1
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(width: 32, height: 32)
+                    .background(Color(.systemGray5))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+
+            Spacer()
+
+            VStack(spacing: 2) {
+                Picker("Range", selection: $selectedRange) {
+                    ForEach(TrendTimeRange.allCases) { r in
+                        Text(r.rawValue).tag(r)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 260)
+
+                Text(periodLabel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .animation(.easeInOut(duration: 0.15), value: offset)
+            }
+
+            Spacer()
+
+            Button {
+                offset += 1
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(width: 32, height: 32)
+                    .background(offset < 0 ? Color(.systemGray5) : Color(.systemGray5).opacity(0.3))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(offset >= 0)
+        }
+    }
+
     // MARK: - Chart
 
     @ViewBuilder
     private var chartSection: some View {
-        if initialRange == .day {
-            scatterChart
-                .frame(height: 300)
+        if selectedRange == .day {
+            if filteredData.isEmpty { emptyChart } else { scatterChart.frame(height: 300) }
         } else if buckets.isEmpty {
-            ContentUnavailableView {
-                Label("No Data", systemImage: "chart.bar")
-            } description: {
-                Text("No \(metricTitle.lowercased()) data available.")
-            }
-            .frame(height: 300)
+            emptyChart
         } else {
-            barChart
-                .frame(height: 300)
+            barChart.frame(height: 300)
         }
+    }
+
+    private var emptyChart: some View {
+        ContentUnavailableView {
+            Label("No Data", systemImage: "chart.bar")
+        } description: {
+            Text("No \(metricTitle.lowercased()) data for this period.")
+        }
+        .frame(height: 300)
     }
 
     private var scatterChart: some View {
         Chart {
-            ForEach(data) { point in
+            ForEach(filteredData) { point in
                 PointMark(
                     x: .value("Date", point.date),
                     y: .value("Value", point.value)
@@ -168,6 +285,7 @@ struct HealthDetailView: View {
                     }
             }
         }
+        .chartXScale(domain: xDomain)
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: 6)) { _ in
                 AxisGridLine()
@@ -186,7 +304,7 @@ struct HealthDetailView: View {
                     .gesture(DragGesture(minimumDistance: 0)
                         .onChanged { drag in
                             guard let date: Date = proxy.value(atX: drag.location.x) else { return }
-                            selectedPoint = data.min(by: {
+                            selectedPoint = filteredData.min(by: {
                                 abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
                             })
                         }
@@ -220,9 +338,9 @@ struct HealthDetailView: View {
         }
         .chartXScale(domain: xDomain)
         .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: initialRange == .year ? 12 : 6)) { _ in
+            AxisMarks(values: .automatic(desiredCount: selectedRange == .year ? 12 : 6)) { _ in
                 AxisGridLine()
-                AxisValueLabel(format: initialRange == .year
+                AxisValueLabel(format: selectedRange == .year
                     ? .dateTime.month(.abbreviated)
                     : .dateTime.month(.abbreviated).day())
             }
@@ -279,7 +397,7 @@ struct HealthDetailView: View {
 
     @ViewBuilder
     private var statisticsSection: some View {
-        let hasData = initialRange == .day ? !data.isEmpty : !buckets.isEmpty
+        let hasData = selectedRange == .day ? !filteredData.isEmpty : !buckets.isEmpty
         if hasData {
             VStack(alignment: .leading, spacing: 16) {
                 Text("Statistics").font(.headline)
@@ -310,6 +428,44 @@ struct HealthDetailView: View {
             Text(value).font(.title3).fontWeight(.semibold)
         }
         .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Data list
+
+    private var dataListSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(selectedRange == .day ? "Hourly Breakdown" : "Daily Summary")
+                .font(.headline)
+                .padding(.bottom, 12)
+
+            ForEach(Array(listBuckets.reversed().enumerated()), id: \.offset) { idx, bucket in
+                HStack {
+                    Text(bucket.date, format: calloutFormat)
+                        .font(.subheadline)
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Text(useBarChart
+                         ? valueFormatter(bucket.display)
+                         : "\(valueFormatter(bucket.low)) – \(valueFormatter(bucket.high))")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 9)
+                if idx < listBuckets.count - 1 {
+                    Divider()
+                }
+            }
+        }
+        .padding()
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(.background)
+                .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 2)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(.separator, lineWidth: 0.5)
+        }
     }
 }
 

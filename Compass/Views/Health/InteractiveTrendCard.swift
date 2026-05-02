@@ -16,6 +16,13 @@ struct InteractiveTrendCard: View {
     @State private var selectedPoint: TrendDataPoint?   // day scatter selection
     @State private var selectedBucket: TrendBucket?     // week/month/year bar selection
 
+    // For Day scatter: filter to the current day only (data contains all-time history).
+    private var displayData: [TrendDataPoint] {
+        guard selectedRange == .day else { return data }
+        let r = dateRange(for: .day, offset: 0)
+        return data.filter { r.contains($0.date) }
+    }
+
     // Pre-computed buckets for non-day ranges.
     private var buckets: [TrendBucket] {
         makeTrendBuckets(from: data, range: selectedRange, isSum: useBarChart)
@@ -24,7 +31,7 @@ struct InteractiveTrendCard: View {
     private var displayValue: String {
         if selectedRange == .day {
             return selectedPoint.map { valueFormatter($0.value) }
-                ?? data.last.map { valueFormatter($0.value) }
+                ?? displayData.last.map { valueFormatter($0.value) }
                 ?? "--"
         } else {
             return selectedBucket.map { valueFormatter($0.display) }
@@ -105,7 +112,7 @@ struct InteractiveTrendCard: View {
                     metricUnit: unit,
                     color: color,
                     icon: icon,
-                    data: data,
+                    data: data,          // all-time data; HealthDetailView filters internally
                     useBarChart: useBarChart,
                     initialRange: selectedRange,
                     valueFormatter: valueFormatter
@@ -119,7 +126,7 @@ struct InteractiveTrendCard: View {
                 .padding(.vertical, 10)
 
             if selectedRange == .day {
-                if data.isEmpty { emptyChart } else { scatterChart.frame(height: 120) }
+                if displayData.isEmpty { emptyChart } else { scatterChart.frame(height: 120) }
             } else {
                 if buckets.isEmpty { emptyChart } else { barChart.frame(height: 120) }
             }
@@ -163,7 +170,7 @@ struct InteractiveTrendCard: View {
 
     private var scatterChart: some View {
         Chart {
-            ForEach(data) { point in
+            ForEach(displayData) { point in
                 PointMark(
                     x: .value("Date", point.date),
                     y: .value("Value", point.value)
@@ -180,6 +187,7 @@ struct InteractiveTrendCard: View {
                     }
             }
         }
+        .chartXScale(domain: xDomain)
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: 6)) { _ in
                 AxisValueLabel(format: .dateTime.hour())
@@ -197,7 +205,7 @@ struct InteractiveTrendCard: View {
                     .gesture(DragGesture(minimumDistance: 0)
                         .onChanged { drag in
                             guard let date: Date = proxy.value(atX: drag.location.x) else { return }
-                            selectedPoint = data.min(by: {
+                            selectedPoint = displayData.min(by: {
                                 abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
                             })
                         }

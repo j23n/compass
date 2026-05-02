@@ -27,37 +27,67 @@ struct TrendBucket: Identifiable, Sendable {
     let display: Double // shown in callout: total for sum, average for range
 }
 
-/// Groups `data` into calendar buckets for the given range.
+/// Returns the date range for a given time range and navigation offset.
+/// offset = 0 → current period, offset = -1 → one period back, etc.
+func dateRange(for range: TrendTimeRange, offset: Int = 0) -> ClosedRange<Date> {
+    let cal = Calendar.current
+    let now = Date()
+    let todayStart = cal.startOfDay(for: now)
+    switch range {
+    case .day:
+        let s = cal.date(byAdding: .day, value: offset, to: todayStart)!
+        return s ... cal.date(byAdding: .day, value: 1, to: s)!
+    case .week:
+        let anchor = cal.date(byAdding: .day, value: offset * 7, to: todayStart)!
+        return cal.date(byAdding: .day, value: -6, to: anchor)! ... cal.date(byAdding: .day, value: 1, to: anchor)!
+    case .month:
+        let anchor = cal.date(byAdding: .day, value: offset * 30, to: todayStart)!
+        return cal.date(byAdding: .day, value: -29, to: anchor)! ... cal.date(byAdding: .day, value: 1, to: anchor)!
+    case .year:
+        let thisMonth = cal.date(from: cal.dateComponents([.year, .month], from: now))!
+        let anchor = cal.date(byAdding: .month, value: offset * 12, to: thisMonth)!
+        return cal.date(byAdding: .month, value: -11, to: anchor)! ... cal.date(byAdding: .month, value: 1, to: anchor)!
+    }
+}
+
+/// Groups `data` into calendar buckets for the given range and navigation offset.
 /// - `isSum`: true for totals (steps, sleep), false for min/max ranges (HR, BB, stress).
 /// Day range is a no-op (scatter handled separately).
-func makeTrendBuckets(from data: [TrendDataPoint], range: TrendTimeRange, isSum: Bool) -> [TrendBucket] {
+func makeTrendBuckets(from data: [TrendDataPoint], range: TrendTimeRange, isSum: Bool, offset: Int = 0) -> [TrendBucket] {
     guard range != .day else { return [] }
     let cal = Calendar.current
     let now = Date()
     let todayStart = cal.startOfDay(for: now)
 
     let startDate: Date
+    let upperBound: Date
     let unit: Calendar.Component
     let count: Int
 
     switch range {
     case .day: return []
     case .week:
-        startDate = cal.date(byAdding: .day, value: -6, to: todayStart)!
+        let anchor = cal.date(byAdding: .day, value: offset * 7, to: todayStart)!
+        startDate = cal.date(byAdding: .day, value: -6, to: anchor)!
+        upperBound = cal.date(byAdding: .day, value: 1, to: anchor)!
         unit = .day; count = 7
     case .month:
-        startDate = cal.date(byAdding: .day, value: -29, to: todayStart)!
+        let anchor = cal.date(byAdding: .day, value: offset * 30, to: todayStart)!
+        startDate = cal.date(byAdding: .day, value: -29, to: anchor)!
+        upperBound = cal.date(byAdding: .day, value: 1, to: anchor)!
         unit = .day; count = 30
     case .year:
         let thisMonth = cal.date(from: cal.dateComponents([.year, .month], from: now))!
-        startDate = cal.date(byAdding: .month, value: -11, to: thisMonth)!
+        let anchor = cal.date(byAdding: .month, value: offset * 12, to: thisMonth)!
+        startDate = cal.date(byAdding: .month, value: -11, to: anchor)!
+        upperBound = cal.date(byAdding: .month, value: 1, to: anchor)!
         unit = .month; count = 12
     }
 
     return (0..<count).compactMap { i in
         let bucketStart = cal.date(byAdding: unit, value: i, to: startDate)!
         let bucketEnd   = cal.date(byAdding: unit, value: 1, to: bucketStart)!
-        guard bucketStart <= now else { return nil }
+        guard bucketStart < upperBound else { return nil }
         let vals = data.filter { $0.date >= bucketStart && $0.date < bucketEnd }.map { $0.value }
         guard !vals.isEmpty else { return nil }
         if isSum {

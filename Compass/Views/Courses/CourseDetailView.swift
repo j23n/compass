@@ -390,7 +390,11 @@ struct StatsGrid: View {
         totalAscent: 120
     )
 
+    let container = try! ModelContainer(
+        for: Course.self, CourseWaypoint.self, CoursePOI.self,
+        configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+    )
     CourseDetailView(course: course)
-        .environment(SyncCoordinator(deviceManager: MockGarminDevice()))
-        .modelContainer(for: [Course.self, CourseWaypoint.self, CoursePOI.self], inMemory: true)
+        .environment(SyncCoordinator(deviceManager: MockGarminDevice(), modelContainer: container))
+        .modelContainer(container)
 }

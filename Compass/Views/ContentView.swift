@@ -27,22 +27,14 @@ struct ContentView: View {
 }
 
 #Preview {
+    let container = try! ModelContainer(
+        for: ConnectedDevice.self, Activity.self, TrackPoint.self, SleepSession.self,
+             SleepStage.self, HeartRateSample.self, HRVSample.self, BodyBatterySample.self,
+             StressSample.self, StepCount.self, RespirationSample.self,
+             Course.self, CourseWaypoint.self, CoursePOI.self,
+        configurations: ModelConfiguration(isStoredInMemoryOnly: true)
+    )
     ContentView()
-        .environment(SyncCoordinator(deviceManager: MockGarminDevice()))
-        .modelContainer(for: [
-            ConnectedDevice.self,
-            Activity.self,
-            TrackPoint.self,
-            SleepSession.self,
-            SleepStage.self,
-            HeartRateSample.self,
-            HRVSample.self,
-            BodyBatterySample.self,
-            StressSample.self,
-            StepCount.self,
-            RespirationSample.self,
-            Course.self,
-            CourseWaypoint.self,
-            CoursePOI.self,
-        ], inMemory: true)
+        .environment(SyncCoordinator(deviceManager: MockGarminDevice(), modelContainer: container))
+        .modelContainer(container)
 }
