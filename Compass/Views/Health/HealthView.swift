@@ -85,7 +85,7 @@ struct HealthView: View {
                     // Heart
                     sectionHeader(icon: "heart.fill", title: "Heart", color: .red)
                     InteractiveTrendCard(
-                        title: "Resting Heart Rate",
+                        title: "Heart Rate",
                         icon: "heart.fill",
                         color: .red,
                         unit: "bpm",

@@ -45,7 +45,7 @@ struct VitalsGridView: View {
     private var heartRateCard: some View {
         NavigationLink {
             HealthDetailView(
-                metricTitle: "Resting Heart Rate",
+                metricTitle: "Heart Rate",
                 metricUnit: "bpm",
                 color: .red,
                 icon: "heart.fill",
@@ -53,7 +53,7 @@ struct VitalsGridView: View {
                 valueFormatter: { "\(Int($0)) bpm" }
             )
         } label: {
-            cardShell(icon: "heart.fill", label: "Resting HR", color: .red) {
+            cardShell(icon: "heart.fill", label: "Heart Rate", color: .red) {
                 metricValue(heartRate.current.map { "\($0)" }, unit: "bpm")
                 chartSlot(!heartRate.sparkline.isEmpty) {
                     SparklineChart(data: heartRate.sparkline, color: .red)

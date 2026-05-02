@@ -60,7 +60,7 @@ struct MetricCard: View {
 #Preview {
     VStack(spacing: 16) {
         MetricCard(
-            title: "Resting Heart Rate",
+            title: "Heart Rate",
             value: "58",
             unit: "bpm",
             color: .red,

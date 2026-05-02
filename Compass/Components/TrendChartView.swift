@@ -213,7 +213,7 @@ struct TrendChartView: View {
 
         var body: some View {
             TrendChartView(
-                title: "Resting Heart Rate",
+                title: "Heart Rate",
                 color: .red,
                 data: sampleTrendData(),
                 valueFormatter: { "\(Int($0)) bpm" },

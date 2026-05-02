@@ -479,7 +479,7 @@ struct HealthDetailView: View {
 
     NavigationStack {
         HealthDetailView(
-            metricTitle: "Resting Heart Rate",
+            metricTitle: "Heart Rate",
             metricUnit: "bpm",
             color: .red,
             icon: "heart.fill",
