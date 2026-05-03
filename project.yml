@@ -23,6 +23,12 @@ targets:
   Compass:
     type: application
     platform: iOS
+    info:
+      path: Compass/Info.plist
+      properties:
+        UIBackgroundModes:
+          - bluetooth-central
+          - audio
     sources:
       - path: Compass
         excludes:
@@ -34,7 +40,6 @@ targets:
         INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: "Compass connects to your fitness watch to sync activity and health data."
         INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "Compass sends your location to the watch for sunrise/sunset and timezone."
         INFOPLIST_KEY_NSAppleMusicUsageDescription: "Compass shows now-playing info on your Garmin watch."
-        INFOPLIST_KEY_UIBackgroundModes: "bluetooth-central audio"
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES

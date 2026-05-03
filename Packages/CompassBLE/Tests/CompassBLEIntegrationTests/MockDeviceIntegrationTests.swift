@@ -77,7 +77,8 @@ struct MockDeviceIntegrationTests {
 
         // Verify files
         #expect(urls.count == 2)
-        for url in urls {
+        for tuple in urls {
+            let url = tuple.url
             #expect(url.pathExtension == "fit")
             let data = try Data(contentsOf: url)
             #expect(data.count == 1024)
@@ -100,8 +101,8 @@ struct MockDeviceIntegrationTests {
         #expect(descriptions.last?.contains("completed") == true)
 
         // Cleanup temp files
-        for url in urls {
-            try? FileManager.default.removeItem(at: url)
+        for tuple in urls {
+            try? FileManager.default.removeItem(at: tuple.url)
         }
     }
 
@@ -211,8 +212,8 @@ struct MockDeviceIntegrationTests {
         #expect(urls.count == 3)
 
         // Cleanup
-        for url in urls {
-            try? FileManager.default.removeItem(at: url)
+        for tuple in urls {
+            try? FileManager.default.removeItem(at: tuple.url)
         }
     }
 
@@ -264,7 +265,7 @@ struct MockDeviceIntegrationTests {
             .appendingPathComponent("test_course_\(UUID().uuidString).fit")
         try Data([0x0E, 0x20]).write(to: tempURL)
 
-        try await mock.uploadCourse(tempURL)
+        _ = try await mock.uploadCourse(tempURL)
         // Should complete without error
 
         try? FileManager.default.removeItem(at: tempURL)
@@ -278,7 +279,7 @@ struct MockDeviceIntegrationTests {
             .appendingPathComponent("test_course_\(UUID().uuidString).fit")
 
         do {
-            try await mock.uploadCourse(tempURL)
+            _ = try await mock.uploadCourse(tempURL)
             Issue.record("Should have thrown")
         } catch let error as PairingError {
             if case .bluetoothUnavailable = error {

@@ -232,9 +232,10 @@ public actor BluetoothCentral {
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             self.connectionContinuation = continuation
-            self.centralManager?.connect(peripherals, options: [
-                CBConnectPeripheralOptionEnableAutoReconnect: true
-            ])
+            
+            // TODO: Re-evaluate CBConnectPeripheralOptionEnableAutoReconnect once we have a full Apple Developer account.
+            // Using it previously resulted in "BLE connection failed: One or more parameters were invalid."
+            self.centralManager?.connect(peripherals, options: nil)
         }
 
         self.connectedPeripheral = peripherals
