@@ -11,14 +11,15 @@ The project is one Xcode app target plus three local Swift packages.
 ```
 Compass (app target — iOS 18+, SwiftUI)
 ├── CompassData   — SwiftData models and repository layer
-├── CompassFIT    — Binary FIT parser, GPX parser, FIT encoder
+├── CompassFIT    — FIT parser (via FitFileParser), GPX parser, FIT encoder
+├── FitFileParser — Vendored FIT profile library (Garmin SDK + augmented fields)
 └── CompassBLE    — CoreBluetooth wrapper, Garmin ML v2 / GFDI protocol
 ```
 
 **Dependency rules:**
 - `Compass` imports all three packages.
 - `CompassBLE` has no compile-time dependency on `CompassData` or `CompassFIT`. It produces raw FIT bytes that the app routes to `CompassFIT`.
-- `CompassFIT` has no dependency on `CompassData` or `CompassBLE`. It is a pure parsing/encoding library.
+- `CompassFIT` has no dependency on `CompassBLE`. It depends on `CompassData` (for model types) and `FitFileParser` (vendored, for binary FIT decoding). It is a pure parsing/encoding library.
 - `CompassData` has no dependency on the other packages. It is a pure persistence layer.
 
 `SyncCoordinator` in the app target is the runtime orchestrator that wires all three packages together.
@@ -93,27 +94,33 @@ Packages/
 │   │   └── MockDataProvider.swift    Generates deterministic sample data for previews
 │   └── Tests/CompassDataTests/
 
+├── FitFileParser/
+│   ├── Sources/FitFileParser/
+│   │   ├── FitFile.swift                Binary FIT reader; produces [FitMessage]
+│   │   ├── FitMessage.swift             Per-record interpreted field access
+│   │   ├── FitFieldValue.swift          Typed field value (coordinate, time, double, name, invalid)
+│   │   ├── rzfit_swift_map.swift        Generated: FIT mesg num → field definitions (14k lines)
+│   │   ├── rzfit_swift_reverse_map.swift Generated: field name → mesg num lookups (15k lines)
+│   │   ├── Sources/FitFileParserObjc/    Objective-C bridge (fit_convert, fit_crc, dev data)
+│   │   └── Tests/                       Unit tests + sample .fit files
+│   └── python/                          Profile augmentation pipeline
+│       ├── fitsdkparser.py              Parses Profile.xlsx into Swift definitions
+│       └── Profile.xlsx                 Garmin SDK + Gadgetbridge + Harry additions
+│
 ├── CompassFIT/
 │   ├── Sources/CompassFIT/
 │   │   ├── Parsers/
-│   │   │   ├── FITDecoder.swift          Core binary reader (header, records, CRC)
 │   │   │   ├── FITTimestamp.swift        Garmin epoch (1989-12-31) ↔ Date
 │   │   │   ├── ActivityFITParser.swift   session/lap/record msgs → Activity + TrackPoints
 │   │   │   ├── MonitoringFITParser.swift monitoring msgs → HR, stress, BB, steps, respiration
-│   │   │   ├── SleepFITParser.swift      sleep msgs → SleepSession + stages
-│   │   │   ├── MetricsFITParser.swift    hrv_summary msgs → HRVSamples
 │   │   │   ├── MonitoringResults.swift   Value types returned by monitoring parser
+│   │   │   ├── SleepFITParser.swift      sleep msgs → SleepResult + SleepStageResult
+│   │   │   ├── MetricsFITParser.swift    hrv/hrv_status_summary msgs → [HRVResult]
 │   │   │   └── GPXCourseParser.swift     GPX XML → Course model
-│   │   ├── Overlay/
-│   │   │   ├── FieldNameOverlay.swift    Maps FIT numeric field IDs → readable names
-│   │   │   ├── OverlayModels.swift       Data types for overlay entries
-│   │   │   └── HarryOverlayNotes.swift   Notes on the HarryOnline FIT spreadsheet source
-│   │   ├── Encoders/
-│   │   │   ├── CourseFITEncoder.swift    Course model → FIT binary for upload
-│   │   │   ├── PathSimplification.swift  Douglas-Peucker GPS track simplification
-│   │   │   └── ActivityGPXExporter.swift Activity → GPX for share sheet
-│   │   └── Resources/
-│   │       └── harry_overlay.json        Bundled FIT field definitions
+│   │   └── Encoders/
+│   │       ├── CourseFITEncoder.swift    Course model → FIT binary for upload
+│   │       ├── PathSimplification.swift  Douglas-Peucker GPS track simplification
+│   │       └── ActivityGPXExporter.swift Activity → GPX for share sheet
 │   └── Tests/CompassFITTests/
 
 └── CompassBLE/
@@ -202,11 +209,11 @@ SyncCoordinator           @MainActor; receives file data; routes by FIT director
      │
      ├──(activity)──────► ActivityFITParser   → Activity + [TrackPoint]
      ├──(monitor)──────► MonitoringFITParser  → HR / stress / BB / respiration / steps
-     ├──(sleep)────────► SleepFITParser       → SleepSession + [SleepStage]
-     └──(metrics)──────► MetricsFITParser     → [HRVSample]
-                          ▲
-                          └── all parsers use FITDecoder for binary decoding
-                              and FieldNameOverlay for field-ID resolution
+     ├──(sleep)────────► SleepFITParser       → SleepResult + [SleepStageResult]
+     └──(metrics)──────► MetricsFITParser     → [HRVResult]
+                           ▲
+                           └── all parsers use FitFileParser for binary decoding
+                               (interpretedField / messageType API)
      │
      │  Swift model objects
      ▼
@@ -271,18 +278,18 @@ The watch always initiates the handshake by sending `DEVICE_INFORMATION`. The ph
 ## SwiftData models
 
 | Model | Source FIT message | Relationships | HealthKit future |
-|---|---|---|---|
+|---|---|---|---|---|
 | `Activity` | `session`, `lap` (18, 19) | has-many `TrackPoint` (cascade) | `HKWorkout` |
 | `TrackPoint` | `record` (20) | inverse: `Activity` | `HKWorkoutRoute` |
 | `SleepSession` | `sleep_level` (55 / 274) | has-many `SleepStage` (cascade) | `HKCategorySample` |
 | `SleepStage` | `sleep_level` | inverse: `SleepSession` | `HKCategoryValueSleepAnalysis` |
-| `HeartRateSample` | `monitoring` | independent | `HKQuantitySample (.heartRate)` |
-| `HRVSample` | `hrv_summary` (227) | independent | `HKQuantitySample (.heartRateVariabilitySDNN)` |
-| `StressSample` | `stress_level` (57) | independent | — |
-| `BodyBatterySample` | `monitoring` | independent | — |
-| `RespirationSample` | `monitoring` | independent | `HKQuantitySample (.respiratoryRate)` |
-| `StepCount` | `monitoring` | independent | `HKQuantitySample (.stepCount)` |
-| `StepSample` | `monitoring` | independent | — |
+| `HeartRateSample` | `monitoring` / `hsa_heart_rate_data` (55 / 308) | independent | `HKQuantitySample (.heartRate)` |
+| `HRVSample` | `hrv` / `hrv_status_summary` (78 / 370) | independent | `HKQuantitySample (.heartRateVariabilitySDNN)` |
+| `StressSample` | `stress_level` / `hsa_stress_data` (57 / 307) | independent | — |
+| `BodyBatterySample` | `monitoring` / `hsa_body_battery_data` (55 / 314) | independent | — |
+| `RespirationSample` | `respiration_rate` / `hsa_respiration_data` (297 / 306) | independent | `HKQuantitySample (.respiratoryRate)` |
+| `StepCount` | `monitoring` (55) | independent | `HKQuantitySample (.stepCount)` |
+| `StepSample` | `monitoring` (55) | independent | — |
 | `ConnectedDevice` | BLE discovery | independent | — |
 | `Course` | GPX / user-created | has-many `CourseWaypoint`, `CoursePOI` (cascade) | — |
 | `CourseWaypoint` | Course GPS point | inverse: `Course` | — |
@@ -307,7 +314,8 @@ The project uses Swift 6 strict concurrency throughout.
 | `SyncCoordinator` | `@MainActor` | Bridges BLE to SwiftData; `ModelContext` must stay on its creation actor |
 | Repositories | `@MainActor` | Wrap `ModelContext` operations |
 | ViewModels | `@MainActor` | Feed SwiftUI views |
-| `FITDecoder`, `ByteReader`, `CRC16` | `Sendable` struct | Pure computation; callable from any context |
+| `FITTimestamp`, parsers | `Sendable` struct | Pure computation; callable from any context |
+| `FitFile`, `FitMessage`, `FitFieldValue` | Non-Sendable classes | FitFileParser (Swift 5.3) — used ephemerally within each `parse()` call via `@preconcurrency import` |
 
 `DeviceManagerProtocol` exposes BLE events as `AsyncStream<SyncProgress>`. `SyncCoordinator` consumes this with `for await` on the main actor, so SwiftData writes are sequential and safe.
 
@@ -384,7 +392,7 @@ Two logger families funnel into the same `LogStore`:
 | Suite | Location | Notes |
 |---|---|---|
 | `CompassDataTests` | `Packages/CompassData/Tests/` | In-memory ModelContainer |
-| `CompassFITTests` | `Packages/CompassFIT/Tests/` | Includes overlay JSON tests |
+| `CompassFITTests` | `Packages/CompassFIT/Tests/` | Tests use actual .fit files against FitFileParser |
 | `CompassBLETests` | `Packages/CompassBLE/Tests/CompassBLETests/` | ByteReader, CRC16, GFDI, FrameAssembler |
 | `CompassBLEIntegrationTests` | `Packages/CompassBLE/Tests/CompassBLEIntegrationTests/` | Requires physical Garmin device; not run in CI |
 
@@ -394,6 +402,8 @@ BLE traffic capture: use PacketLogger (Xcode Additional Tools) → `.btsnoop` fi
 
 ## External dependencies
 
-All frameworks are from the Apple SDK — no third-party Swift packages.
+All frameworks are from the Apple SDK — no third-party Swift packages via SPM.
+
+**FitFileParser** is a vendored local package (`Packages/FitFileParser/`) generated from an augmented Garmin SDK profile. The augmentation pipeline lives in `scripts/augment_profile.py` and produces correct field maps for proprietary monitoring, sleep, and metrics messages.
 
 `Foundation`, `SwiftUI`, `SwiftData`, `CoreBluetooth`, `MapKit`, `Charts`, `UserNotifications`, `MediaPlayer`, `CoreLocation`
