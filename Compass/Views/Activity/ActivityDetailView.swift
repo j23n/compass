@@ -261,7 +261,8 @@ struct ActivityDetailView: View {
     }
 
     private var caloriesString: String {
-        activity.activeCalories > 0 ? "\(Int(activity.activeCalories))" : "--"
+        guard let activeCalories = activity.activeCalories, activeCalories > 0 else { return "--" }
+        return "\(Int(activeCalories))"
     }
 
     private var avgCadenceString: String {

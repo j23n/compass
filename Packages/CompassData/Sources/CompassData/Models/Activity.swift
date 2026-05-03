@@ -12,7 +12,7 @@ public final class Activity {
     public var sport: Sport
     public var distance: Double
     public var duration: TimeInterval
-    public var activeCalories: Double
+    public var activeCalories: Double?
     public var avgHeartRate: Int?
     public var maxHeartRate: Int?
     public var totalAscent: Double?
@@ -29,7 +29,7 @@ public final class Activity {
         sport: Sport,
         distance: Double,
         duration: TimeInterval,
-        activeCalories: Double,
+        activeCalories: Double? = nil,
         avgHeartRate: Int? = nil,
         maxHeartRate: Int? = nil,
         totalAscent: Double? = nil,

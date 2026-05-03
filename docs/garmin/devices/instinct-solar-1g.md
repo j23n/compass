@@ -248,12 +248,56 @@ HSA (subtype-58) stream. Decode for the 4-byte payload remains TODO.
 
 The standard `sleep_level` layout is field 253 = timestamp, field 0 = level
 (1–4). On Instinct Solar 1G fw 19.1, msg 274 records arrive as a single 20-byte
-opaque blob with no recognizable timestamp or level field. Encoding is
-unknown.
+opaque blob with no recognizable timestamp or level field.
 
-Parser behavior: `parseSleepLevel` returns `nil` for these records and the
-parser falls back to msg 275 (`sleep_stage`) for staging. Spans are derived
-from consecutive msg-275 timestamps — see Quirk §5.6.
+**Reverse-engineered layout** (from `sleep_2026-05-02_08-48-17_57220DC8.fit`,
+507 records, ~8.5 h session):
+
+| Bytes | Interpretation |
+|-------|----------------|
+| 0–15  | 8 × int16 LE — accelerometer statistics (exact sub-field mapping unknown) |
+| 16–17 | uint16 LE — wrist-motion metric; **0 = still, >0 = movement detected** |
+| 18    | uint8 — ancillary metric (possibly HRV or confidence; values 0–254, no clear trend) |
+| 19    | uint8 — **sleep stage**, offset-encoded: 81=deep, 82=light, 83=REM, 84–85=awake/arousal |
+
+**Byte 19 (sleep stage) detail.** Values range 80–85 with a clear sleep-arc:
+- 22–23 h: 82 (light — falling asleep) 
+- 01–04 h: 81 (deep NREM — nadir)
+- 05–06 h: 83–85 (REM / waking — rising)
+
+One record per minute; 507 records for an ~8.5 h session (vs. 6 records in the
+earlier S4UA2600.FIT file, which is a false-positive short session).
+
+**Bytes 16–17 (motion metric) detail.** Zero during deep sleep, non-zero
+during arousal events. The col-0 sign of bytes 0–15 (int16) is strongly
+correlated with this field: col0 positive ↔ bytes 16–17 non-zero in 87% of
+records. The 119 non-zero motion records cluster heavily in the final 2 h of
+the session (05:00–06:27), consistent with increasing arousal near wake.
+
+**Bytes 0–15 (accelerometer) detail.** Absolute magnitude per int16 column is
+stable (~15 000–20 000 LSB) across all hours. Sum-of-squares √≈ 50 000 is
+consistent throughout, suggesting a fixed-magnitude gravity vector that rotates
+as wrist orientation changes. Sign pattern of col0 distinguishes two record
+sub-types: negative (~378 records, still/asleep) and positive (~129 records,
+movement/arousal).
+
+**Practical stage inference from msg 274 alone:**
+
+```
+hr_stage  = blob[19]          # 81=deep 82=light 83=REM 84-85=awake
+motion    = blob[16] | blob[17]  # 0=still >0=moving
+```
+
+- `motion > 0 AND hr_stage ≥ 83` → awake/aroused
+- `motion > 0 AND hr_stage ≤ 82` → light sleep / REM
+- `motion = 0 AND hr_stage = 81` → deep sleep
+- `motion = 0 AND hr_stage = 82` → light sleep
+
+This yields 507 per-minute stage estimates vs. 18 incomplete records from
+msg 275, making msg 274 the primary source for sleep staging on this firmware.
+
+Parser behavior: `parseSleepLevel` currently returns `nil` for these records
+and falls back to msg 275. Decoding msg 274 directly is a TODO.
 
 This was one of three bugs whose combination caused every sleep session to be
 silently dropped pre-fix (commit `75d3efd`).

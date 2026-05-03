@@ -427,18 +427,29 @@ Compass collapses consecutive same-level samples into stage spans
 ### Instinct Solar 1G fw 19.1 divergence
 
 On this firmware, msg 274 appears with a non-standard definition: **no field 253 and field
-0 as a 20-byte `bytes` blob**. Six such records were observed for a 120-minute session,
-suggesting one byte per minute packed in batches of 20. The byte values do not match the
-expected 0–4 sleep-level encoding, and the encoding is unknown.
+0 as a 20-byte `bytes` blob**. One record per minute; ~507 records for an 8.5 h session.
 
-The parser falls through gracefully: `parseSleepLevel` requires both field 253 and an
-integer field 0, and returns nil otherwise (`SleepFITParser.swift:172-178`). When msg 274
-yields no level samples, session bounds and stages fall back to msg 273 and msg 275
-respectively.
+**Partially reverse-engineered layout:**
 
-See [`../instinct/device-reference.md`](../instinct/device-reference.md).
+| Bytes | Content |
+|-------|---------|
+| 0–15  | 8 × int16 LE — accelerometer statistics (sub-field mapping unknown) |
+| 16–17 | uint16 LE — wrist-motion metric (0 = still, >0 = movement) |
+| 18    | uint8 — ancillary metric (unknown; possibly HRV or confidence) |
+| 19    | uint8 — **sleep stage**, offset-encoded: 81=deep, 82=light, 83=REM, 84–85=awake |
 
-Source: HarryOnline (standard) + live capture (Instinct Solar divergence).
+Byte 19 shows a clear physiological arc across the night (deep-sleep nadir at 81 in
+mid-night, rising to 83–85 near wake), making it the primary sleep-stage signal. Bytes
+16–17 provide a per-minute motion flag that is 0 during deep sleep and non-zero during
+arousal events, densely populated in the final 2 h before waking.
+
+The parser falls through gracefully: `parseSleepLevel` returns nil for these records
+(`SleepFITParser.swift:172-178`), and staging falls back to msg 275. Decoding msg 274
+directly (using byte 19 + bytes 16–17) is a TODO.
+
+See [`../devices/instinct-solar-1g.md §5.5`](../devices/instinct-solar-1g.md) for full detail.
+
+Source: HarryOnline (standard) + live capture + reverse engineering (Instinct Solar 1G divergence).
 
 ## Message 275 — `sleep_stage`
 

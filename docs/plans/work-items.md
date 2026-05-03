@@ -29,13 +29,13 @@ Data integrity and reliability of the sync flow itself.
 
 ---
 
-## WP-4 · Sleep Data Parsing
+## WP-4 · Data Parsing
 
-Two tightly coupled issues that must be solved together.
-
-- **Understand sleep msg 274 blob format** — the 20-byte payloads are not simple `uint8` sleep-stage values; the last 2 bytes look like a ~60 s timestamp suffix; the preceding 18 bytes are unknown (actigraphy / HRV vectors?). Cross-reference Gadgetbridge's Instinct Solar (1st gen) sleep parser.
+- **Instinct 1 sleep data** - use a Instinct 1 specific fallback: see sleep_2026*.fit files. the LAST "sleep level" 275 message of the night BEFORE, and the FIRST "sleep level" 275 message of the night AFTER, with sleep level "awake" could be used as the start/end times for sleep. If decoding 274 is not possible
 - **Implement sleep epoch decoder** — once the format is understood, replace the broken level parser with a correct implementation.
 - **Fix broken sleep display in Health view** — the current parser produces no valid samples; the Health sleep card is non-functional.
+- **Step count inconsistency** — steps are correct on Today view but wrong on Health view (including the detail card). Identify which parser / aggregation path diverges.
+- **Active minutes calculation** — use a heart rate threshold instead - 100?.
 
 ---
 
