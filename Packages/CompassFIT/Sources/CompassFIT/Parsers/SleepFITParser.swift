@@ -76,6 +76,7 @@ public struct SleepFITParser: Sendable {
         var overallScore: Int?
         var recoveryScore: Int?
         var qualifier: String?
+        var assessmentTimestamp: Date?
         var rawStages: [(timestamp: Date, stage: SleepStageType)] = []
 
         for message in fitFile.messages {
@@ -102,6 +103,7 @@ public struct SleepFITParser: Sendable {
                 }
 
             case .sleep_assessment:
+                assessmentTimestamp = message.interpretedField(key: "timestamp")?.time
                 if let v = message.interpretedField(key: "overall_sleep_score")?.value, v > 0 {
                     overallScore = Int(v)
                 }
@@ -140,8 +142,14 @@ public struct SleepFITParser: Sendable {
             }
         }
 
-        guard sessionStart != nil || !rawStages.isEmpty else {
-            Self.logger.warning("No usable sleep data (no msg 273 or 275)")
+        // Assessment-only file: no session or stage records, but we have a score.
+        // Return a minimal result so the file gets archived and the score is persisted.
+        if sessionStart == nil && rawStages.isEmpty {
+            if let ts = assessmentTimestamp, overallScore != nil {
+                Self.logger.info("Assessment-only sleep file: score=\(overallScore!)")
+                return SleepResult(startDate: ts, endDate: ts, score: overallScore, stages: [], recoveryScore: recoveryScore, qualifier: qualifier)
+            }
+            Self.logger.warning("No usable sleep data (no msg 273, 275, or assessment score)")
             return nil
         }
 

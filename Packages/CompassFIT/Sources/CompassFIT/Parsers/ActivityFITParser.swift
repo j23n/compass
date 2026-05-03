@@ -59,10 +59,12 @@ public struct ActivityFITParser: Sendable {
         let latitude = coord?.latitude ?? 0.0
         let longitude = coord?.longitude ?? 0.0
 
-        let altitude = doubleValue(message, key: "altitude")
+        let altitude = doubleValue(message, key: "enhanced_altitude")
+                    ?? doubleValue(message, key: "altitude")
         let heartRate = message.interpretedField(key: "heart_rate")?.value.map(Int.init)
         let cadence = message.interpretedField(key: "cadence")?.value.map(Int.init)
-        let speed = doubleValue(message, key: "speed")
+        let speed = doubleValue(message, key: "enhanced_speed")
+                 ?? doubleValue(message, key: "speed")
         let temperature = doubleValue(message, key: "temperature")
 
         return TrackPoint(

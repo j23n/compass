@@ -25,6 +25,9 @@ public struct MonitoringFITParser: Sendable {
     /// Any interval where the heart rate ≥ this value counts as an intensity minute.
     private static let intensityHRThreshold: Int = 100
 
+    /// Maximum age of a `recentHR` reading before it is considered stale for intensity decisions.
+    private static let hrFreshnessWindow: TimeInterval = 5 * 60
+
     private let profile: DeviceProfile
 
     public init(profile: DeviceProfile = .default) {
@@ -49,25 +52,24 @@ public struct MonitoringFITParser: Sendable {
         var lastCyclesByType: [String: Int] = [:]
         // Track last full Garmin-epoch timestamp seen (for timestamp_16 resolution).
         var lastFullTimestamp: UInt32 = 0
-        // Track most recent HR per minute for active minutes threshold
-        var recentHR: Int?
+        // Track most recent HR reading (timestamp + bpm) for intensity-minute freshness check.
+        var recentHR: (timestamp: Date, bpm: Int)?
 
         for message in fitFile.messages {
             // Update running 32-bit timestamp from any message that carries one.
             if let date = message.interpretedField(key: "timestamp")?.time {
                 lastFullTimestamp = UInt32(max(0, date.timeIntervalSince(FITTimestamp.epoch)))
-            }
-
-            // Track HR from any source for active minutes threshold
-            if let hrVal = message.interpretedField(key: "heart_rate")?.value, hrVal > 0, hrVal != 255 {
-                recentHR = Int(hrVal)
+                // Track HR from any source for active minutes threshold (only when timestamp is available).
+                if let hrVal = message.interpretedField(key: "heart_rate")?.value, hrVal > 0, hrVal != 255 {
+                    recentHR = (timestamp: date, bpm: Int(hrVal))
+                }
             }
 
             switch message.messageType {
             case .monitoring:
                 if let hr = parseMonitoringHR(from: message, lastFullTimestamp: lastFullTimestamp) {
                     heartRateSamples.append(hr)
-                    recentHR = hr.bpm
+                    recentHR = (timestamp: hr.timestamp, bpm: hr.bpm)
                 }
                 if let interval = parseMonitoringInterval(from: message, lastCycles: &lastCyclesByType, recentHR: recentHR) {
                     intervals.append(interval)
@@ -86,7 +88,7 @@ public struct MonitoringFITParser: Sendable {
             case .hsa_heart_rate_data:
                 let hsaHRs = parseHSAHeartRate(from: message)
                 heartRateSamples.append(contentsOf: hsaHRs)
-                if let last = hsaHRs.last { recentHR = last.bpm }
+                if let last = hsaHRs.last { recentHR = (timestamp: last.timestamp, bpm: last.bpm) }
 
             case .hsa_stress_data:
                 parseHSAStress(from: message, into: &stressSamples)
@@ -125,7 +127,7 @@ public struct MonitoringFITParser: Sendable {
     private func parseMonitoringInterval(
         from message: FitMessage,
         lastCycles: inout [String: Int],
-        recentHR: Int?
+        recentHR: (timestamp: Date, bpm: Int)?
     ) -> MonitoringInterval? {
         guard let timestamp = message.interpretedField(key: "timestamp")?.time else { return nil }
 
@@ -143,15 +145,14 @@ public struct MonitoringFITParser: Sendable {
             steps = 0
         }
 
-        // Active / intensity minutes: prefer HR threshold, fall back to activity-type allowlist
+        // Active / intensity minutes: prefer HR threshold when reading is fresh (≤5 min old),
+        // fall back to activity-type allowlist when HR is absent or stale.
         let intensityMinutes: Int
-        if let hr = recentHR, hr >= Self.intensityHRThreshold {
-            intensityMinutes = 1
-        } else if recentHR == nil {
-            // Fall back to activity-type allowlist when no HR data available
-            intensityMinutes = Self.intensityActivityTypes.contains(activityType) ? 1 : 0
+        if let recent = recentHR,
+           recent.timestamp.distance(to: timestamp) <= Self.hrFreshnessWindow {
+            intensityMinutes = recent.bpm >= Self.intensityHRThreshold ? 1 : 0
         } else {
-            intensityMinutes = 0
+            intensityMinutes = Self.intensityActivityTypes.contains(activityType) ? 1 : 0
         }
 
         let fv = message.interpretedField(key: "active_calories")

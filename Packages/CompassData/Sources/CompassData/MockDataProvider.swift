@@ -363,6 +363,8 @@ public struct MockDataProvider: Sendable {
                     baseRmssd = Double.random(in: 25...65, using: &rng)
                 case .active:
                     baseRmssd = Double.random(in: 15...40, using: &rng)
+                case .unspecified:
+                    baseRmssd = Double.random(in: 25...65, using: &rng)
                 }
 
                 let sample = HRVSample(
