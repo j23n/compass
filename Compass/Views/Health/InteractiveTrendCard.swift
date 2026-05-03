@@ -201,6 +201,7 @@ struct InteractiveTrendCard: View {
             }
         }
         .chartXScale(domain: xDomain)
+        .chartYScale(domain: ChartYDomain.niceDomain(for: displayData.map(\.value)))
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: 6)) { _ in
                 AxisValueLabel(format: .dateTime.hour())
@@ -230,7 +231,11 @@ struct InteractiveTrendCard: View {
     // MARK: - Bar chart (Week / Month / Year)
 
     private var barChart: some View {
-        Chart {
+        let yVals = useBarChart ? buckets.map(\.high) : buckets.flatMap { [$0.low, $0.high] }
+        let domain = useBarChart
+            ? ChartYDomain.zeroAnchored(for: yVals)
+            : ChartYDomain.niceDomain(for: yVals)
+        return Chart {
             ForEach(buckets) { bucket in
                 BarMark(
                     x: .value("Date", bucket.date, unit: xUnit),
@@ -253,6 +258,7 @@ struct InteractiveTrendCard: View {
             }
         }
         .chartXScale(domain: xDomain)
+        .chartYScale(domain: domain)
         .chartXAxis {
             AxisMarks(values: .stride(by: barAxisStride, count: barAxisStrideCount)) { _ in
                 AxisValueLabel(format: barAxisFormat)
@@ -270,9 +276,8 @@ struct InteractiveTrendCard: View {
                     .gesture(DragGesture(minimumDistance: 0)
                         .onChanged { drag in
                             guard let date: Date = proxy.value(atX: drag.location.x) else { return }
-                            selectedBucket = buckets.min(by: {
-                                abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
-                            })
+                            let containing = buckets.first { $0.date <= date && date < $0.endDate }
+                            selectedBucket = containing ?? buckets.last
                         }
                         .onEnded { _ in selectedBucket = nil })
             }

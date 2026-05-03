@@ -22,6 +22,7 @@ struct TrendDataPoint: Identifiable, Sendable {
 struct TrendBucket: Identifiable, Sendable {
     let id = UUID()
     let date: Date      // bucket start (day or month)
+    let endDate: Date   // bucket end (exclusive); used for interval-containment selection
     let low: Double     // bar bottom: 0 for sum metrics, actual min for range metrics
     let high: Double    // bar top:    total for sum, actual max for range
     let display: Double // shown in callout: total for sum, average for range
@@ -92,11 +93,11 @@ func makeTrendBuckets(from data: [TrendDataPoint], range: TrendTimeRange, isSum:
         guard !vals.isEmpty else { return nil }
         if isSum {
             let total = vals.reduce(0, +)
-            return TrendBucket(date: bucketStart, low: 0, high: total, display: total)
+            return TrendBucket(date: bucketStart, endDate: bucketEnd, low: 0, high: total, display: total)
         } else {
             let lo = vals.min()!, hi = vals.max()!
             let avg = vals.reduce(0, +) / Double(vals.count)
-            return TrendBucket(date: bucketStart, low: lo, high: hi, display: avg)
+            return TrendBucket(date: bucketStart, endDate: bucketEnd, low: lo, high: hi, display: avg)
         }
     }
 }
@@ -171,6 +172,7 @@ struct TrendChartView: View {
                     }
             }
         }
+        .chartYScale(domain: ChartYDomain.niceDomain(for: data.map(\.value)))
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: 5)) { value in
                 AxisGridLine()

@@ -617,6 +617,7 @@ struct ActivityDetailView: View {
                 .chartYScale(domain: .automatic(includesZero: false, reversed: true))
         } else {
             baseChart(data: data, color: color, yFormat: yFormat)
+                .chartYScale(domain: ChartYDomain.niceDomain(for: data.map(\.v)))
         }
     }
 
@@ -715,20 +716,44 @@ struct ActivityDetailView: View {
         data.min(by: { abs($0.t - elapsed) < abs($1.t - elapsed) })
     }
 
+    // Pre-computed GPS-only elapsed-time index for O(log N) map sync.
+    private var elapsedIndex: [(elapsed: TimeInterval, coord: CLLocationCoordinate2D)] {
+        sortedTrackPoints
+            .filter { $0.latitude != 0 || $0.longitude != 0 }
+            .map { tp in
+                (
+                    elapsed: tp.timestamp.timeIntervalSince(activity.startDate),
+                    coord: CLLocationCoordinate2D(latitude: tp.latitude, longitude: tp.longitude)
+                )
+            }
+    }
+
+    private func coordAtElapsed(_ seconds: TimeInterval) -> CLLocationCoordinate2D? {
+        let index = elapsedIndex
+        var lo = 0, hi = index.count - 1
+        guard hi >= 0 else { return nil }
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if index[mid].elapsed < seconds { lo = mid + 1 } else { hi = mid }
+        }
+        let pick: Int
+        if lo == 0 {
+            pick = 0
+        } else {
+            let prevDelta = abs(index[lo - 1].elapsed - seconds)
+            let curDelta  = abs(index[lo].elapsed - seconds)
+            pick = prevDelta < curDelta ? lo - 1 : lo
+        }
+        return index[pick].coord
+    }
+
     // MARK: - Chart interaction
 
     private func updateHighlight(elapsed: TimeInterval) {
         let clamped = max(0, min(elapsed, activity.duration))
         highlightedElapsed = clamped
-
         guard hasGPS else { return }
-        let targetDate = activity.startDate.addingTimeInterval(clamped)
-        let nearest = sortedTrackPoints
-            .filter { $0.latitude != 0 || $0.longitude != 0 }
-            .min { abs($0.timestamp.timeIntervalSince(targetDate)) < abs($1.timestamp.timeIntervalSince(targetDate)) }
-        if let pt = nearest {
-            highlightedCoordinate = CLLocationCoordinate2D(latitude: pt.latitude, longitude: pt.longitude)
-        }
+        highlightedCoordinate = coordAtElapsed(clamped)
     }
 
     // MARK: - Share

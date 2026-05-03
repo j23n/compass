@@ -2,7 +2,7 @@ import SwiftUI
 import Charts
 
 /// Fullscreen chart detail for a single health metric.
-/// Day range → scatter (hourly). Week / Month / Year → ranged bar chart.
+/// All ranges → ranged bar chart. Day range uses hourly buckets; Week/Month/Year use daily/monthly.
 /// Supports back/forward navigation through historical periods.
 struct HealthDetailView: View {
     let metricTitle: String
@@ -16,7 +16,6 @@ struct HealthDetailView: View {
 
     @State private var selectedRange: TrendTimeRange
     @State private var offset: Int = 0
-    @State private var selectedPoint: TrendDataPoint?
     @State private var selectedBucket: TrendBucket?
 
     init(metricTitle: String, metricUnit: String, color: Color = .blue, icon: String = "heart.fill",
@@ -46,7 +45,30 @@ struct HealthDetailView: View {
         makeTrendBuckets(from: data, range: selectedRange, isSum: useBarChart, offset: offset)
     }
 
-    // Hourly buckets for the Day list view (keeps list to ≤24 rows regardless of sample density)
+    // All 24 hourly slots for Day chart (empty hours included as zero bars).
+    private var dayChartBuckets: [TrendBucket] {
+        guard selectedRange == .day else { return [] }
+        let cal = Calendar.current
+        let r = activeDateRange
+        let start = r.lowerBound
+        return (0..<24).compactMap { h in
+            let s = cal.date(byAdding: .hour, value: h, to: start)!
+            let e = cal.date(byAdding: .hour, value: 1, to: s)!
+            guard s < r.upperBound else { return nil }
+            let vals = filteredData.filter { $0.date >= s && $0.date < e }.map(\.value)
+            if useBarChart {
+                let total = vals.reduce(0, +)
+                return TrendBucket(date: s, endDate: e, low: 0, high: total, display: total)
+            } else {
+                let lo = vals.min() ?? 0
+                let hi = vals.max() ?? 0
+                let avg = vals.isEmpty ? 0 : vals.reduce(0, +) / Double(vals.count)
+                return TrendBucket(date: s, endDate: e, low: lo, high: hi, display: avg)
+            }
+        }
+    }
+
+    // Hourly buckets for the Day list view (non-empty hours only).
     private var dayHourBuckets: [TrendBucket] {
         guard selectedRange == .day else { return [] }
         let cal = Calendar.current
@@ -60,10 +82,10 @@ struct HealthDetailView: View {
             guard !vals.isEmpty else { return nil }
             if useBarChart {
                 let total = vals.reduce(0, +)
-                return TrendBucket(date: s, low: 0, high: total, display: total)
+                return TrendBucket(date: s, endDate: e, low: 0, high: total, display: total)
             } else {
                 let lo = vals.min()!, hi = vals.max()!
-                return TrendBucket(date: s, low: lo, high: hi, display: vals.reduce(0, +) / Double(vals.count))
+                return TrendBucket(date: s, endDate: e, low: lo, high: hi, display: vals.reduce(0, +) / Double(vals.count))
             }
         }
     }
@@ -105,20 +127,14 @@ struct HealthDetailView: View {
     }
 
     private var headerValue: String {
-        if selectedRange == .day {
-            return selectedPoint.map { valueFormatter($0.value) }
-                ?? filteredData.last.map { valueFormatter($0.value) }
-                ?? "--"
-        } else {
-            return selectedBucket.map { valueFormatter($0.display) }
-                ?? buckets.last.map { valueFormatter($0.display) }
-                ?? "--"
-        }
+        return selectedBucket.map { valueFormatter($0.display) }
+            ?? (selectedRange == .day
+                ? dayHourBuckets.last.map { valueFormatter($0.display) }
+                : buckets.last.map { valueFormatter($0.display) })
+            ?? "--"
     }
 
-    private var headerDate: Date? {
-        selectedRange == .day ? selectedPoint?.date : selectedBucket?.date
-    }
+    private var headerDate: Date? { selectedBucket?.date }
 
     private var periodLabel: String {
         let r = activeDateRange
@@ -142,7 +158,13 @@ struct HealthDetailView: View {
 
     // MARK: - x-axis helpers
 
-    private var xUnit: Calendar.Component { selectedRange == .year ? .month : .day }
+    private var xUnit: Calendar.Component {
+        switch selectedRange {
+        case .day:  return .hour
+        case .year: return .month
+        default:    return .day
+        }
+    }
 
     private func bucketCenterDate(_ date: Date) -> Date {
         let cal = Calendar.current
@@ -168,6 +190,14 @@ struct HealthDetailView: View {
         }
     }
 
+    private var xAxisFormat: Date.FormatStyle {
+        switch selectedRange {
+        case .day:   return .dateTime.hour()
+        case .year:  return .dateTime.month(.abbreviated)
+        default:     return .dateTime.month(.abbreviated).day()
+        }
+    }
+
     // MARK: - Body
 
     var body: some View {
@@ -190,7 +220,6 @@ struct HealthDetailView: View {
     }
 
     private func clearSelection() {
-        selectedPoint = nil
         selectedBucket = nil
     }
 
@@ -276,11 +305,11 @@ struct HealthDetailView: View {
     @ViewBuilder
     private var chartSection: some View {
         if selectedRange == .day {
-            if filteredData.isEmpty { emptyChart } else { scatterChart.frame(height: 300) }
+            if filteredData.isEmpty { emptyChart } else { barChart(for: dayChartBuckets).frame(height: 300) }
         } else if buckets.isEmpty {
             emptyChart
         } else {
-            barChart.frame(height: 300)
+            barChart(for: buckets).frame(height: 300)
         }
     }
 
@@ -293,56 +322,13 @@ struct HealthDetailView: View {
         .frame(height: 300)
     }
 
-    private var scatterChart: some View {
-        Chart {
-            ForEach(filteredData) { point in
-                PointMark(
-                    x: .value("Date", point.date),
-                    y: .value("Value", point.value)
-                )
-                .foregroundStyle(color.opacity(0.75))
-                .symbolSize(35)
-            }
-            if let pt = selectedPoint {
-                RuleMark(x: .value("Selected", pt.date))
-                    .foregroundStyle(Color.secondary.opacity(0.4))
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                    .annotation(position: .top, spacing: 4, overflowResolution: .init(x: .fit, y: .disabled)) {
-                        calloutView(value: valueFormatter(pt.value), date: pt.date)
-                    }
-            }
-        }
-        .chartXScale(domain: xDomain)
-        .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: 6)) { _ in
-                AxisGridLine()
-                AxisValueLabel(format: .dateTime.hour())
-            }
-        }
-        .chartYAxis {
-            AxisMarks(position: .leading) { _ in
-                AxisGridLine()
-                AxisValueLabel()
-            }
-        }
-        .chartOverlay { proxy in
-            GeometryReader { _ in
-                Rectangle().fill(.clear).contentShape(Rectangle())
-                    .gesture(DragGesture(minimumDistance: 0)
-                        .onChanged { drag in
-                            guard let date: Date = proxy.value(atX: drag.location.x) else { return }
-                            selectedPoint = filteredData.min(by: {
-                                abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
-                            })
-                        }
-                        .onEnded { _ in selectedPoint = nil })
-            }
-        }
-    }
-
-    private var barChart: some View {
-        Chart {
-            ForEach(buckets) { bucket in
+    private func barChart(for data: [TrendBucket]) -> some View {
+        let nonEmptyHighs = data.map(\.high).filter { $0 > 0 }
+        let domain: ClosedRange<Double> = useBarChart
+            ? ChartYDomain.zeroAnchored(for: nonEmptyHighs)
+            : ChartYDomain.niceDomain(for: data.filter { $0.high > 0 }.flatMap { [$0.low, $0.high] })
+        return Chart {
+            ForEach(data) { bucket in
                 BarMark(
                     x: .value("Date", bucket.date, unit: xUnit),
                     yStart: .value("Low",  bucket.low),
@@ -364,12 +350,11 @@ struct HealthDetailView: View {
             }
         }
         .chartXScale(domain: xDomain)
+        .chartYScale(domain: domain)
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: selectedRange == .year ? 12 : 6)) { _ in
                 AxisGridLine()
-                AxisValueLabel(format: selectedRange == .year
-                    ? .dateTime.month(.abbreviated)
-                    : .dateTime.month(.abbreviated).day())
+                AxisValueLabel(format: xAxisFormat)
             }
         }
         .chartYAxis {
@@ -384,9 +369,8 @@ struct HealthDetailView: View {
                     .gesture(DragGesture(minimumDistance: 0)
                         .onChanged { drag in
                             guard let date: Date = proxy.value(atX: drag.location.x) else { return }
-                            selectedBucket = buckets.min(by: {
-                                abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))
-                            })
+                            let containing = data.first { $0.date <= date && date < $0.endDate }
+                            selectedBucket = containing ?? data.last
                         }
                         .onEnded { _ in selectedBucket = nil })
             }
