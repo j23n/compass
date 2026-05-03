@@ -4,9 +4,10 @@ import CompassData
 
 /// Data bundle for a single vitals metric card.
 struct VitalsMetric {
-    let current: Int?           // nil → display "--"
-    let sparkline: [Double]     // compact window for the mini chart
-    let history: [TrendDataPoint] // full history for the detail view
+    let current: Int?                               // nil → display "--"
+    let lastReadingAt: Date?                        // nil → no timestamp line
+    let windowSamples: [(date: Date, value: Double)] // last 4h for the mini chart
+    let history: [TrendDataPoint]                   // full history for the detail view
 }
 
 /// Compact 2-column grid of today's key vitals.
@@ -20,6 +21,7 @@ struct VitalsGridView: View {
     let stress: VitalsMetric
     let steps: VitalsMetric
     let activeMinutes: VitalsMetric
+    let spo2: VitalsMetric
 
     var body: some View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
@@ -29,6 +31,7 @@ struct VitalsGridView: View {
             stressCard
             stepsCard
             activeMinutesCard
+            spo2Card
         }
     }
 
@@ -69,8 +72,9 @@ struct VitalsGridView: View {
         } label: {
             cardShell(icon: "heart.fill", label: "Heart Rate", color: .red) {
                 metricValue(heartRate.current.map { "\($0)" }, unit: "bpm")
-                chartSlot(!heartRate.sparkline.isEmpty) {
-                    SparklineChart(data: heartRate.sparkline, color: .red)
+                readingLine(for: heartRate)
+                chartSlot(!heartRate.windowSamples.isEmpty) {
+                    miniChart(for: heartRate, style: .line(color: .red))
                 }
             }
         }
@@ -92,8 +96,9 @@ struct VitalsGridView: View {
         } label: {
             cardShell(icon: "bolt.fill", label: "Body Battery", color: .blue) {
                 metricValue(bodyBattery.current.map { "\($0)" }, unit: "%")
-                chartSlot(!bodyBattery.sparkline.isEmpty) {
-                    SparklineChart(data: bodyBattery.sparkline, color: .blue)
+                readingLine(for: bodyBattery)
+                chartSlot(!bodyBattery.windowSamples.isEmpty) {
+                    miniChart(for: bodyBattery, style: .line(color: .blue))
                 }
             }
         }
@@ -115,8 +120,9 @@ struct VitalsGridView: View {
         } label: {
             cardShell(icon: "brain.head.profile", label: "Stress", color: .orange) {
                 metricValue(stress.current.map { "\($0)" }, unit: nil)
-                chartSlot(!stress.sparkline.isEmpty) {
-                    SparklineChart(data: stress.sparkline, color: .orange)
+                readingLine(for: stress)
+                chartSlot(!stress.windowSamples.isEmpty) {
+                    miniChart(for: stress, style: .line(color: .orange))
                 }
             }
         }
@@ -147,8 +153,9 @@ struct VitalsGridView: View {
                     ? String(format: "%.1fk", Double($0) / 1000)
                     : "\($0)"
                 }, unit: nil)
-                chartSlot(!steps.sparkline.isEmpty) {
-                    SparklineChart(data: steps.sparkline, color: .green)
+                readingLine(for: steps)
+                chartSlot(!steps.windowSamples.isEmpty) {
+                    miniChart(for: steps, style: .bars(color: .green))
                 }
             }
         }
@@ -171,8 +178,33 @@ struct VitalsGridView: View {
         } label: {
             cardShell(icon: "figure.run", label: "Active Min", color: .teal) {
                 metricValue(activeMinutes.current.map { "\($0)" }, unit: "min")
-                chartSlot(!activeMinutes.sparkline.isEmpty) {
-                    SparklineChart(data: activeMinutes.sparkline, color: .teal)
+                readingLine(for: activeMinutes)
+                chartSlot(!activeMinutes.windowSamples.isEmpty) {
+                    miniChart(for: activeMinutes, style: .bars(color: .teal))
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - SpO2
+
+    private var spo2Card: some View {
+        NavigationLink {
+            HealthDetailView(
+                metricTitle: "Blood Oxygen",
+                metricUnit: "%",
+                color: .cyan,
+                icon: "lungs.fill",
+                data: spo2.history,
+                valueFormatter: { "\(Int($0))%" }
+            )
+        } label: {
+            cardShell(icon: "lungs.fill", label: "Blood Oxygen", color: .cyan) {
+                metricValue(spo2.current.map { "\($0)" }, unit: "%")
+                readingLine(for: spo2)
+                chartSlot(!spo2.windowSamples.isEmpty) {
+                    miniChart(for: spo2, style: .line(color: .cyan))
                 }
             }
         }
@@ -226,6 +258,19 @@ struct VitalsGridView: View {
         }
     }
 
+    /// "N minutes ago" / "at HH:MM" line, re-rendered every minute via TimelineView.
+    @ViewBuilder
+    private func readingLine(for metric: VitalsMetric) -> some View {
+        if let ts = metric.lastReadingAt {
+            TimelineView(.periodic(from: .now, by: 60)) { _ in
+                Text(ts.relativeReadingDescription())
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+    }
+
     /// Fixed-height slot that shows the chart when data is present, or a clear
     /// placeholder when it isn't — keeps all cards the same height.
     @ViewBuilder
@@ -234,6 +279,10 @@ struct VitalsGridView: View {
             if hasData { chart() } else { Color.clear }
         }
         .frame(height: 24)
+    }
+
+    private func miniChart(for metric: VitalsMetric, style: MiniWindowChart.Style) -> some View {
+        MiniWindowChart(samples: metric.windowSamples, window: 4 * 3600, style: style)
     }
 
     // MARK: - Sleep stage mini-bar

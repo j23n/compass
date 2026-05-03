@@ -23,6 +23,7 @@ struct CompassApp: App {
             BodyBatterySample.self,
             RespirationSample.self,
             SpO2Sample.self,
+            IntensitySample.self,
             StepCount.self,
             StepSample.self,
             ConnectedDevice.self,

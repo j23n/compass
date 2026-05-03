@@ -32,12 +32,19 @@ struct TodayView: View {
     @Query(sort: \StepSample.timestamp)
     private var allStepSamples: [StepSample]
 
+    @Query(sort: \SpO2Sample.timestamp, order: .reverse)
+    private var allSpO2: [SpO2Sample]
+
+    @Query(sort: \IntensitySample.timestamp)
+    private var activeIntensitySamples: [IntensitySample]
+
     @State private var showingSettings = false
 
     // MARK: - Time windows
 
     private var startOfToday: Date { Calendar.current.startOfDay(for: Date()) }
     private var last24h: Date { Date().addingTimeInterval(-86400) }
+    private var windowStart: Date { Date().addingTimeInterval(-4 * 3600) }
 
     private var hasDevice: Bool { !connectedDevices.isEmpty }
 
@@ -73,8 +80,12 @@ struct TodayView: View {
             .filter { $0.timestamp >= weekAgo && $0.context == .resting }
             .map { TrendDataPoint(date: $0.timestamp, value: Double($0.bpm)) }
         let current = todayRestingHR.min(by: { $0.bpm < $1.bpm })?.bpm
-        let sparkline = todayRestingHR.map { Double($0.bpm) }
-        return VitalsMetric(current: current, sparkline: sparkline, history: history)
+        let windowSamples = allHeartRateSamples
+            .filter { $0.timestamp >= windowStart && $0.context == .resting }
+            .map { (date: $0.timestamp, value: Double($0.bpm)) }
+        let lastReadingAt = allHeartRateSamples.last { $0.context == .resting }?.timestamp
+        return VitalsMetric(current: current, lastReadingAt: lastReadingAt,
+                            windowSamples: windowSamples, history: history)
     }
 
     // MARK: - Body battery
@@ -88,8 +99,12 @@ struct TodayView: View {
             .filter { $0.timestamp >= weekAgo }
             .map { TrendDataPoint(date: $0.timestamp, value: Double($0.level)) }
         let current = todayBodyBattery.last?.level
-        let sparkline = todayBodyBattery.map { Double($0.level) }
-        return VitalsMetric(current: current, sparkline: sparkline, history: history)
+        let windowSamples = allBodyBattery
+            .filter { $0.timestamp >= windowStart }
+            .map { (date: $0.timestamp, value: Double($0.level)) }
+        let lastReadingAt = allBodyBattery.last?.timestamp
+        return VitalsMetric(current: current, lastReadingAt: lastReadingAt,
+                            windowSamples: windowSamples, history: history)
     }
 
     // MARK: - Stress
@@ -103,8 +118,12 @@ struct TodayView: View {
             .filter { $0.timestamp >= weekAgo }
             .map { TrendDataPoint(date: $0.timestamp, value: Double($0.stressScore)) }
         let current = todayStress.last?.stressScore
-        let sparkline = todayStress.map { Double($0.stressScore) }
-        return VitalsMetric(current: current, sparkline: sparkline, history: history)
+        let windowSamples = allStress
+            .filter { $0.timestamp >= windowStart }
+            .map { (date: $0.timestamp, value: Double($0.stressScore)) }
+        let lastReadingAt = allStress.last?.timestamp
+        return VitalsMetric(current: current, lastReadingAt: lastReadingAt,
+                            windowSamples: windowSamples, history: history)
     }
 
     // MARK: - Steps
@@ -114,7 +133,6 @@ struct TodayView: View {
     }
 
     private var stepsMetric: VitalsMetric {
-        // 7-day daily totals for history chart
         let cal = Calendar.current
         let grouped = Dictionary(grouping: allSteps.filter { $0.date >= weekAgo }) {
             cal.startOfDay(for: $0.date)
@@ -123,19 +141,24 @@ struct TodayView: View {
             .map { day, counts in TrendDataPoint(date: day, value: Double(counts.reduce(0) { $0 + $1.steps })) }
             .sorted { $0.date < $1.date }
 
-        // Hourly sparkline for today using per-minute StepSample records
-        let todaySamples = allStepSamples.filter { $0.timestamp >= startOfToday }
-        var buckets = [Double](repeating: 0, count: 24)
-        for sample in todaySamples {
-            let hour = cal.component(.hour, from: sample.timestamp)
-            buckets[hour] += Double(sample.steps)
+        let currentHourStart = cal.dateInterval(of: .hour, for: Date.now)!.start
+        let windowSamples: [(date: Date, value: Double)] = (0..<4).reversed().map { i in
+            let start = cal.date(byAdding: .hour, value: -i, to: currentHourStart)!
+            let end = cal.date(byAdding: .hour, value: 1, to: start)!
+            let sum = allStepSamples
+                .filter { $0.timestamp >= start && $0.timestamp < end }
+                .reduce(0) { $0 + $1.steps }
+            return (start, Double(sum))
         }
-        var lastHour = 23
-        while lastHour > 0 && buckets[lastHour] == 0 { lastHour -= 1 }
-        let sparkline = todaySamples.isEmpty ? [] : Array(buckets[0...lastHour])
 
         let total = todayStepCounts.reduce(0) { $0 + $1.steps }
-        return VitalsMetric(current: todayStepCounts.isEmpty ? nil : total, sparkline: sparkline, history: history)
+        let lastReadingAt = allStepSamples.last?.timestamp
+        return VitalsMetric(
+            current: todayStepCounts.isEmpty ? nil : total,
+            lastReadingAt: lastReadingAt,
+            windowSamples: windowSamples,
+            history: history
+        )
     }
 
     // MARK: - Active minutes
@@ -149,9 +172,45 @@ struct TodayView: View {
             .map { day, counts in TrendDataPoint(date: day, value: Double(counts.reduce(0) { $0 + $1.intensityMinutes })) }
             .sorted { $0.date < $1.date }
         let todayCounts = allSteps.filter { $0.date >= startOfToday }
-        let sparkline = todayCounts.map { Double($0.intensityMinutes) }
         let total = todayCounts.reduce(0) { $0 + $1.intensityMinutes }
-        return VitalsMetric(current: todayCounts.isEmpty ? nil : total, sparkline: sparkline, history: history)
+
+        let currentHourStart = cal.dateInterval(of: .hour, for: Date.now)!.start
+        let windowSamples: [(date: Date, value: Double)] = (0..<4).reversed().map { i in
+            let start = cal.date(byAdding: .hour, value: -i, to: currentHourStart)!
+            let end = cal.date(byAdding: .hour, value: 1, to: start)!
+            let sum = activeIntensitySamples
+                .filter { $0.timestamp >= start && $0.timestamp < end }
+                .reduce(0) { $0 + $1.minutes }
+            return (start, Double(sum))
+        }
+
+        let lastReadingAt = activeIntensitySamples.last?.timestamp
+        return VitalsMetric(
+            current: todayCounts.isEmpty ? nil : total,
+            lastReadingAt: lastReadingAt,
+            windowSamples: windowSamples,
+            history: history
+        )
+    }
+
+    // MARK: - SpO2
+
+    private var spo2Metric: VitalsMetric {
+        let last = allSpO2.first   // reverse sort → first is latest
+        let recent = allSpO2.filter { $0.timestamp >= windowStart }
+        let history = allSpO2
+            .filter { $0.timestamp >= weekAgo }
+            .map { TrendDataPoint(date: $0.timestamp, value: Double($0.percent)) }
+            .sorted { $0.date < $1.date }
+        let windowSamples = recent
+            .reversed()
+            .map { (date: $0.timestamp, value: Double($0.percent)) }
+        return VitalsMetric(
+            current: last.map { Int($0.percent) },
+            lastReadingAt: last?.timestamp,
+            windowSamples: windowSamples,
+            history: history
+        )
     }
 
     // MARK: - Body
@@ -220,7 +279,8 @@ struct TodayView: View {
                 bodyBattery: bodyBatteryMetric,
                 stress: stressMetric,
                 steps: stepsMetric,
-                activeMinutes: activeMinutesMetric
+                activeMinutes: activeMinutesMetric,
+                spo2: spo2Metric
             )
         }
     }
@@ -280,6 +340,7 @@ struct TodayView: View {
         for: ConnectedDevice.self, Activity.self, TrackPoint.self, SleepSession.self,
              SleepStage.self, HeartRateSample.self, BodyBatterySample.self,
              StressSample.self, StepCount.self, StepSample.self,
+             SpO2Sample.self, IntensitySample.self,
         configurations: ModelConfiguration(isStoredInMemoryOnly: true)
     )
     TodayView()

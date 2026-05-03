@@ -17,9 +17,12 @@
 		4F831D9F5ED0C8A1F3D8AF6C /* ConnectionSyncStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1F95D286265970F1341E5E1 /* ConnectionSyncStatusView.swift */; };
 		5959F2905A92EBBB780C4003 /* VitalsGridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F31BADC1B754136FEA67BC25 /* VitalsGridView.swift */; };
 		5B3A68363A3939E94BC29482 /* ActivityRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F99774EFF0EAC82BF2A0AF53 /* ActivityRowView.swift */; };
+		5C4CAC0CA52B67717CA79508 /* FileArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2091CE66772E3E60DB0CAE0E /* FileArchive.swift */; };
 		61A88EF63EA2F637A75C9F9C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = DBEC7B5FBC8872FA5D8327E8 /* Assets.xcassets */; };
 		61F53E6DCCDA62783431CF91 /* CompassFIT in Frameworks */ = {isa = PBXBuildFile; productRef = 33C7E21056FE1E458979A9F9 /* CompassFIT */; };
 		67FD8D7E9C0B78A112C06C92 /* ActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D9133A7187508897F34DDF7 /* ActivityView.swift */; };
+		A1B2C3D4E5F60001A1B2C302 /* Date+RelativeReading.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60001A1B2C301 /* Date+RelativeReading.swift */; };
+		A1B2C3D4E5F60001A1B2C304 /* MiniWindowChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60001A1B2C303 /* MiniWindowChart.swift */; };
 		7F66ADDB18893B509DF51C3D /* FITFileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81F4753EEB4B8FFB778FBCFA /* FITFileStore.swift */; };
 		828D76A8788E378DD151BA9A /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE68E6FEB88696AB9D459324 /* ContentView.swift */; };
 		849BDEF3DCDDE1C11AB65F70 /* CourseRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E595EBFC0032E4A36808EB59 /* CourseRowView.swift */; };
@@ -62,6 +65,7 @@
 		18F573121C079EF19C621678 /* LogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogStore.swift; sourceTree = "<group>"; };
 		1968A371F4C3F50068FB787C /* Compass.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Compass.entitlements; sourceTree = "<group>"; };
 		1BF57BA01F2477CA55BC7407 /* Compass.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Compass.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		2091CE66772E3E60DB0CAE0E /* FileArchive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileArchive.swift; sourceTree = "<group>"; };
 		2399241D1129827B533BF73A /* WeatherService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeatherService.swift; sourceTree = "<group>"; };
 		291F08030DDECFA63DC57CD3 /* CourseEditView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseEditView.swift; sourceTree = "<group>"; };
 		2D3DBAB5FAC5E338AC5A1FE4 /* SyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncCoordinator.swift; sourceTree = "<group>"; };
@@ -86,6 +90,8 @@
 		97BAF900BBD17FE3F207727E /* CompassFIT */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CompassFIT; path = Packages/CompassFIT; sourceTree = SOURCE_ROOT; };
 		9ABC46AFD85937599C861287 /* PhoneLocationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneLocationService.swift; sourceTree = "<group>"; };
 		9D9133A7187508897F34DDF7 /* ActivityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityView.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F60001A1B2C301 /* Date+RelativeReading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Date+RelativeReading.swift"; sourceTree = "<group>"; };
+		A1B2C3D4E5F60001A1B2C303 /* MiniWindowChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniWindowChart.swift; sourceTree = "<group>"; };
 		A06CAA6C9634DE5F69D540DE /* MapRouteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapRouteView.swift; sourceTree = "<group>"; };
 		A0F493523C31C25C4ADDED1A /* SparklineChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SparklineChart.swift; sourceTree = "<group>"; };
 		A675699E286A5D1EE4F96157 /* MusicService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicService.swift; sourceTree = "<group>"; };
@@ -131,11 +137,20 @@
 			path = Health;
 			sourceTree = "<group>";
 		};
+		35CF80BAB755CF01A3C5F912 /* Utilities */ = {
+			isa = PBXGroup;
+			children = (
+				2091CE66772E3E60DB0CAE0E /* FileArchive.swift */,
+			);
+			path = Utilities;
+			sourceTree = "<group>";
+		};
 		3B4FA5BB15CFFD9C5D747DED /* Components */ = {
 			isa = PBXGroup;
 			children = (
 				B1F95D286265970F1341E5E1 /* ConnectionSyncStatusView.swift */,
 				DDC2039A1B29236241978E6E /* MetricCard.swift */,
+				A1B2C3D4E5F60001A1B2C303 /* MiniWindowChart.swift */,
 				374694B7478BB4C57955778B /* RingsView.swift */,
 				922D24C67232B7C668C51066 /* RingView.swift */,
 				A0F493523C31C25C4ADDED1A /* SparklineChart.swift */,
@@ -188,6 +203,7 @@
 			isa = PBXGroup;
 			children = (
 				9D9133A7187508897F34DDF7 /* ActivityView.swift */,
+				A1B2C3D4E5F60001A1B2C301 /* Date+RelativeReading.swift */,
 				F680123EE4C6C3BB4840D11E /* Sport+UI.swift */,
 			);
 			path = Extensions;
@@ -272,6 +288,7 @@
 				70CA57BFBF4D9FA452152DD0 /* Extensions */,
 				5649145C23C845B9E02D8D72 /* Resources */,
 				ADB2995ED2E7797B29B0A965 /* Services */,
+				35CF80BAB755CF01A3C5F912 /* Utilities */,
 				9CA0E694D868C9C290A7043F /* ViewModels */,
 				90D994164E234BBB50FCB627 /* Views */,
 			);
@@ -379,6 +396,7 @@
 				C92B21FA835C4672774DF1FC /* ActivityDetailView.swift in Sources */,
 				5B3A68363A3939E94BC29482 /* ActivityRowView.swift in Sources */,
 				67FD8D7E9C0B78A112C06C92 /* ActivityView.swift in Sources */,
+				A1B2C3D4E5F60001A1B2C302 /* Date+RelativeReading.swift in Sources */,
 				CB75462399EB8A572C07FBB6 /* AppLogger.swift in Sources */,
 				D5579587E78255DF45CB1E4A /* CompassApp.swift in Sources */,
 				4F831D9F5ED0C8A1F3D8AF6C /* ConnectionSyncStatusView.swift in Sources */,
@@ -392,6 +410,7 @@
 				EB1A9E08AF60C4721170D17A /* DependencyContainer.swift in Sources */,
 				7F66ADDB18893B509DF51C3D /* FITFileStore.swift in Sources */,
 				E3B7168B2C526978D1F13B4F /* FITFilesView.swift in Sources */,
+				5C4CAC0CA52B67717CA79508 /* FileArchive.swift in Sources */,
 				08EF78B33E0BEC8567ABE14F /* FindMyPhoneService.swift in Sources */,
 				A2659E0867E505D218C2431A /* HealthDetailView.swift in Sources */,
 				880E3114FC1EE7EBDA2ACA59 /* HealthView.swift in Sources */,
@@ -402,6 +421,7 @@
 				06AEE297E4A4DAE2FF74FE0E /* MapRouteView.swift in Sources */,
 				12AF5059E4AEE5DC6D473933 /* MapSnapshotView.swift in Sources */,
 				D2AAFA5DDAEF264231A1C688 /* MetricCard.swift in Sources */,
+				A1B2C3D4E5F60001A1B2C304 /* MiniWindowChart.swift in Sources */,
 				1ECE48914DC75CBE7FA95FC4 /* MusicService.swift in Sources */,
 				E1AFEADA46B4E3360518FEB4 /* PhoneLocationService.swift in Sources */,
 				8E75DC4DB5B661073E88C849 /* RingView.swift in Sources */,
