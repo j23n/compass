@@ -163,6 +163,7 @@ struct HealthView: View {
                 .padding()
             }
             .navigationTitle("Health")
+            .connectionStatusToolbar()
         }
     }
 

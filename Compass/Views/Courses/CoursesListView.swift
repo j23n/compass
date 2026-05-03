@@ -28,6 +28,7 @@ struct CoursesListView: View {
                     }
                 }
             }
+            .connectionStatusToolbar()
             .fileImporter(
                 isPresented: $isImporting,
                 allowedContentTypes: [.init(filenameExtension: "gpx", conformingTo: .text)!],

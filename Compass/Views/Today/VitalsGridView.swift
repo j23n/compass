@@ -13,6 +13,7 @@ struct VitalsMetric {
 struct VitalsGridView: View {
     let sleepScore: Int?
     let sleepStages: [SleepStage]
+    let sleepHistory: [TrendDataPoint]
 
     let heartRate: VitalsMetric
     let bodyBattery: VitalsMetric
@@ -31,13 +32,26 @@ struct VitalsGridView: View {
         }
     }
 
-    // MARK: - Sleep (no detail view)
+    // MARK: - Sleep
 
     private var sleepCard: some View {
-        cardShell(icon: "bed.double.fill", label: "Sleep", color: .purple) {
-            metricValue(sleepScore.map { "\($0)" }, unit: nil)
-            chartSlot(!sleepStages.isEmpty) { miniSleepBar }
+        NavigationLink {
+            HealthDetailView(
+                metricTitle: "Sleep",
+                metricUnit: "hr",
+                color: .indigo,
+                icon: "bed.double.fill",
+                data: sleepHistory,
+                useBarChart: true,
+                valueFormatter: { String(format: "%.1f hr", $0) }
+            )
+        } label: {
+            cardShell(icon: "bed.double.fill", label: "Sleep", color: .purple) {
+                metricValue(sleepScore.map { "\($0)" }, unit: nil)
+                chartSlot(!sleepStages.isEmpty) { miniSleepBar }
+            }
         }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Heart Rate

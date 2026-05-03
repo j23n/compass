@@ -53,6 +53,15 @@ struct TodayView: View {
 
     private var weekAgo: Date { Calendar.current.date(byAdding: .day, value: -7, to: Date())! }
 
+    private var sleepHistory: [TrendDataPoint] {
+        allSleepSessions
+            .map {
+                TrendDataPoint(date: $0.startDate,
+                               value: $0.endDate.timeIntervalSince($0.startDate) / 3600.0)
+            }
+            .sorted { $0.date < $1.date }
+    }
+
     // MARK: - Heart rate
 
     private var todayRestingHR: [HeartRateSample] {
@@ -166,6 +175,7 @@ struct TodayView: View {
                     }
                 }
             }
+            .connectionStatusToolbar()
             .sheet(isPresented: $showingSettings) {
                 SettingsView()
             }
@@ -184,7 +194,6 @@ struct TodayView: View {
     private var dashboardContent: some View {
         ScrollView {
             LazyVStack(spacing: 20) {
-                connectionPill
                 vitalsSection
                 activitiesSection
             }
@@ -192,39 +201,6 @@ struct TodayView: View {
         }
         .refreshable {
             await syncCoordinator.sync(context: modelContext)
-        }
-    }
-
-    // MARK: - Connection pill
-
-    @ViewBuilder
-    private var connectionPill: some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(connectionDotColor)
-                .frame(width: 8, height: 8)
-            Text(connectionLabel)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .trailing)
-    }
-
-    private var connectionDotColor: Color {
-        switch syncCoordinator.connectionState {
-        case .connected: .green
-        case .connecting, .reconnecting: .orange
-        case .disconnected, .failed: .gray
-        }
-    }
-
-    private var connectionLabel: String {
-        switch syncCoordinator.connectionState {
-        case .connected(let name): "Connected to \(name)"
-        case .connecting: "Connecting..."
-        case .reconnecting: "Reconnecting…"
-        case .disconnected: "Watch not connected"
-        case .failed: "Connection failed"
         }
     }
 
@@ -239,6 +215,7 @@ struct TodayView: View {
             VitalsGridView(
                 sleepScore: lastSleep?.score,
                 sleepStages: lastSleep?.stages ?? [],
+                sleepHistory: sleepHistory,
                 heartRate: heartRateMetric,
                 bodyBattery: bodyBatteryMetric,
                 stress: stressMetric,
