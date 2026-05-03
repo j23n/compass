@@ -44,16 +44,16 @@ final class FITFileStore: @unchecked Sendable {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     }
 
-    func save(from url: URL) throws -> URL {
+    func save(from url: URL, fileIndex: UInt16? = nil) throws -> URL {
         let filename = url.lastPathComponent.lowercased()
         let fileType = detectType(from: filename)
 
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
         let dateStr = dateFormatter.string(from: Date())
-        let uuid = UUID().uuidString.prefix(8)
+        let suffix = fileIndex.map { String($0) } ?? String(UUID().uuidString.prefix(8))
 
-        let newName = "\(fileType.rawValue)_\(dateStr)_\(uuid).fit"
+        let newName = "\(fileType.rawValue)_\(dateStr)_\(suffix).fit"
         let destinationURL = directory.appendingPathComponent(newName)
 
         try FileManager.default.copyItem(at: url, to: destinationURL)

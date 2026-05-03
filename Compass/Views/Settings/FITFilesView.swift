@@ -1,9 +1,12 @@
 import SwiftUI
 
 struct FITFilesView: View {
+    @Environment(SyncCoordinator.self) private var syncCoordinator
     @State private var files: [FITFileStore.StoredFile] = []
     @State private var showShareSheet = false
     @State private var shareItems: [URL] = []
+    @State private var selectedFiles: Set<UUID> = []
+    @State private var isSelectionMode = false
 
     private let fileStore = FITFileStore.shared
 
@@ -13,13 +16,31 @@ struct FITFilesView: View {
                 .navigationTitle("FIT Files")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    if !files.isEmpty {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button {
-                                shareItems = files.map { $0.url }
-                                showShareSheet = true
-                            } label: {
-                                Label("Export All", systemImage: "arrow.up.doc")
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        if !files.isEmpty {
+                            if isSelectionMode {
+                                Button("Done") {
+                                    isSelectionMode = false
+                                    selectedFiles.removeAll()
+                                }
+                                
+                                if !selectedFiles.isEmpty {
+                                    Button("Share Selected") {
+                                        shareSelectedFiles()
+                                    }
+                                }
+                            } else {
+                                Button {
+                                    isSelectionMode = true
+                                } label: {
+                                    Label("Select", systemImage: "checklist")
+                                }
+                                
+                                Button {
+                                    shareAllFiles()
+                                } label: {
+                                    Label("Export All", systemImage: "arrow.up.doc")
+                                }
                             }
                         }
                     }
@@ -50,6 +71,37 @@ struct FITFilesView: View {
     private var filesList: some View {
         List(files, id: \.id) { file in
             fileListRow(for: file)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if isSelectionMode {
+                        if selectedFiles.contains(file.id) {
+                            selectedFiles.remove(file.id)
+                        } else {
+                            selectedFiles.insert(file.id)
+                        }
+                    }
+                }
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    if !isSelectionMode {
+                        ShareLink(item: file.url) {
+                            Label("Share", systemImage: "square.and.arrow.up")
+                        }
+                        .tint(.blue)
+
+                        Button {
+                            Task { await syncCoordinator.archiveFITFile(named: file.name) }
+                        } label: {
+                            Label("Mark Synced", systemImage: "checkmark.circle")
+                        }
+                        .tint(.green)
+
+                        Button(role: .destructive) {
+                            deleteFile(file)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                }
         }
         .listStyle(.plain)
     }
@@ -60,6 +112,12 @@ struct FITFilesView: View {
         dateFormatter.timeStyle = .short
 
         return HStack(spacing: 12) {
+            if isSelectionMode {
+                Image(systemName: selectedFiles.contains(file.id) ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(selectedFiles.contains(file.id) ? .blue : .secondary)
+                    .font(.title3)
+            }
+            
             Image(systemName: file.type.systemImage)
                 .font(.title3)
                 .foregroundStyle(.blue)
@@ -92,20 +150,27 @@ struct FITFilesView: View {
             Spacer()
         }
         .contentShape(Rectangle())
-        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            ShareLink(item: file.url) {
-                Label("Share", systemImage: "square.and.arrow.up")
-            }
-            .tint(.blue)
-
-            Button(role: .destructive) {
-                deleteFile(file)
-            } label: {
-                Label("Delete", systemImage: "trash")
-            }
-        }
     }
 
+    private func shareSelectedFiles() {
+        let selectedUrls = files.filter { selectedFiles.contains($0.id) }.map { $0.url }
+        if selectedUrls.isEmpty { return }
+        
+        // Use FileArchive to handle multiple files
+        FileArchive.shareMultipleFiles(selectedUrls, archiveName: "fit-files") { urlsToShare in
+            shareItems = urlsToShare
+            showShareSheet = true
+        }
+    }
+    
+    private func shareAllFiles() {
+        let allUrls = files.map { $0.url }
+        FileArchive.shareMultipleFiles(allUrls, archiveName: "fit-files-all") { urlsToShare in
+            shareItems = urlsToShare
+            showShareSheet = true
+        }
+    }
+    
     private func refreshFiles() {
         files = fileStore.allFiles()
     }

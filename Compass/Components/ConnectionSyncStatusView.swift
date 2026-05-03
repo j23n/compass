@@ -9,59 +9,60 @@ struct ConnectionSyncStatusView: View {
     @Environment(SyncCoordinator.self) private var sync
 
     var body: some View {
-        HStack(spacing: 5) {
-            switch displayMode {
-            case .syncing(let label):
-                ProgressView()
-                    .controlSize(.mini)
-                    .tint(.secondary)
-                Text(label)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-
-            case .failed:
-                Image(systemName: "exclamationmark.circle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                Text("Sync failed")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-
-            case .connection(let dot, let label):
-                Circle().fill(dot).frame(width: 8, height: 8)
-                Text(label)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+        HStack(spacing: 6) {
+            statusDot
+            Text(primaryLabel)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+            if let secondary = secondaryLabel {
+                Text("·").foregroundStyle(.tertiary)
+                HStack(spacing: 4) {
+                    if isSyncing {
+                        ProgressView().controlSize(.mini).tint(.secondary)
+                    }
+                    Text(secondary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
             }
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().stroke(Color.primary.opacity(0.08), lineWidth: 0.5))
+        .frame(maxWidth: 220, alignment: .leading)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityDescription)
     }
 
-    // MARK: - Display mode resolution
-
-    private enum Mode {
-        case syncing(label: String)
-        case failed
-        case connection(dot: Color, label: String)
+    private var statusDot: some View {
+        Circle().fill(connectionDotColor).frame(width: 8, height: 8)
     }
 
-    private var displayMode: Mode {
-        if case .syncing(let desc) = sync.state {
-            let label: String
-            if sync.progress > 0 {
-                label = "\(Int(sync.progress * 100))%"
-            } else {
-                label = abbreviated(desc)
+    private var isSyncing: Bool {
+        if case .syncing = sync.state { return true }
+        return false
+    }
+
+    private var primaryLabel: String {
+        if case .failed = sync.state { return "Sync failed" }
+        return connectionLabel
+    }
+
+    private var secondaryLabel: String? {
+        switch sync.state {
+        case .syncing(let desc):
+            if let bytes = sync.transferBytes {
+                return "\(byteString(bytes.received)) / \(byteString(bytes.total ?? 0))"
             }
-            return .syncing(label: label)
+            if sync.progress > 0 { return "\(Int(sync.progress * 100))%" }
+            return abbreviated(desc)
+        default:
+            return nil
         }
-        if case .failed = sync.state { return .failed }
-        return .connection(dot: connectionDotColor, label: connectionLabel)
     }
 
     private var connectionDotColor: Color {
@@ -82,20 +83,24 @@ struct ConnectionSyncStatusView: View {
         }
     }
 
-    /// "Listing activity files…" → "Listing activity…"
-    /// Bounded to ~24 visible chars so the toolbar item never pushes the title.
     private func abbreviated(_ s: String) -> String {
         let trimmed = s.replacingOccurrences(of: " files...", with: "…")
                        .replacingOccurrences(of: "...", with: "…")
         return trimmed.count > 24 ? String(trimmed.prefix(23)) + "…" : trimmed
     }
 
+    private func byteString(_ bytes: Int) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useMB, .useKB, .useBytes]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: Int64(bytes))
+    }
+
     private var accessibilityDescription: String {
-        switch displayMode {
-        case .syncing(let l): return "Syncing, \(l)"
-        case .failed:         return "Sync failed"
-        case .connection(_, let label): return "Watch: \(label)"
+        if let secondary = secondaryLabel {
+            return "\(primaryLabel), \(secondary)"
         }
+        return primaryLabel
     }
 }
 

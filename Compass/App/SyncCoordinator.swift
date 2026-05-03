@@ -50,6 +50,7 @@ final class SyncCoordinator {
     var state: SyncState = .idle
     var lastSyncDate: Date?
     var progress: Double = 0
+    var transferBytes: (received: Int, total: Int?)? = nil
 
     let deviceManager: any DeviceManagerProtocol
     private let modelContainer: ModelContainer
@@ -257,6 +258,7 @@ final class SyncCoordinator {
         syncTask = nil
         state = .idle
         progress = 0
+        transferBytes = nil
         AppLogger.sync.info("Sync cancelled by user")
         Task { await deviceManager.cancelSync() }
     }
@@ -381,12 +383,16 @@ final class SyncCoordinator {
                             if let total, total > 0 {
                                 self.progress = Double(received) / Double(total)
                             }
+                            self.transferBytes = (received, total)
                         case .parsing:
                             self.state = .syncing(description: "Parsing data...")
+                            self.transferBytes = nil
                         case .completed(let count):
                             self.state = .completed(fileCount: count)
+                            self.transferBytes = nil
                         case .failed(let error):
                             self.state = .failed(error.localizedDescription)
+                            self.transferBytes = nil
                         }
                     }
                 }
@@ -428,7 +434,7 @@ final class SyncCoordinator {
     ) async -> Int {
         var savedEntries: [(url: URL, fileIndex: UInt16)] = []
         for entry in entries {
-            if let saved = try? FITFileStore.shared.save(from: entry.url) {
+            if let saved = try? FITFileStore.shared.save(from: entry.url, fileIndex: entry.fileIndex) {
                 savedEntries.append((url: saved, fileIndex: entry.fileIndex))
                 AppLogger.sync.debug("Saved FIT file: \(saved.lastPathComponent)")
             } else {
@@ -751,6 +757,19 @@ final class SyncCoordinator {
     }
 
     // MARK: - Data hygiene
+
+    func archiveFITFile(named filename: String) async {
+        guard let idStr = filename
+                .replacingOccurrences(of: ".fit", with: "")
+                .split(separator: "_").last,
+              let fileIndex = UInt16(idStr)
+        else {
+            AppLogger.sync.warning("Cannot derive fileIndex from \(filename)")
+            return
+        }
+        await deviceManager.archiveFITFile(fileIndex: fileIndex)
+        AppLogger.sync.info("Manually archived fileIndex=\(fileIndex)")
+    }
 
     private func deduplicateStepSamplesIfNeeded(context: ModelContext) {
         let key = "stepSamplesDeduped_v1"

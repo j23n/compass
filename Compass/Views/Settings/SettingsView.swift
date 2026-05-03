@@ -50,6 +50,35 @@ struct SettingsView: View {
         }
     }
 
+    private var currentStatusLine: String {
+        if case .syncing(let desc) = syncCoordinator.state {
+            return "\(connectionStatusLabel) · \(desc)"
+        }
+        return connectionStatusLabel
+    }
+
+    @ViewBuilder
+    private var inlineConnectionButton: some View {
+        if case .connected = syncCoordinator.connectionState {
+            Button("Disconnect") {
+                Task { await syncCoordinator.manualDisconnect() }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .tint(.red)
+        } else if case .connecting = syncCoordinator.connectionState {
+            ProgressView().controlSize(.small)
+        } else if case .reconnecting = syncCoordinator.connectionState {
+            ProgressView().controlSize(.small)
+        } else {
+            Button("Connect") {
+                syncCoordinator.manualReconnect()
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        }
+    }
+
     var body: some View {
         @Bindable var coordinator = syncCoordinator
 
@@ -112,17 +141,15 @@ struct SettingsView: View {
                         Text(device.name)
                             .font(.body)
                             .fontWeight(.medium)
-
-                        Text(connectionStatusLabel)
+                        Text(currentStatusLine)
                             .font(.caption)
-                            .foregroundStyle(connectionStatusColor)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
 
                     Spacer()
 
-                    Circle()
-                        .fill(connectionDotColor)
-                        .frame(width: 10, height: 10)
+                    inlineConnectionButton
                 }
                 .swipeActions(edge: .trailing) {
                     Button(role: .destructive) {
@@ -131,32 +158,6 @@ struct SettingsView: View {
                     } label: {
                         Label("Remove", systemImage: "trash")
                     }
-                }
-
-                if case .connected = syncCoordinator.connectionState {
-                    Button("Disconnect") {
-                        Task { await syncCoordinator.manualDisconnect() }
-                    }
-                    .foregroundStyle(.red)
-                }
-
-                if case .disconnected = syncCoordinator.connectionState {
-                    Button("Reconnect") {
-                        syncCoordinator.manualReconnect()
-                    }
-                }
-
-                if let lastSync = device.lastSyncedAt {
-                    HStack {
-                        Text("Last synced")
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Text(lastSync, style: .relative)
-                            .foregroundStyle(.secondary)
-                            + Text(" ago")
-                            .foregroundStyle(.secondary)
-                    }
-                    .font(.subheadline)
                 }
             } else {
                 HStack {
@@ -206,41 +207,38 @@ struct SettingsView: View {
             }
             .disabled(device == nil || isSyncing)
 
-            // Sync state description
             switch syncCoordinator.state {
             case .syncing(let description):
                 HStack {
+                    ProgressView().controlSize(.small).tint(.blue)
                     Text(description)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.subheadline)
+                        .foregroundStyle(.primary)
                     Spacer()
                     if syncCoordinator.progress > 0 {
                         Text("\(Int(syncCoordinator.progress * 100))%")
-                            .font(.caption)
+                            .font(.subheadline.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
                 }
             case .completed(let fileCount):
-                Text("Synced \(fileCount) files")
-                    .font(.caption)
+                Text("Synced \(fileCount) file\(fileCount == 1 ? "" : "s")")
+                    .font(.subheadline)
                     .foregroundStyle(.green)
             case .failed(let message):
                 Text(message)
-                    .font(.caption)
+                    .font(.subheadline)
                     .foregroundStyle(.red)
             case .idle:
-                EmptyView()
-            }
-
-            if let lastSync = syncCoordinator.lastSyncDate {
-                HStack {
-                    Text("Last sync")
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text(lastSync, format: .dateTime.month(.abbreviated).day().hour().minute())
-                        .foregroundStyle(.secondary)
+                if let lastSync = syncCoordinator.lastSyncDate {
+                    HStack {
+                        Text("Last sync").foregroundStyle(.secondary)
+                        Spacer()
+                        Text(lastSync, format: .dateTime.month(.abbreviated).day().hour().minute())
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.subheadline)
                 }
-                .font(.subheadline)
             }
         } header: {
             Text("Sync")

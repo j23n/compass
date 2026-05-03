@@ -41,6 +41,10 @@ struct LogsView: View {
                 .navigationTitle("Logs")
                 .navigationBarTitleDisplayMode(.inline)
                 .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Filter by message or category")
+                .onAppear {
+                    // Ensure we're following logs on initial appearance
+                    isFollowing = true
+                }
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         filterMenu
@@ -97,8 +101,9 @@ struct LogsView: View {
                     .id(entry.id)
             }
             .listStyle(.plain)
-            .onChange(of: filteredEntries.count) { _, _ in
+            .task(id: filteredEntries.count) {
                 if isFollowing, let last = filteredEntries.last {
+                    await Task.yield()
                     proxy.scrollTo(last.id, anchor: .bottom)
                 }
             }
