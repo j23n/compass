@@ -52,6 +52,18 @@ public struct RespirationSample: Sendable, Equatable {
     }
 }
 
+/// A lightweight SpO₂ sample value (not tied to SwiftData).
+public struct SpO2SampleValue: Sendable, Equatable {
+    public let timestamp: Date
+    /// SpO₂ percentage 0–100.
+    public let percent: Int
+
+    public init(timestamp: Date, percent: Int) {
+        self.timestamp = timestamp
+        self.percent = percent
+    }
+}
+
 /// Aggregated results from parsing a monitoring FIT file.
 public struct MonitoringData: Sendable {
     public let heartRateSamples: [HeartRateSampleValue]
@@ -59,19 +71,22 @@ public struct MonitoringData: Sendable {
     public let intervals: [MonitoringInterval]
     public let bodyBatterySamples: [BodyBatterySample]
     public let respirationSamples: [RespirationSample]
+    public let spo2Samples: [SpO2SampleValue]
 
     public init(
         heartRateSamples: [HeartRateSampleValue] = [],
         stressSamples: [StressSampleValue] = [],
         intervals: [MonitoringInterval] = [],
         bodyBatterySamples: [BodyBatterySample] = [],
-        respirationSamples: [RespirationSample] = []
+        respirationSamples: [RespirationSample] = [],
+        spo2Samples: [SpO2SampleValue] = []
     ) {
         self.heartRateSamples = heartRateSamples
         self.stressSamples = stressSamples
         self.intervals = intervals
         self.bodyBatterySamples = bodyBatterySamples
         self.respirationSamples = respirationSamples
+        self.spo2Samples = spo2Samples
     }
 }
 

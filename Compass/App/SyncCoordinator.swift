@@ -16,7 +16,6 @@ final class SyncCoordinator {
         case completed(fileCount: Int)
         case failed(String)
 
-        // Custom Equatable since Error isn't Equatable
         static func == (lhs: SyncState, rhs: SyncState) -> Bool {
             switch (lhs, rhs) {
             case (.idle, .idle): true
@@ -57,6 +56,10 @@ final class SyncCoordinator {
 
     /// The last device we successfully connected to, kept for auto-reconnect.
     private var lastConnectedDevice: PairedDevice?
+
+    /// Device profile derived from the paired device's product ID.
+    private var deviceProfile: DeviceProfile = .default
+
     private var discoveryTask: Task<Void, Never>?
     private var connectionMonitorTask: Task<Void, Never>?
     private var reconnectRetryTask: Task<Void, Never>?
@@ -75,16 +78,12 @@ final class SyncCoordinator {
         self.deviceManager = deviceManager
         AppLogger.sync.debug("SyncCoordinator initialized with \(String(describing: type(of: deviceManager)))")
 
-        // Request notification permission (needed for Find My Phone banners).
         Task {
             try? await UNUserNotificationCenter.current().requestAuthorization(
                 options: [.alert, .sound]
             )
         }
 
-        // Monitor unexpected BLE drops and kick off auto-reconnect immediately
-        // so CoreBluetooth re-establishes the link as soon as the watch is
-        // reachable again (no polling delay for the common case).
         connectionMonitorTask = Task { [self] in
             for await state in deviceManager.connectionStateStream() {
                 connectionState = state
@@ -139,7 +138,6 @@ final class SyncCoordinator {
         AppLogger.pairing.info("Pairing with device: \(device.name) (\(device.identifier))")
         pairingState = .pairing(deviceName: device.name)
 
-        // Stop discovery while pairing
         discoveryTask?.cancel()
         discoveryTask = nil
         await deviceManager.stopDiscovery()
@@ -149,10 +147,10 @@ final class SyncCoordinator {
             let pairedDevice = try await deviceManager.pair(device)
             AppLogger.pairing.info("Pairing succeeded: \(pairedDevice.name), model: \(pairedDevice.model ?? "unknown")")
 
-            // Save to SwiftData
             let connectedDevice = ConnectedDevice(
                 name: pairedDevice.name,
                 model: pairedDevice.model ?? "Unknown",
+                productID: pairedDevice.productID,
                 lastSyncedAt: nil,
                 fitFileCursor: 0,
                 peripheralIdentifier: pairedDevice.identifier
@@ -162,13 +160,13 @@ final class SyncCoordinator {
             AppLogger.pairing.debug("Saved ConnectedDevice to SwiftData")
 
             lastConnectedDevice = pairedDevice
+            deviceProfile = DeviceProfile.profile(for: pairedDevice.productID)
             connectionState = .connected(deviceName: pairedDevice.name)
             pairingState = .paired
             showPairingSheet = false
 
             await wireUpDeviceCallbacks()
 
-            // Reset after brief delay so UI can show success
             try? await Task.sleep(for: .seconds(1))
             pairingState = .idle
 
@@ -180,22 +178,18 @@ final class SyncCoordinator {
 
     // MARK: - Reconnect / Remove
 
-    /// Reconnect to a previously paired device on app launch.
-    /// No-ops if already connecting or connected, or if the peripheral UUID was never stored.
     func reconnect(device: ConnectedDevice) async {
         guard case .disconnected = connectionState else { return }
         guard let peripheralID = device.peripheralIdentifier else {
             AppLogger.sync.warning("Cannot reconnect — no peripheral ID stored. Re-pair the device.")
             return
         }
-        let paired = PairedDevice(identifier: peripheralID, name: device.name, model: device.model)
+        let paired = PairedDevice(identifier: peripheralID, name: device.name, model: device.model, productID: device.productID ?? 0)
         lastConnectedDevice = paired
+        deviceProfile = DeviceProfile.profile(for: device.productID ?? 0)
         await attemptConnect(paired)
     }
 
-    /// Kick off a background reconnect loop that retries whenever the link is down.
-    /// First attempt is immediate (0-delay) so CoreBluetooth can re-establish as
-    /// soon as the watch becomes reachable; subsequent attempts back off to 15 s.
     private func startAutoReconnect() {
         guard lastConnectedDevice != nil else { return }
         reconnectRetryTask?.cancel()
@@ -209,7 +203,6 @@ final class SyncCoordinator {
                 guard case .disconnected = connectionState else { break }
                 guard let device = lastConnectedDevice else { break }
                 await attemptConnect(device)
-                // If still disconnected after the attempt, back off before the next try.
                 if case .disconnected = connectionState {
                     delay = .seconds(15)
                 } else {
@@ -219,13 +212,13 @@ final class SyncCoordinator {
         }
     }
 
-    /// Single connection attempt: sets connectionState and handles errors.
     private func attemptConnect(_ device: PairedDevice) async {
         AppLogger.sync.info("Connecting to \(device.name)")
         connectionState = .reconnecting
         do {
             try await deviceManager.connect(device)
             connectionState = .connected(deviceName: device.name)
+            deviceProfile = DeviceProfile.profile(for: device.productID)
             await wireUpDeviceCallbacks()
         } catch {
             AppLogger.sync.error("Connect failed: \(error.localizedDescription)")
@@ -239,7 +232,6 @@ final class SyncCoordinator {
         await deviceManager.disconnect()
         connectionState = .disconnected
         AppLogger.sync.info("Manual disconnect")
-        // lastConnectedDevice preserved — user can reconnect
     }
 
     func manualReconnect() {
@@ -247,7 +239,6 @@ final class SyncCoordinator {
         startAutoReconnect()
     }
 
-    /// Disconnect and delete the paired device record from SwiftData.
     func removeDevice(_ device: ConnectedDevice, context: ModelContext) async {
         AppLogger.pairing.info("Removing paired device: \(device.name)")
         reconnectRetryTask?.cancel()
@@ -302,8 +293,6 @@ final class SyncCoordinator {
 
     // MARK: - Watch Service Wiring
 
-    /// Inject service callbacks into GarminDeviceManager after a successful connect.
-    /// Must be called on @MainActor (this class is @MainActor).
     private func wireUpDeviceCallbacks() async {
         guard let gm = deviceManager as? GarminDeviceManager else { return }
 
@@ -325,14 +314,11 @@ final class SyncCoordinator {
             }
         }
 
-        // Capture gm directly so the closure avoids the protocol cast on every call.
         musicService.startObserving { [weak gm] messages in
             Task { [weak gm] in
                 await gm?.sendMusicEntityUpdate(messages)
             }
         }
-        // Push current now-playing state immediately so the watch face
-        // populates without waiting for a playback-state change.
         musicService.pushCurrentState()
 
         phoneLocationService.sendMessage = { [weak gm] msg in
@@ -378,10 +364,8 @@ final class SyncCoordinator {
             self.beginBackgroundTask()
             defer { self.endBackgroundTask() }
             do {
-            // Create progress stream
             let (stream, continuation) = AsyncStream<SyncProgress>.makeStream()
 
-            // Monitor progress in background
             let progressTask = Task {
                 for await progressUpdate in stream {
                     AppLogger.sync.debug("Progress: \(progressUpdate.description)")
@@ -408,7 +392,6 @@ final class SyncCoordinator {
                 }
             }
 
-            // Pull FIT files
             let directories: Set<FITDirectory> = [.activity, .monitor, .sleep, .metrics]
             AppLogger.sync.debug("Requesting FIT files from directories: \(directories.map(\.rawValue).joined(separator: ", "))")
             let fitEntries = try await deviceManager.pullFITFiles(
@@ -426,7 +409,6 @@ final class SyncCoordinator {
             state = .completed(fileCount: count)
             AppLogger.sync.info("Sync completed: \(count) files processed")
 
-            // Reset to idle after a delay
             try? await Task.sleep(for: .seconds(3))
             state = .idle
 
@@ -444,7 +426,6 @@ final class SyncCoordinator {
         _ entries: [(url: URL, fileIndex: UInt16)],
         context: ModelContext
     ) async -> Int {
-        // Copy temp files to persistent storage first, preserving fileIndex for archive calls.
         var savedEntries: [(url: URL, fileIndex: UInt16)] = []
         for entry in entries {
             if let saved = try? FITFileStore.shared.save(from: entry.url) {
@@ -466,9 +447,6 @@ final class SyncCoordinator {
             let filename = url.lastPathComponent.lowercased()
             AppLogger.sync.debug("Parsing file: \(filename) (\(fileData.count) bytes)")
 
-            // parsedOK is set to true when the parser succeeds.  Only then do we archive
-            // the file on the watch — ensuring a parse failure leaves the file available
-            // for re-download on the next sync.
             var parsedOK = false
 
             if filename.contains("activity") || filename.contains("act") {
@@ -492,7 +470,7 @@ final class SyncCoordinator {
                     }
                 }
             } else if filename.contains("monitor") || filename.contains("mon") {
-                let parser = MonitoringFITParser()
+                let parser = MonitoringFITParser(profile: deviceProfile)
                 if let results = try? await parser.parse(data: fileData) {
                     parsedOK = true
                     if !results.heartRateSamples.isEmpty {
@@ -520,6 +498,9 @@ final class SyncCoordinator {
                     for sample in results.respirationSamples {
                         context.insert(CompassData.RespirationSample(timestamp: sample.timestamp, breathsPerMinute: sample.breathsPerMinute))
                     }
+                    for sample in results.spo2Samples {
+                        context.insert(SpO2Sample(timestamp: sample.timestamp, percent: sample.percent))
+                    }
                     let calendar = Calendar.current
                     var dayIntervals: [Date: [MonitoringInterval]] = [:]
                     for interval in results.intervals {
@@ -527,19 +508,18 @@ final class SyncCoordinator {
                         dayIntervals[dayStart, default: []].append(interval)
                     }
                     if !results.intervals.isEmpty {
-                        let firstTS = results.intervals.first!.timestamp
-                        let lastTS  = results.intervals.last!.timestamp
-                        var stepSampleCheck = FetchDescriptor<CompassData.StepSample>(
-                            predicate: #Predicate<CompassData.StepSample> { s in
-                                s.timestamp >= firstTS && s.timestamp <= lastTS
-                            }
-                        )
-                        stepSampleCheck.fetchLimit = 1
-                        let existingStepSamples = (try? context.fetch(stepSampleCheck)) ?? []
-                        if existingStepSamples.isEmpty {
-                            for interval in results.intervals where interval.steps > 0 {
+                        for interval in results.intervals where interval.steps > 0 {
+                            let ts = interval.timestamp
+                            var stepSampleCheck = FetchDescriptor<CompassData.StepSample>(
+                                predicate: #Predicate<CompassData.StepSample> { s in
+                                    s.timestamp == ts
+                                }
+                            )
+                            stepSampleCheck.fetchLimit = 1
+                            let existing = (try? context.fetch(stepSampleCheck)) ?? []
+                            if existing.isEmpty {
                                 context.insert(CompassData.StepSample(
-                                    timestamp: interval.timestamp,
+                                    timestamp: ts,
                                     steps: interval.steps
                                 ))
                             }
@@ -567,10 +547,10 @@ final class SyncCoordinator {
                             insertedDays += 1
                         }
                     }
-                    AppLogger.sync.debug("Inserted monitoring data: \(results.heartRateSamples.count) HR, \(results.stressSamples.count) stress, \(results.bodyBatterySamples.count) BB, \(results.respirationSamples.count) resp, \(results.intervals.count) intervals → \(insertedDays) day(s)")
+                    AppLogger.sync.debug("Inserted monitoring data: \(results.heartRateSamples.count) HR, \(results.stressSamples.count) stress, \(results.bodyBatterySamples.count) BB, \(results.respirationSamples.count) resp, \(results.spo2Samples.count) SpO2, \(results.intervals.count) intervals → \(insertedDays) day(s)")
                 }
             } else if filename.contains("sleep") || filename.contains("slp") {
-                let parser = SleepFITParser()
+                let parser = SleepFITParser(profile: deviceProfile)
                 if let result = try? await parser.parse(data: fileData) {
                     parsedOK = true
                     let lowerBound = result.startDate.addingTimeInterval(-3600)
@@ -619,8 +599,6 @@ final class SyncCoordinator {
                 AppLogger.sync.warning("Unrecognized FIT filename pattern: \(filename)")
             }
 
-            // Archive on the watch only after a successful parse.  A failed parse leaves
-            // the file unarchived so the next sync can retry it.
             if parsedOK {
                 await deviceManager.archiveFITFile(fileIndex: fileIndex)
             }
@@ -639,7 +617,6 @@ final class SyncCoordinator {
         await processFITFiles(entries, context: context)
     }
 
-    /// - Parameter fitSize: Byte count of the encoded FIT — stored as a stable watch-side identifier.
     func uploadCourse(fitURL: URL, fitSize: Int, course: Course) {
         guard case .idle = state else {
             AppLogger.sync.warning("Upload requested but already in state: \(String(describing: self.state))")
@@ -679,8 +656,6 @@ final class SyncCoordinator {
 
     // MARK: - Data hygiene
 
-    /// Removes duplicate StepSample rows (same timestamp) accumulated before per-timestamp dedup
-    /// was introduced. Runs once, guarded by a UserDefaults flag.
     private func deduplicateStepSamplesIfNeeded(context: ModelContext) {
         let key = "stepSamplesDeduped_v1"
         guard !UserDefaults.standard.bool(forKey: key) else { return }

@@ -30,7 +30,7 @@ struct ContentView: View {
     let container = try! ModelContainer(
         for: ConnectedDevice.self, Activity.self, TrackPoint.self, SleepSession.self,
              SleepStage.self, HeartRateSample.self, HRVSample.self, BodyBatterySample.self,
-             StressSample.self, StepCount.self, RespirationSample.self,
+             StressSample.self, StepCount.self, RespirationSample.self, SpO2Sample.self,
              Course.self, CourseWaypoint.self, CoursePOI.self,
         configurations: ModelConfiguration(isStoredInMemoryOnly: true)
     )

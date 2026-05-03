@@ -187,7 +187,8 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
             let paired = PairedDevice(
                 identifier: device.identifier,
                 name: info.deviceName.isEmpty ? device.name : info.deviceName,
-                model: info.deviceModel.isEmpty ? nil : info.deviceModel
+                model: info.deviceModel.isEmpty ? nil : info.deviceModel,
+                productID: info.productNumber
             )
             _connectedDevice = paired
             connectionStateContinuation?.yield(.connected(deviceName: paired.name))

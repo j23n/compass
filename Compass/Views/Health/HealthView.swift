@@ -29,6 +29,9 @@ struct HealthView: View {
     @Query(sort: \StepSample.timestamp)
     private var allStepSamples: [StepSample]
 
+    @Query(sort: \SpO2Sample.timestamp)
+    private var allSpO2: [SpO2Sample]
+
     // MARK: - Data points (all-time; filtering happens inside InteractiveTrendCard / HealthDetailView)
 
     private var restingHRData: [TrendDataPoint] {
@@ -72,6 +75,10 @@ struct HealthView: View {
 
     private var activeMinutesData: [TrendDataPoint] {
         allSteps.map { TrendDataPoint(date: $0.date, value: Double($0.intensityMinutes)) }
+    }
+
+    private var spo2Data: [TrendDataPoint] {
+        allSpO2.map { TrendDataPoint(date: $0.timestamp, value: Double($0.percent)) }
     }
 
     // MARK: - Body
@@ -159,6 +166,18 @@ struct HealthView: View {
                         selectedRange: selectedRange,
                         valueFormatter: { "\(Int($0)) min" }
                     )
+
+                    // Vitals
+                    sectionHeader(icon: "lungs.fill", title: "Vitals", color: .mint)
+                    InteractiveTrendCard(
+                        title: "SpO₂",
+                        icon: "lungs.fill",
+                        color: .mint,
+                        unit: "%",
+                        data: spo2Data,
+                        selectedRange: selectedRange,
+                        valueFormatter: { "\(Int($0)) %" }
+                    )
                 }
                 .padding()
             }
@@ -205,5 +224,6 @@ struct HealthView: View {
             StressSample.self,
             StepCount.self,
             StepSample.self,
+            SpO2Sample.self,
         ], inMemory: true)
 }

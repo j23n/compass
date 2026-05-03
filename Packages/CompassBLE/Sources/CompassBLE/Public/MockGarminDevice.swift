@@ -43,6 +43,9 @@ public actor MockGarminDevice: DeviceManagerProtocol {
         /// The simulated device model.
         public var deviceModel: String
 
+        /// Simulated Garmin product ID (e.g. 3466 for Instinct Solar 1G).
+        public var productID: UInt16
+
         /// Number of fake FIT files to generate per directory.
         public var filesPerDirectory: Int
 
@@ -56,6 +59,7 @@ public actor MockGarminDevice: DeviceManagerProtocol {
             failSync: Bool = false,
             deviceName: String = "Forerunner 265",
             deviceModel: String = "Garmin Forerunner 265",
+            productID: UInt16 = 0,
             filesPerDirectory: Int = 3,
             fileSizeBytes: Int = 4096
         ) {
@@ -65,6 +69,7 @@ public actor MockGarminDevice: DeviceManagerProtocol {
             self.failSync = failSync
             self.deviceName = deviceName
             self.deviceModel = deviceModel
+            self.productID = productID
             self.filesPerDirectory = filesPerDirectory
             self.fileSizeBytes = fileSizeBytes
         }
@@ -157,7 +162,8 @@ public actor MockGarminDevice: DeviceManagerProtocol {
         return PairedDevice(
             identifier: device.identifier,
             name: device.name,
-            model: config.deviceModel
+            model: config.deviceModel,
+            productID: config.productID
         )
     }
 
