@@ -26,12 +26,13 @@ final class WeatherService {
         }
 
         let weather = try await WeatherKit.WeatherService.shared.weather(for: phoneLocation)
-        let now = garminTimestamp(from: Date())
+        let now = Date()
+        let nowGarmin = garminTimestamp(from: now)
         let today = weather.dailyForecast.first
         let (lat, lon) = semicircles(from: phoneLocation.coordinate)
 
         let current = GarminCurrentConditions(
-            timestamp: now,
+            timestamp: nowGarmin,
             observedAtTime: garminTimestamp(from: weather.currentWeather.date),
             temperature: celsiusInt8(weather.currentWeather.temperature),
             lowTemperature: today.map { celsiusInt8($0.lowTemperature) } ?? 0,
@@ -47,18 +48,26 @@ final class WeatherService {
             location: ""
         )
 
-        let hourly: [GarminHourlyForecast] = weather.hourlyForecast.forecast.prefix(12).map { h in
-            GarminHourlyForecast(
-                timestamp: garminTimestamp(from: h.date),
-                temperature: celsiusInt8(h.temperature),
-                condition: mapCondition(h.condition),
-                windDirection: degreesUInt16(h.wind.direction),
-                windSpeed: windSpeedMillimetersPerSecond(h.wind.speed),
-                precipitationProbability: percentUInt8(h.precipitationChance),
-                temperatureFeelsLike: celsiusInt8(h.apparentTemperature),
-                relativeHumidity: percentUInt8(h.humidity)
-            )
-        }
+        // WeatherKit's hourly forecast starts at the top of the *current* hour
+        // (e.g. 12:00 even when now is 12:34). The watch filters out forecasts
+        // whose timestamp is in the past, so drop past hours first. Encoder
+        // caps at 12; respect the watch's requested horizon if it's smaller.
+        let hourLimit = min(12, max(1, Int(request.hoursOfForecast)))
+        let hourly: [GarminHourlyForecast] = weather.hourlyForecast.forecast
+            .filter { $0.date > now }
+            .prefix(hourLimit)
+            .map { h in
+                GarminHourlyForecast(
+                    timestamp: garminTimestamp(from: h.date),
+                    temperature: celsiusInt8(h.temperature),
+                    condition: mapCondition(h.condition),
+                    windDirection: degreesUInt16(h.wind.direction),
+                    windSpeed: windSpeedMillimetersPerSecond(h.wind.speed),
+                    precipitationProbability: percentUInt8(h.precipitationChance),
+                    temperatureFeelsLike: celsiusInt8(h.apparentTemperature),
+                    relativeHumidity: percentUInt8(h.humidity)
+                )
+            }
 
         let calendar = Calendar.current
         let daily: [GarminDailyForecast] = weather.dailyForecast.forecast.prefix(5).map { d in
