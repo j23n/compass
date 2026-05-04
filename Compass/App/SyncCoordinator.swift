@@ -326,6 +326,9 @@ final class SyncCoordinator {
         phoneLocationService.sendMessage = { [weak gm] msg in
             try? await gm?.sendRaw(message: msg)
         }
+        weatherService.locationProvider = { [weak phoneLocationService] in
+            phoneLocationService?.latestLocation
+        }
         phoneLocationService.startUpdating()
 
         await gm.setWatchInitiatedSyncHandler { [weak self] entries in

@@ -67,7 +67,7 @@
 		1367C853B9217F54A818D824 /* CourseFilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseFilesView.swift; sourceTree = "<group>"; };
 		18F573121C079EF19C621678 /* LogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogStore.swift; sourceTree = "<group>"; };
 		1968A371F4C3F50068FB787C /* Compass.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Compass.entitlements; sourceTree = "<group>"; };
-		1BF57BA01F2477CA55BC7407 /* Compass.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Compass.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		1BF57BA01F2477CA55BC7407 /* Compass.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Compass.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2091CE66772E3E60DB0CAE0E /* FileArchive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileArchive.swift; sourceTree = "<group>"; };
 		2399241D1129827B533BF73A /* WeatherService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeatherService.swift; sourceTree = "<group>"; };
 		26AF8A9C1EB4F6B7C0B98A0C /* SleepStagesCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepStagesCard.swift; sourceTree = "<group>"; };
@@ -527,6 +527,7 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HN22UT76EY;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Compass/Info.plist;
@@ -544,7 +545,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.compass.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.j23n.compass.app;
 				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -616,6 +617,7 @@
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HN22UT76EY;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Compass/Info.plist;
@@ -633,7 +635,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.compass.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.j23n.compass.app;
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";

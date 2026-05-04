@@ -2,6 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- com.apple.developer.weatherkit goes here once the entitlement is provisioned -->
+	<key>com.apple.developer.weatherkit</key>
+	<true/>
 </dict>
 </plist>

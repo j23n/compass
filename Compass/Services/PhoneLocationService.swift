@@ -10,6 +10,11 @@ final class PhoneLocationService: NSObject, CLLocationManagerDelegate {
     /// Called with each encoded location message. Set by SyncCoordinator after connect.
     var sendMessage: (@Sendable (GFDIMessage) async -> Void)?
 
+    /// Most recent fix from CLLocationManager. Updated regardless of whether
+    /// a watch is connected, so other services (e.g. WeatherKit lookups) can
+    /// reuse it without spinning up a second location manager.
+    private(set) var latestLocation: CLLocation?
+
     private static let garminEpochOffset: TimeInterval = 631_065_600
 
     func startUpdating() {
@@ -39,6 +44,7 @@ final class PhoneLocationService: NSObject, CLLocationManagerDelegate {
     // MARK: - Private
 
     private func push(_ loc: CLLocation) async {
+        latestLocation = loc
         let ts = garminTimestamp(from: loc.timestamp)
         AppLogger.location.info(String(format: "Pushing location lat=%.4f lon=%.4f hAcc=%.0fm ts=%u", loc.coordinate.latitude, loc.coordinate.longitude, loc.horizontalAccuracy, ts))
         let msg = PhoneLocationEncoder.encode(
