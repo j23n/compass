@@ -16,6 +16,9 @@ struct SettingsView: View {
     @State private var deviceToDelete: ConnectedDevice?
     @State private var isReparsing = false
     @State private var reparseResult: String?
+    @State private var isImportingFITFiles = false
+    @State private var isImportingArchive = false
+    @State private var importResult: String?
 
     private var device: ConnectedDevice? {
         connectedDevices.first
@@ -289,6 +292,43 @@ struct SettingsView: View {
             }
 
             Button {
+                isImportingFITFiles = true
+            } label: {
+                HStack {
+                    Label("Import FIT Files", systemImage: "square.and.arrow.down")
+                    Spacer()
+                    if isImportingArchive {
+                        ProgressView().controlSize(.small)
+                    }
+                }
+            }
+            .disabled(isImportingArchive)
+            .fileImporter(
+                isPresented: $isImportingFITFiles,
+                allowedContentTypes: [.init(filenameExtension: "fit", conformingTo: .data)!],
+                allowsMultipleSelection: true
+            ) { result in
+                switch result {
+                case .success(let urls):
+                    Task {
+                        isImportingArchive = true
+                        importResult = nil
+                        let count = await syncCoordinator.importFITFiles(urls: urls)
+                        isImportingArchive = false
+                        importResult = "Imported \(count) file\(count == 1 ? "" : "s")"
+                    }
+                case .failure(let error):
+                    importResult = "Import failed: \(error.localizedDescription)"
+                }
+            }
+
+            if let importResult {
+                Text(importResult)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Button {
                 Task {
                     isReparsing = true
                     reparseResult = nil
@@ -315,7 +355,7 @@ struct SettingsView: View {
         } header: {
             Text("Developer")
         } footer: {
-            Text("Re-runs the parser against all locally-stored FIT files and inserts any newly-extractable rows. Existing rows are kept (idempotent).")
+            Text("Import restores FIT files exported via the share sheet — pick the .fit files and they'll be copied into the cache and parsed. Reparse re-runs the parser against all locally-stored FIT files (idempotent).")
         }
     }
 

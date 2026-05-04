@@ -455,6 +455,34 @@ final class SyncCoordinator {
         return savedEntries.count
     }
 
+    /// Imports FIT files from external URLs (e.g. an archive of files previously
+    /// exported via the share sheet). Each file is copied into the local FIT cache
+    /// and parsed into SwiftData. Existing rows are preserved via the same
+    /// dedup checks used during sync.
+    @discardableResult
+    func importFITFiles(urls: [URL]) async -> Int {
+        let context = ModelContext(modelContainer)
+        var imported = 0
+        AppLogger.sync.info("Importing \(urls.count) external FIT file(s)")
+        for url in urls {
+            let securityScoped = url.startAccessingSecurityScopedResource()
+            defer { if securityScoped { url.stopAccessingSecurityScopedResource() } }
+
+            guard let saved = try? FITFileStore.shared.save(from: url) else {
+                AppLogger.sync.warning("Failed to copy imported FIT file: \(url.lastPathComponent)")
+                continue
+            }
+            AppLogger.sync.debug("Copied imported file to: \(saved.lastPathComponent)")
+            await parseAndPersistFITFile(url: saved, fileIndex: 0,
+                                         archiveOnSuccess: false, context: context)
+            imported += 1
+        }
+        cleanupSleepSessions(context: context)
+        try? context.save()
+        AppLogger.sync.info("Import complete (\(imported)/\(urls.count) file(s))")
+        return imported
+    }
+
     /// Wipes every FIT-derived row from the local database and re-imports from the
     /// FIT file cache. ConnectedDevice and Course* rows are preserved (they don't
     /// come from FIT files). Used as a developer reset after parser changes.
