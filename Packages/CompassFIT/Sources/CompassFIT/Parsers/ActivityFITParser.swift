@@ -61,8 +61,8 @@ public struct ActivityFITParser: Sendable {
 
         let altitude = doubleValue(message, key: "enhanced_altitude")
                     ?? doubleValue(message, key: "altitude")
-        let heartRate = message.interpretedField(key: "heart_rate")?.value.map(Int.init)
-        let cadence = message.interpretedField(key: "cadence")?.value.map(Int.init)
+        let heartRate = doubleValue(message, key: "heart_rate").map(Int.init)
+        let cadence = doubleValue(message, key: "cadence").map(Int.init)
         let speed = doubleValue(message, key: "enhanced_speed")
                  ?? doubleValue(message, key: "speed")
         let temperature = doubleValue(message, key: "temperature")
@@ -88,8 +88,8 @@ public struct ActivityFITParser: Sendable {
         let endDate = startDate.addingTimeInterval(duration)
         let distance = doubleValue(session, key: "total_distance") ?? 0
         let activeCalories = doubleValue(session, key: "total_calories") ?? 0
-        let avgHR = session.interpretedField(key: "avg_heart_rate")?.value.map(Int.init)
-        let maxHR = session.interpretedField(key: "max_heart_rate")?.value.map(Int.init)
+        let avgHR = doubleValue(session, key: "avg_heart_rate").map(Int.init)
+        let maxHR = doubleValue(session, key: "max_heart_rate").map(Int.init)
         let ascent = doubleValue(session, key: "total_ascent")
         let descent = doubleValue(session, key: "total_descent")
 

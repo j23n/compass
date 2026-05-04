@@ -597,12 +597,28 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
     }
 
     /// Send the archive flag for one file after it has been successfully parsed and
-    /// persisted by the app layer.  Silently no-ops if not connected.
+    /// persisted by the app layer. Logs and returns without sending if disconnected.
     public func archiveFITFile(fileIndex: UInt16) async {
-        guard _isConnected else { return }
+        guard _isConnected else {
+            BLELogger.sync.warning("Sync: cannot archive fileIndex=\(fileIndex) — not connected")
+            return
+        }
         let flagMsg = SetFileFlagsMessage(fileIndex: fileIndex).toMessage()
-        _ = try? await gfdiClient.sendAndWait(flagMsg, awaitType: .response, timeout: .seconds(5))
-        BLELogger.sync.debug("Sync: archived fileIndex=\(fileIndex)")
+        do {
+            let response = try await gfdiClient.sendAndWait(flagMsg, awaitType: .response, timeout: .seconds(5))
+            let decoded = try GFDIResponse.decode(from: response.payload)
+            if decoded.originalType != GFDIMessageType.setFileFlag.rawValue {
+                BLELogger.sync.warning("Sync: archive fileIndex=\(fileIndex) got mismatched response originalType=0x\(String(format: "%04X", decoded.originalType))")
+                return
+            }
+            if decoded.status == GFDIResponse.Status.ack.rawValue {
+                BLELogger.sync.info("Sync: archived fileIndex=\(fileIndex)")
+            } else {
+                BLELogger.sync.warning("Sync: archive fileIndex=\(fileIndex) NACK status=\(decoded.status)")
+            }
+        } catch {
+            BLELogger.sync.warning("Sync: archive fileIndex=\(fileIndex) failed: \(error.localizedDescription)")
+        }
     }
 
     public func cancelSync() async {

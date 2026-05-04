@@ -77,11 +77,21 @@ Activity-type enum (msg 55 field 5 / msg 233 field 1) as observed:
 | 8 | **sedentary** (NOT 7 — confirmed against USB FIT dump) |
 | 254 | invalid |
 
-Steps: field 3 of msg 55 carries the **raw cumulative step count since
-midnight** when activity_type ∈ {1=running, 6=walking}. **No ×2 scaling**
-applies on this firmware (field 2 / `cycles` is always 0). Per-interval delta is
-`field3_current − field3_prev`, with midnight rollover handled by treating any
-decrease as a reset to the new value.
+Steps: field 3 of msg 55 carries the **cumulative stride-pair count since
+midnight** when activity_type ∈ {1=running, 6=walking}. The firmware emits
+strides (left+right footstrike = 1 unit), so the watch's user-visible step
+display = **2× the raw FIT value** (`MonitoringFITParser.stridesToStepsFactor`).
+This was verified empirically against the watch readout for known days: e.g.
+`steps = 3850` in a monitoring_b summary corresponded to ≈8 000 steps on the
+watch, and `steps = 1042` corresponded to ≈2 100 steps. Per-interval delta is
+computed in steps after the ×2 conversion. Midnight rollover is handled by
+treating any decrease as a reset to the new value.
+
+Field 3 is renamed by FIT dynamic-field rules: messages with explicit
+`activity_type` (field 5) report it as `steps`; streaming messages that only
+carry `current_activity_type_intensity` (field 24, packed byte) report it as
+`cycles`. The parser reads either name and decodes activity_type from the CATI
+byte's low 5 bits when field 5 is missing.
 
 ### Stress
 

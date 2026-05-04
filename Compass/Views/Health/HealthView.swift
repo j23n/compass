@@ -17,23 +17,28 @@ struct HealthView: View {
     @Query(sort: \SleepSession.endDate, order: .reverse)
     private var allSleep: [SleepSession]
 
-    @Query(sort: \BodyBatterySample.timestamp)
-    private var allBodyBattery: [BodyBatterySample]
-
     @Query(sort: \StressSample.timestamp)
     private var allStress: [StressSample]
 
-    @Query(sort: \StepCount.date)
-    private var allSteps: [StepCount]
-
     @Query(sort: \StepSample.timestamp)
     private var allStepSamples: [StepSample]
+
+    @Query(sort: \IntensitySample.timestamp)
+    private var allIntensity: [IntensitySample]
 
     @Query(sort: \SpO2Sample.timestamp)
     private var allSpO2: [SpO2Sample]
 
     // MARK: - Data points (all-time; filtering happens inside InteractiveTrendCard / HealthDetailView)
 
+    /// All HR readings (any context) — bucketing in HealthDetailView produces
+    /// hourly min/max/avg ranges for Day view and daily ranges for Week/Month/Year.
+    private var heartRateData: [TrendDataPoint] {
+        allHeartRate.map { TrendDataPoint(date: $0.timestamp, value: Double($0.bpm)) }
+    }
+
+    /// Resting-only HR samples — sparse (≈one per minute when worn at rest), useful
+    /// as a separate trend from continuous HR.
     private var restingHRData: [TrendDataPoint] {
         allHeartRate
             .filter { $0.context == .resting }
@@ -42,16 +47,6 @@ struct HealthView: View {
 
     private var hrvData: [TrendDataPoint] {
         allHRV.map { TrendDataPoint(date: $0.timestamp, value: $0.rmssd) }
-    }
-
-    private var sleepDurationData: [TrendDataPoint] {
-        allSleep
-            .map { TrendDataPoint(date: $0.startDate, value: $0.endDate.timeIntervalSince($0.startDate) / 3600.0) }
-            .sorted { $0.date < $1.date }
-    }
-
-    private var bodyBatteryData: [TrendDataPoint] {
-        allBodyBattery.map { TrendDataPoint(date: $0.timestamp, value: Double($0.level)) }
     }
 
     private var stressData: [TrendDataPoint] {
@@ -73,8 +68,19 @@ struct HealthView: View {
             .sorted { $0.date < $1.date }
     }
 
+    /// Per-minute intensity samples bucketed hourly so Day view shows minutes/hour
+    /// and Week/Month/Year show minutes/day after makeTrendBuckets aggregates.
     private var activeMinutesData: [TrendDataPoint] {
-        allSteps.map { TrendDataPoint(date: $0.date, value: Double($0.intensityMinutes)) }
+        let cal = Calendar.current
+        let grouped = Dictionary(grouping: allIntensity) { sample in
+            cal.dateInterval(of: .hour, for: sample.timestamp)?.start
+                ?? cal.startOfDay(for: sample.timestamp)
+        }
+        return grouped
+            .map { hourStart, samples in
+                TrendDataPoint(date: hourStart, value: Double(samples.reduce(0) { $0 + $1.minutes }))
+            }
+            .sorted { $0.date < $1.date }
     }
 
     private var spo2Data: [TrendDataPoint] {
@@ -96,6 +102,15 @@ struct HealthView: View {
                         icon: "heart.fill",
                         color: .red,
                         unit: "bpm",
+                        data: heartRateData,
+                        selectedRange: selectedRange,
+                        valueFormatter: { "\(Int($0)) bpm" }
+                    )
+                    InteractiveTrendCard(
+                        title: "Resting Heart Rate",
+                        icon: "heart.text.square.fill",
+                        color: .pink,
+                        unit: "bpm",
                         data: restingHRData,
                         selectedRange: selectedRange,
                         valueFormatter: { "\(Int($0)) bpm" }
@@ -112,28 +127,10 @@ struct HealthView: View {
 
                     // Sleep
                     sectionHeader(icon: "bed.double.fill", title: "Sleep", color: .indigo)
-                    InteractiveTrendCard(
-                        title: "Sleep Duration",
-                        icon: "bed.double.fill",
-                        color: .indigo,
-                        unit: "hr",
-                        data: sleepDurationData,
-                        useBarChart: true,
-                        selectedRange: selectedRange,
-                        valueFormatter: { String(format: "%.1f hr", $0) }
-                    )
+                    SleepStagesCard(sessions: allSleep, selectedRange: selectedRange)
 
                     // Recovery
                     sectionHeader(icon: "bolt.fill", title: "Recovery", color: .blue)
-                    InteractiveTrendCard(
-                        title: "Body Battery",
-                        icon: "bolt.fill",
-                        color: .blue,
-                        unit: "",
-                        data: bodyBatteryData,
-                        selectedRange: selectedRange,
-                        valueFormatter: { "\(Int($0))" }
-                    )
                     InteractiveTrendCard(
                         title: "Stress",
                         icon: "brain.head.profile",
@@ -220,10 +217,9 @@ struct HealthView: View {
             HRVSample.self,
             SleepSession.self,
             SleepStage.self,
-            BodyBatterySample.self,
             StressSample.self,
-            StepCount.self,
             StepSample.self,
+            IntensitySample.self,
             SpO2Sample.self,
         ], inMemory: true)
 }

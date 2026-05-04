@@ -215,6 +215,9 @@ struct ActivityDetailView: View {
     @State private var shareItems: [Any] = []
     @State private var isSharePresented = false
     @State private var sortedTrackPoints: [TrackPoint] = []
+    /// GPS-only elapsed/coord index, computed once on appear. Built per-render before
+    /// caused the map dot to jump or stutter under continuous scrubbing.
+    @State private var cachedElapsedIndex: [(elapsed: TimeInterval, coord: CLLocationCoordinate2D)] = []
 
     private var hasGPS: Bool {
         sortedTrackPoints.contains { $0.latitude != 0 || $0.longitude != 0 }
@@ -405,6 +408,14 @@ struct ActivityDetailView: View {
         }
         .onAppear {
             sortedTrackPoints = activity.trackPoints.sorted { $0.timestamp < $1.timestamp }
+            cachedElapsedIndex = sortedTrackPoints
+                .filter { $0.latitude != 0 || $0.longitude != 0 }
+                .map { tp in
+                    (
+                        elapsed: tp.timestamp.timeIntervalSince(activity.startDate),
+                        coord: CLLocationCoordinate2D(latitude: tp.latitude, longitude: tp.longitude)
+                    )
+                }
             if let first = availableMetrics.first {
                 selectedMetric = first
             }
@@ -613,10 +624,10 @@ struct ActivityDetailView: View {
         yFormat: @escaping (Double) -> String
     ) -> some View {
         if reversed {
-            baseChart(data: data, color: color, yFormat: yFormat)
+            baseChart(data: data, color: color, reversed: true, yFormat: yFormat)
                 .chartYScale(domain: .automatic(includesZero: false, reversed: true))
         } else {
-            baseChart(data: data, color: color, yFormat: yFormat)
+            baseChart(data: data, color: color, reversed: false, yFormat: yFormat)
                 .chartYScale(domain: ChartYDomain.niceDomain(for: data.map(\.v)))
         }
     }
@@ -633,18 +644,29 @@ struct ActivityDetailView: View {
     private func baseChart(
         data: [(t: TimeInterval, v: Double)],
         color: Color,
+        reversed: Bool,
         yFormat: @escaping (Double) -> String
     ) -> some View {
-        Chart {
+        // Anchor the area fill at the visible chart floor so the gradient never
+        // overflows past the x-axis when the y-domain doesn't include 0.
+        // For reversed scales (pace), the visual floor is the max data value.
+        let values = data.map(\.v)
+        let baseline = reversed ? (values.max() ?? 0) : (values.min() ?? 0)
+        return Chart {
             ForEach(Array(data.enumerated()), id: \.offset) { _, point in
-                AreaMark(x: .value("T", point.t), y: .value("V", point.v))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [color.opacity(0.35), color.opacity(0.0)],
-                            startPoint: .top, endPoint: .bottom
-                        )
+                AreaMark(
+                    x: .value("T", point.t),
+                    yStart: .value("Base", baseline),
+                    yEnd: .value("V", point.v)
+                )
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [color.opacity(0.35), color.opacity(0.0)],
+                        startPoint: reversed ? .bottom : .top,
+                        endPoint:   reversed ? .top    : .bottom
                     )
-                    .interpolationMethod(.catmullRom)
+                )
+                .interpolationMethod(.catmullRom)
                 LineMark(x: .value("T", point.t), y: .value("V", point.v))
                     .foregroundStyle(color)
                     .interpolationMethod(.catmullRom)
@@ -716,20 +738,15 @@ struct ActivityDetailView: View {
         data.min(by: { abs($0.t - elapsed) < abs($1.t - elapsed) })
     }
 
-    // Pre-computed GPS-only elapsed-time index for O(log N) map sync.
-    private var elapsedIndex: [(elapsed: TimeInterval, coord: CLLocationCoordinate2D)] {
-        sortedTrackPoints
-            .filter { $0.latitude != 0 || $0.longitude != 0 }
-            .map { tp in
-                (
-                    elapsed: tp.timestamp.timeIntervalSince(activity.startDate),
-                    coord: CLLocationCoordinate2D(latitude: tp.latitude, longitude: tp.longitude)
-                )
-            }
-    }
+    /// Maximum gap (in seconds) between the requested elapsed time and the nearest
+    /// GPS point before we drop the map dot. Beyond this, the closest GPS sample is
+    /// usually so far away in time that highlighting it on the map is misleading
+    /// (this happens at the start of a hike before the first satellite lock, or
+    /// during long tunnels / canopy gaps).
+    private static let maxGPSGapSeconds: TimeInterval = 30
 
     private func coordAtElapsed(_ seconds: TimeInterval) -> CLLocationCoordinate2D? {
-        let index = elapsedIndex
+        let index = cachedElapsedIndex
         var lo = 0, hi = index.count - 1
         guard hi >= 0 else { return nil }
         while lo < hi {
@@ -744,6 +761,7 @@ struct ActivityDetailView: View {
             let curDelta  = abs(index[lo].elapsed - seconds)
             pick = prevDelta < curDelta ? lo - 1 : lo
         }
+        guard abs(index[pick].elapsed - seconds) <= Self.maxGPSGapSeconds else { return nil }
         return index[pick].coord
     }
 

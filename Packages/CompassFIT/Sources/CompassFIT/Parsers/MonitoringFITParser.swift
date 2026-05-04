@@ -6,6 +6,7 @@ import CompassData
 /// Parses Garmin `/GARMIN/Monitor/*.fit` files and returns arrays of health samples.
 ///
 /// - Monitoring messages (55) — step/activity interval data; compact HR variant (fields 26/27)
+/// - Monitoring HR data (211) — daily resting-heart-rate metric
 /// - Stress (227) — stress score samples
 /// - Respiration (297) — breathing rate samples
 /// - SpO₂ (305 / 269) — blood oxygen saturation
@@ -15,18 +16,9 @@ public struct MonitoringFITParser: Sendable {
 
     private static let logger = Logger(subsystem: "com.compass.fit", category: "MonitoringFITParser")
 
-    // Activity types that contribute intensity minutes (purposeful movement only).
-    // Used as fallback when HR data is unavailable.
-    private static let intensityActivityTypes: Set<String> = [
-        "running", "cycling", "fitness_equipment", "swimming", "walking"
-    ]
-
     /// HR threshold for active / intensity minutes (beats per minute).
-    /// Any interval where the heart rate ≥ this value counts as an intensity minute.
+    /// Any minute that contains an HR sample ≥ this value counts as one intensity minute.
     private static let intensityHRThreshold: Int = 100
-
-    /// Maximum age of a `recentHR` reading before it is considered stale for intensity decisions.
-    private static let hrFreshnessWindow: TimeInterval = 5 * 60
 
     private let profile: DeviceProfile
 
@@ -42,6 +34,7 @@ public struct MonitoringFITParser: Sendable {
         let fitFile = FitFile(data: data, parsingType: .generic)
 
         var heartRateSamples: [HeartRateSampleValue] = []
+        var restingHeartRateSamples: [HeartRateSampleValue] = []
         var stressSamples: [StressSampleValue] = []
         var intervals: [MonitoringInterval] = []
         var bodyBatterySamples: [BodyBatterySample] = []
@@ -49,29 +42,29 @@ public struct MonitoringFITParser: Sendable {
         var spo2Samples: [SpO2SampleValue] = []
 
         // Msg 55 `cycles` field is cumulative since midnight. Track per activity_type string.
+        // Use Optional so the very first reading per type can be detected (snapshot, not delta).
         var lastCyclesByType: [String: Int] = [:]
+        // Day-start → activity-type → max cumulative observed. Drives accurate daily step totals.
+        var dailyMaxByType: [Date: [String: Int]] = [:]
         // Track last full Garmin-epoch timestamp seen (for timestamp_16 resolution).
         var lastFullTimestamp: UInt32 = 0
-        // Track most recent HR reading (timestamp + bpm) for intensity-minute freshness check.
-        var recentHR: (timestamp: Date, bpm: Int)?
 
         for message in fitFile.messages {
             // Update running 32-bit timestamp from any message that carries one.
-            if let date = message.interpretedField(key: "timestamp")?.time {
+            if let date = FITTimestamp.resolve(message) {
                 lastFullTimestamp = UInt32(max(0, date.timeIntervalSince(FITTimestamp.epoch)))
-                // Track HR from any source for active minutes threshold (only when timestamp is available).
-                if let hrVal = message.interpretedField(key: "heart_rate")?.value, hrVal > 0, hrVal != 255 {
-                    recentHR = (timestamp: date, bpm: Int(hrVal))
-                }
             }
 
             switch message.messageType {
             case .monitoring:
                 if let hr = parseMonitoringHR(from: message, lastFullTimestamp: lastFullTimestamp) {
                     heartRateSamples.append(hr)
-                    recentHR = (timestamp: hr.timestamp, bpm: hr.bpm)
                 }
-                if let interval = parseMonitoringInterval(from: message, lastCycles: &lastCyclesByType, recentHR: recentHR) {
+                if let interval = parseMonitoringInterval(
+                    from: message,
+                    lastCycles: &lastCyclesByType,
+                    dailyMaxByType: &dailyMaxByType
+                ) {
                     intervals.append(interval)
                 }
 
@@ -88,7 +81,6 @@ public struct MonitoringFITParser: Sendable {
             case .hsa_heart_rate_data:
                 let hsaHRs = parseHSAHeartRate(from: message)
                 heartRateSamples.append(contentsOf: hsaHRs)
-                if let last = hsaHRs.last { recentHR = (timestamp: last.timestamp, bpm: last.bpm) }
 
             case .hsa_stress_data:
                 parseHSAStress(from: message, into: &stressSamples)
@@ -107,71 +99,143 @@ public struct MonitoringFITParser: Sendable {
                     spo2Samples.append(sample)
                 }
 
+            case .monitoring_hr_data:
+                if let sample = parseRestingHeartRate(from: message) {
+                    restingHeartRateSamples.append(sample)
+                }
+
             default:
                 break
             }
         }
 
+        // Derive active-minute timestamps from HR samples: any minute that contains at least
+        // one HR reading ≥ threshold counts as one intensity minute. This is independent of
+        // monitoring-interval cadence (which is irregular), so the per-minute count is correct.
+        var activeMinuteSet: Set<Date> = []
+        for hr in heartRateSamples where hr.bpm >= Self.intensityHRThreshold {
+            let bucket = Date(timeIntervalSinceReferenceDate:
+                floor(hr.timestamp.timeIntervalSinceReferenceDate / 60) * 60)
+            activeMinuteSet.insert(bucket)
+        }
+        let activeMinuteTimestamps = activeMinuteSet.sorted()
+
+        // Sum the day's cumulative max across activity types.
+        var dailyStepTotals: [Date: Int] = [:]
+        for (day, byType) in dailyMaxByType {
+            dailyStepTotals[day] = byType.values.reduce(0, +)
+        }
+
         return MonitoringData(
             heartRateSamples: heartRateSamples,
+            restingHeartRateSamples: restingHeartRateSamples,
             stressSamples: stressSamples,
             intervals: intervals,
             bodyBatterySamples: bodyBatterySamples,
             respirationSamples: respirationSamples,
-            spo2Samples: spo2Samples
+            spo2Samples: spo2Samples,
+            activeMinuteTimestamps: activeMinuteTimestamps,
+            dailyStepTotals: dailyStepTotals
         )
     }
 
     // MARK: - Private helpers
 
+    /// Conversion factor for monitoring step values. Empirically the firmware emits
+    /// stride-pairs (left+right footstrike = 1 unit) in the `cycles`/`steps` field,
+    /// so the watch's daily step display = 2× the raw FIT value. Verified across
+    /// multiple known-good days against the user's watch readout.
+    private static let stridesToStepsFactor: Int = 2
+
     private func parseMonitoringInterval(
         from message: FitMessage,
         lastCycles: inout [String: Int],
-        recentHR: (timestamp: Date, bpm: Int)?
+        dailyMaxByType: inout [Date: [String: Int]]
     ) -> MonitoringInterval? {
-        guard let timestamp = message.interpretedField(key: "timestamp")?.time else { return nil }
+        guard let timestamp = FITTimestamp.resolve(message) else { return nil }
 
-        let activityType = message.interpretedField(key: "activity_type")?.name ?? "generic"
+        // The activity_type comes from one of two fields:
+        //   - field 5 (`activity_type`): set in monitoring_b summary messages and a
+        //     few day-boundary messages. Resolves to the readable name directly.
+        //   - field 24 (`current_activity_type_intensity`): packed byte in streaming
+        //     monitoring messages. Lower 5 bits = activity_type, upper 3 = intensity.
+        // Streaming messages dominate, so without the CATI fallback we mis-classify
+        // most cycles updates as "generic" and drop their step contribution.
+        let activityType = resolveActivityType(from: message)
         let isStepActivity = activityType == "walking" || activityType == "running"
 
+        // Per-interval step delta. The `cycles`/`steps` field is cumulative since
+        // midnight, so the first reading we see in a file is a snapshot of work
+        // already done before the file's window started — we can't attribute those
+        // steps to any specific minute, so skip emitting a delta for it. The day's
+        // cumulative max still feeds the daily total via `dailyMaxByType`, so the
+        // total isn't lost — just not bucketed into an hour.
+        //
+        // The field is named `steps` in summary messages (where activity_type is
+        // explicit) and `cycles` in streaming messages (where only CATI is set),
+        // because of FIT dynamic-field renaming. Read whichever is present.
         let steps: Int
         if isStepActivity {
-            let cumulative = Int(message.interpretedField(key: "steps")?.value ?? 0)
-            let prev = lastCycles[activityType] ?? 0
-            let delta = cumulative >= prev ? cumulative - prev : cumulative
+            let rawCumulative = doubleValue(message, key: "steps")
+                            ?? doubleValue(message, key: "cycles") ?? 0
+            let cumulative = Int(rawCumulative * Double(Self.stridesToStepsFactor))
+            if let prev = lastCycles[activityType] {
+                steps = cumulative >= prev ? cumulative - prev : cumulative
+            } else {
+                steps = 0  // first cumulative reading per type per file → snapshot, not a delta
+            }
             lastCycles[activityType] = cumulative
-            steps = delta
+
+            let day = Calendar.current.startOfDay(for: timestamp)
+            let prevMax = dailyMaxByType[day, default: [:]][activityType] ?? 0
+            dailyMaxByType[day, default: [:]][activityType] = max(prevMax, cumulative)
         } else {
             steps = 0
-        }
-
-        // Active / intensity minutes: prefer HR threshold when reading is fresh (≤5 min old),
-        // fall back to activity-type allowlist when HR is absent or stale.
-        let intensityMinutes: Int
-        if let recent = recentHR,
-           recent.timestamp.distance(to: timestamp) <= Self.hrFreshnessWindow {
-            intensityMinutes = recent.bpm >= Self.intensityHRThreshold ? 1 : 0
-        } else {
-            intensityMinutes = Self.intensityActivityTypes.contains(activityType) ? 1 : 0
         }
 
         let fv = message.interpretedField(key: "active_calories")
         let activeCalories = fv?.value ?? fv?.valueUnit?.value ?? 0.0
 
+        // Intensity minutes are derived from HR samples after the full pass — see
+        // `activeMinuteTimestamps` in `parse(data:)`. The per-interval field stays at 0.
         return MonitoringInterval(
             timestamp: timestamp,
             steps: steps,
             activityType: activityTypeInt(activityType),
-            intensityMinutes: intensityMinutes,
+            intensityMinutes: 0,
             activeCalories: activeCalories
         )
     }
 
+    /// Names matching the FIT activity_type enum used elsewhere in this parser.
+    /// Index = activity_type ordinal. Position 7 is unused on Instinct Solar 1G
+    /// (sedentary lives at 8 — see `docs/garmin/devices/instinct-solar-1g.md`).
+    private static let activityTypeNames: [String] = [
+        "generic", "running", "cycling", "transition",
+        "fitness_equipment", "swimming", "walking", "activity_type_7", "sedentary"
+    ]
+
+    private func resolveActivityType(from message: FitMessage) -> String {
+        if let name = message.interpretedField(key: "activity_type")?.name {
+            return name
+        }
+        if let cati = doubleValue(message, key: "current_activity_type_intensity") {
+            // CATI is a uint8 but the parser may surface it as signed (e.g. -120 for 0x88).
+            // Mask back to the byte's bit pattern, then take the low 5 bits.
+            let packed = Int(cati) & 0xFF
+            let typeIndex = packed & 0x1F
+            if typeIndex < Self.activityTypeNames.count {
+                return Self.activityTypeNames[typeIndex]
+            }
+        }
+        return "generic"
+    }
+
     private func parseStress(from message: FitMessage) -> StressSampleValue? {
         let timestamp = message.interpretedField(key: "stress_level_time")?.time
-                     ?? message.interpretedField(key: "timestamp")?.time
+                     ?? FITTimestamp.resolve(message)
         guard let timestamp,
-              let scoreVal = message.interpretedField(key: "stress_level_value")?.value else { return nil }
+              let scoreVal = doubleValue(message, key: "stress_level_value") else { return nil }
         let score = Int(scoreVal)
         guard score >= 0, score <= 100 else { return nil }
         return StressSampleValue(timestamp: timestamp, stressScore: score)
@@ -182,19 +246,34 @@ public struct MonitoringFITParser: Sendable {
         from message: FitMessage,
         lastFullTimestamp: UInt32
     ) -> HeartRateSampleValue? {
-        guard let hrVal = message.interpretedField(key: "heart_rate")?.value,
+        guard let hrVal = doubleValue(message, key: "heart_rate"),
               hrVal > 0, hrVal != 255 else { return nil }
         let hr = Int(hrVal)
 
-        if let date = message.interpretedField(key: "timestamp")?.time {
+        if let date = FITTimestamp.resolve(message) {
             return HeartRateSampleValue(timestamp: date, bpm: hr)
         }
-        if let ts16Raw = message.interpretedField(key: "timestamp_16")?.value {
+        if let ts16Raw = doubleValue(message, key: "timestamp_16") {
             let ts16 = UInt16(ts16Raw) & 0xFFFF
             let resolved = resolveTimestamp16(ts16, lastFull: lastFullTimestamp)
             return HeartRateSampleValue(timestamp: FITTimestamp.date(fromFITTimestamp: resolved), bpm: hr)
         }
         return nil
+    }
+
+    /// Extracts the daily resting heart rate from monitoring_hr_data (msg 211).
+    /// The watch emits this once per minute with the running daily figure.
+    private func parseRestingHeartRate(from message: FitMessage) -> HeartRateSampleValue? {
+        guard let timestamp = FITTimestamp.resolve(message) else { return nil }
+        let bpm = doubleValue(message, key: "current_day_resting_heart_rate")
+              ?? doubleValue(message, key: "resting_heart_rate")
+        guard let bpm, bpm > 0, bpm != 255 else { return nil }
+        return HeartRateSampleValue(timestamp: timestamp, bpm: Int(bpm))
+    }
+
+    private func doubleValue(_ message: FitMessage, key: String) -> Double? {
+        let fv = message.interpretedField(key: key)
+        return fv?.value ?? fv?.valueUnit?.value
     }
 
     private func resolveTimestamp16(_ ts16: UInt16, lastFull: UInt32) -> UInt32 {
@@ -209,7 +288,7 @@ public struct MonitoringFITParser: Sendable {
     // MARK: - HSA parsing helpers
 
     private func parseHSAHeartRate(from message: FitMessage) -> [HeartRateSampleValue] {
-        guard let timestamp = message.interpretedField(key: "timestamp")?.time else { return [] }
+        guard let timestamp = FITTimestamp.resolve(message) else { return [] }
         return parsePipeArray(from: message, key: "heart_rate").enumerated().compactMap { i, hr in
             guard hr > 0, hr != 255 else { return nil }
             return HeartRateSampleValue(timestamp: timestamp.addingTimeInterval(TimeInterval(i)), bpm: Int(hr))
@@ -217,7 +296,7 @@ public struct MonitoringFITParser: Sendable {
     }
 
     private func parseHSAStress(from message: FitMessage, into samples: inout [StressSampleValue]) {
-        guard let timestamp = message.interpretedField(key: "timestamp")?.time else { return }
+        guard let timestamp = FITTimestamp.resolve(message) else { return }
         for (i, stress) in parsePipeArray(from: message, key: "stress_level").enumerated() {
             guard stress >= 0 else { continue }
             samples.append(StressSampleValue(
@@ -228,7 +307,7 @@ public struct MonitoringFITParser: Sendable {
     }
 
     private func parseHSARespiration(from message: FitMessage, into samples: inout [RespirationSample]) {
-        guard let timestamp = message.interpretedField(key: "timestamp")?.time else { return }
+        guard let timestamp = FITTimestamp.resolve(message) else { return }
         for (i, rate) in parsePipeArray(from: message, key: "respiration_rate").enumerated() {
             guard rate > 0, rate != 255 else { continue }
             samples.append(RespirationSample(
@@ -239,7 +318,7 @@ public struct MonitoringFITParser: Sendable {
     }
 
     private func parseHSABodyBattery(from message: FitMessage, into samples: inout [BodyBatterySample]) {
-        guard let timestamp = message.interpretedField(key: "timestamp")?.time else { return }
+        guard let timestamp = FITTimestamp.resolve(message) else { return }
         for (i, level) in parsePipeArray(from: message, key: "level").enumerated() {
             guard level >= 0 else { continue }
             samples.append(BodyBatterySample(
@@ -252,7 +331,7 @@ public struct MonitoringFITParser: Sendable {
     }
 
     private func parseHSASpO2(from message: FitMessage, into samples: inout [SpO2SampleValue]) {
-        guard let timestamp = message.interpretedField(key: "timestamp")?.time else { return }
+        guard let timestamp = FITTimestamp.resolve(message) else { return }
         for (i, reading) in parsePipeArray(from: message, key: "reading_spo2").enumerated() {
             let pct = Int(reading)
             guard pct >= 1, pct <= 100 else { continue }
@@ -264,15 +343,15 @@ public struct MonitoringFITParser: Sendable {
     }
 
     private func parseSpO2(from message: FitMessage) -> SpO2SampleValue? {
-        guard let timestamp = message.interpretedField(key: "timestamp")?.time else { return nil }
-        guard let val = message.interpretedField(key: "reading_spo2")?.value else { return nil }
+        guard let timestamp = FITTimestamp.resolve(message) else { return nil }
+        guard let val = doubleValue(message, key: "reading_spo2") else { return nil }
         let pct = Int(val)
         guard pct >= 1, pct <= 100 else { return nil }
         return SpO2SampleValue(timestamp: timestamp, percent: pct)
     }
 
     private func parseRespiration(from message: FitMessage) -> RespirationSample? {
-        guard let timestamp = message.interpretedField(key: "timestamp")?.time else { return nil }
+        guard let timestamp = FITTimestamp.resolve(message) else { return nil }
         let fv = message.interpretedField(key: "respiration_rate")
         guard let rate = fv?.valueUnit?.value ?? fv?.value, rate > 0 else { return nil }
         return RespirationSample(timestamp: timestamp, breathsPerMinute: rate)

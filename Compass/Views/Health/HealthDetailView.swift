@@ -369,8 +369,13 @@ struct HealthDetailView: View {
                     .gesture(DragGesture(minimumDistance: 0)
                         .onChanged { drag in
                             guard let date: Date = proxy.value(atX: drag.location.x) else { return }
-                            let containing = data.first { $0.date <= date && date < $0.endDate }
-                            selectedBucket = containing ?? data.last
+                            // Match by nearest bucket center — bars anchored on `bucket.date`
+                            // (start-of-period) can render offset from the gesture x-coordinate,
+                            // so interval-containment was selecting the wrong bucket near boundaries.
+                            selectedBucket = data.min(by: {
+                                abs(bucketCenterDate($0.date).timeIntervalSince(date)) <
+                                abs(bucketCenterDate($1.date).timeIntervalSince(date))
+                            }) ?? data.last
                         }
                         .onEnded { _ in selectedBucket = nil })
             }

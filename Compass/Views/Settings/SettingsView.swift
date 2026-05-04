@@ -14,6 +14,8 @@ struct SettingsView: View {
 
     @State private var showDeleteConfirmation = false
     @State private var deviceToDelete: ConnectedDevice?
+    @State private var isReparsing = false
+    @State private var reparseResult: String?
 
     private var device: ConnectedDevice? {
         connectedDevices.first
@@ -285,8 +287,35 @@ struct SettingsView: View {
             } label: {
                 Label("Course Files", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
             }
+
+            Button {
+                Task {
+                    isReparsing = true
+                    reparseResult = nil
+                    let count = await syncCoordinator.reparseLocalFITFiles()
+                    isReparsing = false
+                    reparseResult = "Reparsed \(count) file\(count == 1 ? "" : "s")"
+                }
+            } label: {
+                HStack {
+                    Label("Reparse Local Files", systemImage: "arrow.clockwise.circle")
+                    Spacer()
+                    if isReparsing {
+                        ProgressView().controlSize(.small)
+                    }
+                }
+            }
+            .disabled(isReparsing)
+
+            if let reparseResult {
+                Text(reparseResult)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         } header: {
             Text("Developer")
+        } footer: {
+            Text("Re-runs the parser against all locally-stored FIT files and inserts any newly-extractable rows. Existing rows are kept (idempotent).")
         }
     }
 

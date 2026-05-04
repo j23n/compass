@@ -20,9 +20,6 @@ struct TodayView: View {
     @Query(sort: \HeartRateSample.timestamp)
     private var allHeartRateSamples: [HeartRateSample]
 
-    @Query(sort: \BodyBatterySample.timestamp)
-    private var allBodyBattery: [BodyBatterySample]
-
     @Query(sort: \StressSample.timestamp)
     private var allStress: [StressSample]
 
@@ -60,69 +57,35 @@ struct TodayView: View {
 
     private var weekAgo: Date { Calendar.current.date(byAdding: .day, value: -7, to: Date())! }
 
-    private var sleepHistory: [TrendDataPoint] {
-        allSleepSessions
-            .map {
-                TrendDataPoint(date: $0.startDate,
-                               value: $0.endDate.timeIntervalSince($0.startDate) / 3600.0)
-            }
-            .sorted { $0.date < $1.date }
-    }
-
     // MARK: - Heart rate
 
-    private var todayRestingHR: [HeartRateSample] {
-        allHeartRateSamples.filter { $0.timestamp >= startOfToday && $0.context == .resting }
-    }
-
+    /// Latest HR sample regardless of context — keeps the card useful even when no
+    /// resting reading has landed today yet.
     private var heartRateMetric: VitalsMetric {
         let history = allHeartRateSamples
             .filter { $0.timestamp >= weekAgo && $0.context == .resting }
             .map { TrendDataPoint(date: $0.timestamp, value: Double($0.bpm)) }
-        let current = todayRestingHR.min(by: { $0.bpm < $1.bpm })?.bpm
+        let last = allHeartRateSamples.last
         let windowSamples = allHeartRateSamples
-            .filter { $0.timestamp >= windowStart && $0.context == .resting }
-            .map { (date: $0.timestamp, value: Double($0.bpm)) }
-        let lastReadingAt = allHeartRateSamples.last { $0.context == .resting }?.timestamp
-        return VitalsMetric(current: current, lastReadingAt: lastReadingAt,
-                            windowSamples: windowSamples, history: history)
-    }
-
-    // MARK: - Body battery
-
-    private var todayBodyBattery: [BodyBatterySample] {
-        allBodyBattery.filter { $0.timestamp >= startOfToday }
-    }
-
-    private var bodyBatteryMetric: VitalsMetric {
-        let history = allBodyBattery
-            .filter { $0.timestamp >= weekAgo }
-            .map { TrendDataPoint(date: $0.timestamp, value: Double($0.level)) }
-        let current = todayBodyBattery.last?.level
-        let windowSamples = allBodyBattery
             .filter { $0.timestamp >= windowStart }
-            .map { (date: $0.timestamp, value: Double($0.level)) }
-        let lastReadingAt = allBodyBattery.last?.timestamp
-        return VitalsMetric(current: current, lastReadingAt: lastReadingAt,
+            .map { (date: $0.timestamp, value: Double($0.bpm)) }
+        return VitalsMetric(current: last.map { $0.bpm },
+                            lastReadingAt: last?.timestamp,
                             windowSamples: windowSamples, history: history)
     }
 
     // MARK: - Stress
 
-    private var todayStress: [StressSample] {
-        allStress.filter { $0.timestamp >= startOfToday }
-    }
-
     private var stressMetric: VitalsMetric {
         let history = allStress
             .filter { $0.timestamp >= weekAgo }
             .map { TrendDataPoint(date: $0.timestamp, value: Double($0.stressScore)) }
-        let current = todayStress.last?.stressScore
+        let last = allStress.last
         let windowSamples = allStress
             .filter { $0.timestamp >= windowStart }
             .map { (date: $0.timestamp, value: Double($0.stressScore)) }
-        let lastReadingAt = allStress.last?.timestamp
-        return VitalsMetric(current: current, lastReadingAt: lastReadingAt,
+        return VitalsMetric(current: last.map { $0.stressScore },
+                            lastReadingAt: last?.timestamp,
                             windowSamples: windowSamples, history: history)
     }
 
@@ -154,7 +117,7 @@ struct TodayView: View {
         let total = todayStepCounts.reduce(0) { $0 + $1.steps }
         let lastReadingAt = allStepSamples.last?.timestamp
         return VitalsMetric(
-            current: todayStepCounts.isEmpty ? nil : total,
+            current: total,
             lastReadingAt: lastReadingAt,
             windowSamples: windowSamples,
             history: history
@@ -165,14 +128,15 @@ struct TodayView: View {
 
     private var activeMinutesMetric: VitalsMetric {
         let cal = Calendar.current
-        let grouped = Dictionary(grouping: allSteps.filter { $0.date >= weekAgo }) {
-            cal.startOfDay(for: $0.date)
+        let grouped = Dictionary(grouping: activeIntensitySamples.filter { $0.timestamp >= weekAgo }) {
+            cal.startOfDay(for: $0.timestamp)
         }
         let history = grouped
-            .map { day, counts in TrendDataPoint(date: day, value: Double(counts.reduce(0) { $0 + $1.intensityMinutes })) }
+            .map { day, samples in TrendDataPoint(date: day, value: Double(samples.reduce(0) { $0 + $1.minutes })) }
             .sorted { $0.date < $1.date }
-        let todayCounts = allSteps.filter { $0.date >= startOfToday }
-        let total = todayCounts.reduce(0) { $0 + $1.intensityMinutes }
+        let total = activeIntensitySamples
+            .filter { $0.timestamp >= startOfToday }
+            .reduce(0) { $0 + $1.minutes }
 
         let currentHourStart = cal.dateInterval(of: .hour, for: Date.now)!.start
         let windowSamples: [(date: Date, value: Double)] = (0..<4).reversed().map { i in
@@ -186,7 +150,7 @@ struct TodayView: View {
 
         let lastReadingAt = activeIntensitySamples.last?.timestamp
         return VitalsMetric(
-            current: todayCounts.isEmpty ? nil : total,
+            current: total,
             lastReadingAt: lastReadingAt,
             windowSamples: windowSamples,
             history: history
@@ -253,6 +217,7 @@ struct TodayView: View {
     private var dashboardContent: some View {
         ScrollView {
             LazyVStack(spacing: 20) {
+                sleepSection
                 vitalsSection
                 activitiesSection
             }
@@ -260,6 +225,15 @@ struct TodayView: View {
         }
         .refreshable {
             await syncCoordinator.sync(context: modelContext)
+        }
+    }
+
+    // MARK: - Sleep
+
+    @ViewBuilder
+    private var sleepSection: some View {
+        if let session = lastSleep, !session.stages.isEmpty {
+            SleepNightCard(session: session)
         }
     }
 
@@ -272,11 +246,7 @@ struct TodayView: View {
                 .font(.headline)
 
             VitalsGridView(
-                sleepScore: lastSleep?.score,
-                sleepStages: lastSleep?.stages ?? [],
-                sleepHistory: sleepHistory,
                 heartRate: heartRateMetric,
-                bodyBattery: bodyBatteryMetric,
                 stress: stressMetric,
                 steps: stepsMetric,
                 activeMinutes: activeMinutesMetric,

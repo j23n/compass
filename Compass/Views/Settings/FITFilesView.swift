@@ -10,36 +10,43 @@ struct FITFilesView: View {
 
     private let fileStore = FITFileStore.shared
 
+    private var allSelected: Bool {
+        !files.isEmpty && selectedFiles.count == files.count
+    }
+
     var body: some View {
         NavigationStack {
             contentBody
                 .navigationTitle("FIT Files")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItemGroup(placement: .topBarTrailing) {
-                        if !files.isEmpty {
-                            if isSelectionMode {
-                                Button("Done") {
+                    if !files.isEmpty {
+                        if isSelectionMode {
+                            ToolbarItem(placement: .topBarLeading) {
+                                Button("Cancel") {
                                     isSelectionMode = false
                                     selectedFiles.removeAll()
                                 }
-                                
-                                if !selectedFiles.isEmpty {
-                                    Button("Share Selected") {
-                                        shareSelectedFiles()
+                            }
+                            ToolbarItemGroup(placement: .topBarTrailing) {
+                                Button(allSelected ? "Deselect All" : "Select All") {
+                                    if allSelected {
+                                        selectedFiles.removeAll()
+                                    } else {
+                                        selectedFiles = Set(files.map(\.id))
                                     }
                                 }
-                            } else {
+                                Button("Share") {
+                                    shareSelectedFiles()
+                                }
+                                .disabled(selectedFiles.isEmpty)
+                            }
+                        } else {
+                            ToolbarItem(placement: .topBarTrailing) {
                                 Button {
                                     isSelectionMode = true
                                 } label: {
                                     Label("Select", systemImage: "checklist")
-                                }
-                                
-                                Button {
-                                    shareAllFiles()
-                                } label: {
-                                    Label("Export All", systemImage: "arrow.up.doc")
                                 }
                             }
                         }
@@ -155,22 +162,14 @@ struct FITFilesView: View {
     private func shareSelectedFiles() {
         let selectedUrls = files.filter { selectedFiles.contains($0.id) }.map { $0.url }
         if selectedUrls.isEmpty { return }
-        
-        // Use FileArchive to handle multiple files
+
         FileArchive.shareMultipleFiles(selectedUrls, archiveName: "fit-files") { urlsToShare in
             shareItems = urlsToShare
             showShareSheet = true
         }
     }
-    
-    private func shareAllFiles() {
-        let allUrls = files.map { $0.url }
-        FileArchive.shareMultipleFiles(allUrls, archiveName: "fit-files-all") { urlsToShare in
-            shareItems = urlsToShare
-            showShareSheet = true
-        }
-    }
-    
+
+
     private func refreshFiles() {
         files = fileStore.allFiles()
     }

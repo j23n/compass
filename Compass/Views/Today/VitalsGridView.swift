@@ -12,12 +12,7 @@ struct VitalsMetric {
 
 /// Compact 2-column grid of today's key vitals.
 struct VitalsGridView: View {
-    let sleepScore: Int?
-    let sleepStages: [SleepStage]
-    let sleepHistory: [TrendDataPoint]
-
     let heartRate: VitalsMetric
-    let bodyBattery: VitalsMetric
     let stress: VitalsMetric
     let steps: VitalsMetric
     let activeMinutes: VitalsMetric
@@ -25,36 +20,12 @@ struct VitalsGridView: View {
 
     var body: some View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-            sleepCard
             heartRateCard
-            bodyBatteryCard
             stressCard
             stepsCard
             activeMinutesCard
             spo2Card
         }
-    }
-
-    // MARK: - Sleep
-
-    private var sleepCard: some View {
-        NavigationLink {
-            HealthDetailView(
-                metricTitle: "Sleep",
-                metricUnit: "hr",
-                color: .indigo,
-                icon: "bed.double.fill",
-                data: sleepHistory,
-                useBarChart: true,
-                valueFormatter: { String(format: "%.1f hr", $0) }
-            )
-        } label: {
-            cardShell(icon: "bed.double.fill", label: "Sleep", color: .purple) {
-                metricValue(sleepScore.map { "\($0)" }, unit: nil)
-                chartSlot(!sleepStages.isEmpty) { miniSleepBar }
-            }
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Heart Rate
@@ -75,30 +46,6 @@ struct VitalsGridView: View {
                 readingLine(for: heartRate)
                 chartSlot(!heartRate.windowSamples.isEmpty) {
                     miniChart(for: heartRate, style: .line(color: .red))
-                }
-            }
-        }
-        .buttonStyle(.plain)
-    }
-
-    // MARK: - Body Battery
-
-    private var bodyBatteryCard: some View {
-        NavigationLink {
-            HealthDetailView(
-                metricTitle: "Body Battery",
-                metricUnit: "%",
-                color: .blue,
-                icon: "bolt.fill",
-                data: bodyBattery.history,
-                valueFormatter: { "\(Int($0))%" }
-            )
-        } label: {
-            cardShell(icon: "bolt.fill", label: "Body Battery", color: .blue) {
-                metricValue(bodyBattery.current.map { "\($0)" }, unit: "%")
-                readingLine(for: bodyBattery)
-                chartSlot(!bodyBattery.windowSamples.isEmpty) {
-                    miniChart(for: bodyBattery, style: .line(color: .blue))
                 }
             }
         }
@@ -283,43 +230,5 @@ struct VitalsGridView: View {
 
     private func miniChart(for metric: VitalsMetric, style: MiniWindowChart.Style) -> some View {
         MiniWindowChart(samples: metric.windowSamples, window: 4 * 3600, style: style)
-    }
-
-    // MARK: - Sleep stage mini-bar
-
-    private var miniSleepBar: some View {
-        let groups = stageDurations()
-        let total = groups.reduce(0.0) { $0 + $1.1 }
-        return GeometryReader { geo in
-            HStack(spacing: 0) {
-                ForEach(Array(groups.enumerated()), id: \.offset) { _, pair in
-                    let fraction = total > 0 ? pair.1 / total : 0
-                    Rectangle()
-                        .fill(stageColor(pair.0))
-                        .frame(width: geo.size.width * fraction)
-                }
-            }
-            .clipShape(Capsule())
-        }
-        .frame(height: 6)
-    }
-
-    private func stageDurations() -> [(SleepStageType, TimeInterval)] {
-        let order: [SleepStageType] = [.deep, .rem, .light, .awake]
-        let grouped = Dictionary(grouping: sleepStages, by: \.stage)
-        return order.compactMap { type in
-            guard let arr = grouped[type], !arr.isEmpty else { return nil }
-            let dur = arr.reduce(0.0) { $0 + $1.endDate.timeIntervalSince($1.startDate) }
-            return (type, dur)
-        }
-    }
-
-    private func stageColor(_ stage: SleepStageType) -> Color {
-        switch stage {
-        case .deep: .indigo
-        case .rem: .purple
-        case .light: Color(.systemGray4)
-        case .awake: Color(.systemGray6)
-        }
     }
 }

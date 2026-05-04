@@ -11,6 +11,8 @@
 		07B523E62E4F697A573506B6 /* ChartYDomain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3502B0EDE3324077F26D3EF8 /* ChartYDomain.swift */; };
 		08EF78B33E0BEC8567ABE14F /* FindMyPhoneService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F895C1DE3D221686BB2BFD7 /* FindMyPhoneService.swift */; };
 		12AF5059E4AEE5DC6D473933 /* MapSnapshotView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0F250C485A8D924F3DE3C50 /* MapSnapshotView.swift */; };
+		14FEC3B36A75047D158A29CF /* SleepTimelineBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BC856412A5B34250373E2B9 /* SleepTimelineBar.swift */; };
+		18FE52E438779A021B840D7B /* SleepStagesCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26AF8A9C1EB4F6B7C0B98A0C /* SleepStagesCard.swift */; };
 		1ECE48914DC75CBE7FA95FC4 /* MusicService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A675699E286A5D1EE4F96157 /* MusicService.swift */; };
 		26B126355BC9D6C3F3D277E7 /* ActivitiesListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93B71F0583278E54AAE879AA /* ActivitiesListView.swift */; };
 		330DE8B61FCC45FD477ABF1E /* CourseFileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5ED41DBDA73B5A4BD512EB0 /* CourseFileStore.swift */; };
@@ -29,6 +31,7 @@
 		8B709A7D7D4E459CD7006768 /* TodayViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35B616B28C57B7C5DA43CA6B /* TodayViewModel.swift */; };
 		8C1FF6F31EAD077BD75F07AE /* LogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18F573121C079EF19C621678 /* LogStore.swift */; };
 		8E75DC4DB5B661073E88C849 /* RingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 922D24C67232B7C668C51066 /* RingView.swift */; };
+		8F4957986E1B909BF0318A78 /* SleepNightCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D13A5908E2F7352848B4DA7 /* SleepNightCard.swift */; };
 		91FF28BD920460859321964D /* CourseFilesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1367C853B9217F54A818D824 /* CourseFilesView.swift */; };
 		A091498A9A8F5A6160133675 /* StatCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 613CE3D8C070B65F4F40AE6E /* StatCell.swift */; };
 		A2659E0867E505D218C2431A /* HealthDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BA0E1E132468A60CCF51A13 /* HealthDetailView.swift */; };
@@ -36,7 +39,6 @@
 		A644476816FC419C0BE661DB /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35A2BA7F0CFC5430A008040A /* SettingsView.swift */; };
 		AF25231DC99F0BBD1F7EC8B4 /* TrendChartView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 054458D3773E3474BBDAAD23 /* TrendChartView.swift */; };
 		BD700844C17010534F502A34 /* SyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D3DBAB5FAC5E338AC5A1FE4 /* SyncCoordinator.swift */; };
-		C02EBFDE143AA0B80CFB0438 /* SleepStageBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = F090E1EB465CC11DF2F62948 /* SleepStageBar.swift */; };
 		C50098134F965E6A549044FE /* CompassData in Frameworks */ = {isa = PBXBuildFile; productRef = 9049E5DD8AE098DC4CB2913F /* CompassData */; };
 		C92B21FA835C4672774DF1FC /* ActivityDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B52DC488550FEC3D8883493F /* ActivityDetailView.swift */; };
 		CA08357C40DF211C8AE2B097 /* MiniWindowChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9458BB642CB63826CB513B12 /* MiniWindowChart.swift */; };
@@ -68,6 +70,7 @@
 		1BF57BA01F2477CA55BC7407 /* Compass.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Compass.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2091CE66772E3E60DB0CAE0E /* FileArchive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileArchive.swift; sourceTree = "<group>"; };
 		2399241D1129827B533BF73A /* WeatherService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeatherService.swift; sourceTree = "<group>"; };
+		26AF8A9C1EB4F6B7C0B98A0C /* SleepStagesCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepStagesCard.swift; sourceTree = "<group>"; };
 		291F08030DDECFA63DC57CD3 /* CourseEditView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseEditView.swift; sourceTree = "<group>"; };
 		2D3DBAB5FAC5E338AC5A1FE4 /* SyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncCoordinator.swift; sourceTree = "<group>"; };
 		2D4C001F81589F0D37F45A27 /* InteractiveTrendCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InteractiveTrendCard.swift; sourceTree = "<group>"; };
@@ -82,6 +85,7 @@
 		63F7DF49430F745E634711B5 /* CompassApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompassApp.swift; sourceTree = "<group>"; };
 		665EE9956A0F92054D603F0A /* CoursesListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoursesListView.swift; sourceTree = "<group>"; };
 		6A6BD4BAA140A129B9819801 /* FITFilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FITFilesView.swift; sourceTree = "<group>"; };
+		6BC856412A5B34250373E2B9 /* SleepTimelineBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepTimelineBar.swift; sourceTree = "<group>"; };
 		6E894DAB2813A23F28CC0DEE /* TodayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayView.swift; sourceTree = "<group>"; };
 		7BA0E1E132468A60CCF51A13 /* HealthDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthDetailView.swift; sourceTree = "<group>"; };
 		814FB2742A1BD39FE781D673 /* LogsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogsView.swift; sourceTree = "<group>"; };
@@ -92,6 +96,7 @@
 		9458BB642CB63826CB513B12 /* MiniWindowChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniWindowChart.swift; sourceTree = "<group>"; };
 		97BAF900BBD17FE3F207727E /* CompassFIT */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CompassFIT; path = Packages/CompassFIT; sourceTree = SOURCE_ROOT; };
 		9ABC46AFD85937599C861287 /* PhoneLocationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneLocationService.swift; sourceTree = "<group>"; };
+		9D13A5908E2F7352848B4DA7 /* SleepNightCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepNightCard.swift; sourceTree = "<group>"; };
 		9D9133A7187508897F34DDF7 /* ActivityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityView.swift; sourceTree = "<group>"; };
 		A06CAA6C9634DE5F69D540DE /* MapRouteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapRouteView.swift; sourceTree = "<group>"; };
 		A0F493523C31C25C4ADDED1A /* SparklineChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SparklineChart.swift; sourceTree = "<group>"; };
@@ -108,7 +113,6 @@
 		E595EBFC0032E4A36808EB59 /* CourseRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseRowView.swift; sourceTree = "<group>"; };
 		E68387AD134514176C0E3FE0 /* Date+RelativeReading.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Date+RelativeReading.swift"; sourceTree = "<group>"; };
 		EDE0F0D06A2C4BAA19A4E830 /* CompassBLE */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CompassBLE; path = Packages/CompassBLE; sourceTree = SOURCE_ROOT; };
-		F090E1EB465CC11DF2F62948 /* SleepStageBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepStageBar.swift; sourceTree = "<group>"; };
 		F31BADC1B754136FEA67BC25 /* VitalsGridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VitalsGridView.swift; sourceTree = "<group>"; };
 		F680123EE4C6C3BB4840D11E /* Sport+UI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Sport+UI.swift"; sourceTree = "<group>"; };
 		F99774EFF0EAC82BF2A0AF53 /* ActivityRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityRowView.swift; sourceTree = "<group>"; };
@@ -135,6 +139,7 @@
 				7BA0E1E132468A60CCF51A13 /* HealthDetailView.swift */,
 				5512F60331520C299D42F604 /* HealthView.swift */,
 				2D4C001F81589F0D37F45A27 /* InteractiveTrendCard.swift */,
+				26AF8A9C1EB4F6B7C0B98A0C /* SleepStagesCard.swift */,
 			);
 			path = Health;
 			sourceTree = "<group>";
@@ -156,6 +161,7 @@
 				9458BB642CB63826CB513B12 /* MiniWindowChart.swift */,
 				374694B7478BB4C57955778B /* RingsView.swift */,
 				922D24C67232B7C668C51066 /* RingView.swift */,
+				6BC856412A5B34250373E2B9 /* SleepTimelineBar.swift */,
 				A0F493523C31C25C4ADDED1A /* SparklineChart.swift */,
 				054458D3773E3474BBDAAD23 /* TrendChartView.swift */,
 			);
@@ -176,7 +182,7 @@
 		475DE784CCD6F82F2508AE28 /* Today */ = {
 			isa = PBXGroup;
 			children = (
-				F090E1EB465CC11DF2F62948 /* SleepStageBar.swift */,
+				9D13A5908E2F7352848B4DA7 /* SleepNightCard.swift */,
 				6E894DAB2813A23F28CC0DEE /* TodayView.swift */,
 				F31BADC1B754136FEA67BC25 /* VitalsGridView.swift */,
 			);
@@ -431,7 +437,9 @@
 				8E75DC4DB5B661073E88C849 /* RingView.swift in Sources */,
 				4A667935CCA7EFCBD4ED46F4 /* RingsView.swift in Sources */,
 				A644476816FC419C0BE661DB /* SettingsView.swift in Sources */,
-				C02EBFDE143AA0B80CFB0438 /* SleepStageBar.swift in Sources */,
+				8F4957986E1B909BF0318A78 /* SleepNightCard.swift in Sources */,
+				18FE52E438779A021B840D7B /* SleepStagesCard.swift in Sources */,
+				14FEC3B36A75047D158A29CF /* SleepTimelineBar.swift in Sources */,
 				DD4309AD30E777BC4EC503B3 /* SparklineChart.swift in Sources */,
 				FB5862A043926010ABD26ADB /* Sport+UI.swift in Sources */,
 				A091498A9A8F5A6160133675 /* StatCell.swift in Sources */,

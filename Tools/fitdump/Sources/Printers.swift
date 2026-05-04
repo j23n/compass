@@ -82,6 +82,7 @@ func dumpMonitoring(data: Data, profile: DeviceProfile) async throws {
     let result = try await parser.parse(data: data)
 
     let hr        = result.heartRateSamples
+    let restHR    = result.restingHeartRateSamples
     let stress    = result.stressSamples
     let bb        = result.bodyBatterySamples
     let resp      = result.respirationSamples
@@ -95,6 +96,12 @@ func dumpMonitoring(data: Data, profile: DeviceProfile) async throws {
         print(String(format: "heart rate samples : %-6d range %d\u{2013}%d bpm   span %@ \u{2192} %@",
                      hr.count, bpms.min()!, bpms.max()!,
                      fmt(hr.first!.timestamp), fmt(hr.last!.timestamp)))
+    }
+    if !restHR.isEmpty {
+        let bpms = restHR.map(\.bpm)
+        print(String(format: "resting HR samples : %-6d range %d\u{2013}%d bpm   span %@ \u{2192} %@",
+                     restHR.count, bpms.min()!, bpms.max()!,
+                     fmt(restHR.first!.timestamp), fmt(restHR.last!.timestamp)))
     }
     if !stress.isEmpty {
         let vals = stress.map(\.stressScore)
@@ -114,15 +121,27 @@ func dumpMonitoring(data: Data, profile: DeviceProfile) async throws {
     }
     if !intervals.isEmpty {
         let totalSteps     = intervals.reduce(0) { $0 + $1.steps }
-        let totalIntensity = intervals.reduce(0) { $0 + $1.intensityMinutes }
-        print(String(format: "intervals          : %-6d steps total: %d   intensity-min total: %d",
-                     intervals.count, totalSteps, totalIntensity))
+        print(String(format: "intervals          : %-6d step deltas total: %d",
+                     intervals.count, totalSteps))
         let first = intervals.first!
-        print(String(format: "first interval: %@   steps=%d  type=%d  intensityMin=%d   kcal=%.1f",
-                     fmt(first.timestamp), first.steps, first.activityType, first.intensityMinutes, first.activeCalories))
+        print(String(format: "first interval: %@   steps=%d  type=%d   kcal=%.1f",
+                     fmt(first.timestamp), first.steps, first.activityType, first.activeCalories))
         let last = intervals.last!
-        print(String(format: "last  interval: %@   steps=%d  type=%d  intensityMin=%d   kcal=%.1f",
-                     fmt(last.timestamp), last.steps, last.activityType, last.intensityMinutes, last.activeCalories))
+        print(String(format: "last  interval: %@   steps=%d  type=%d   kcal=%.1f",
+                     fmt(last.timestamp), last.steps, last.activityType, last.activeCalories))
+    }
+    if !result.dailyStepTotals.isEmpty {
+        let dayFmt = DateFormatter()
+        dayFmt.dateFormat = "yyyy-MM-dd"
+        dayFmt.timeZone = TimeZone(secondsFromGMT: 0)
+        let sorted = result.dailyStepTotals.sorted { $0.key < $1.key }
+        for (day, total) in sorted {
+            print(String(format: "daily steps        : %@   %d", dayFmt.string(from: day), total))
+        }
+    }
+    if !result.activeMinuteTimestamps.isEmpty {
+        print(String(format: "active minutes     : %d (HR ≥ threshold)",
+                     result.activeMinuteTimestamps.count))
     }
 }
 
@@ -139,8 +158,17 @@ func dumpSleep(data: Data, profile: DeviceProfile) async throws {
     }
 
     let duration = result.endDate.timeIntervalSince(result.startDate)
-    print(String(format: "session: %@ \u{2192} %@  (%@)",
+    print(String(format: "raw:     %@ \u{2192} %@  (%@)",
                  fmt(result.startDate), fmt(result.endDate), fmtDuration(duration)))
+
+    let sortedStages = result.stages.sorted { $0.startDate < $1.startDate }
+    if let bounds = SleepStageResult.trimmedBounds(stages: sortedStages) {
+        let trimmedDuration = bounds.end.timeIntervalSince(bounds.start)
+        print(String(format: "trimmed: %@ \u{2192} %@  (%@)",
+                     fmt(bounds.start), fmt(bounds.end), fmtDuration(trimmedDuration)))
+    } else {
+        print("trimmed: (no qualifying sleep run found)")
+    }
 
     var parts: [String] = []
     if let score = result.score         { parts.append("score: \(score)") }
@@ -156,6 +184,55 @@ func dumpSleep(data: Data, profile: DeviceProfile) async throws {
                      fmt(stage.startDate), fmt(stage.endDate),
                      stage.stage.rawValue, fmtDuration(dur)))
     }
+}
+
+// MARK: - Merged sleep (simulates the SyncCoordinator's per-night merge)
+
+func dumpMergedSleep(urls: [URL], profile: DeviceProfile) async throws {
+    let parser = SleepFITParser(profile: profile)
+    var allStages: [SleepStageResult] = []
+    var fileSummaries: [String] = []
+
+    for url in urls {
+        let data = try Data(contentsOf: url)
+        guard let result = try await parser.parse(data: data) else {
+            fileSummaries.append("  \(url.lastPathComponent): (no session)")
+            continue
+        }
+        let dur = result.endDate.timeIntervalSince(result.startDate)
+        fileSummaries.append("  \(url.lastPathComponent): \(fmt(result.startDate))\u{2192}\(fmt(result.endDate)) (\(fmtDuration(dur)), \(result.stages.count) stages)")
+        allStages.append(contentsOf: result.stages)
+    }
+    allStages.sort { $0.startDate < $1.startDate }
+
+    print("== Merged Sleep ==")
+    print("input files (\(urls.count)):")
+    for s in fileSummaries { print(s) }
+    print("")
+    print("merged stage count: \(allStages.count)")
+
+    if let s = allStages.first, let e = allStages.last {
+        let dur = e.endDate.timeIntervalSince(s.startDate)
+        print("raw span:    \(fmt(s.startDate)) \u{2192} \(fmt(e.endDate))  (\(fmtDuration(dur)))")
+    }
+
+    if let bounds = SleepStageResult.trimmedBounds(stages: allStages) {
+        let dur = bounds.end.timeIntervalSince(bounds.start)
+        print("trimmed:     \(fmt(bounds.start)) \u{2192} \(fmt(bounds.end))  (\(fmtDuration(dur)))")
+    } else {
+        print("trimmed: (no qualifying sleep run found)")
+    }
+
+    var awake = 0, light = 0, deep = 0, rem = 0
+    for s in allStages {
+        switch s.stage {
+        case .awake: awake += 1
+        case .light: light += 1
+        case .deep:  deep  += 1
+        case .rem:   rem   += 1
+        }
+    }
+    print("stage tally: awake=\(awake), light=\(light), deep=\(deep), rem=\(rem)  (one-minute stages, total=\(allStages.count) min)")
 }
 
 // MARK: - Metrics (HRV)

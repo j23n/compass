@@ -28,7 +28,7 @@ private func fieldStr(_ fv: FitFieldValue) -> String {
 }
 
 func dumpRaw(data: Data) {
-    let fitFile = FitFile(data: data)
+    let fitFile = FitFile(data: data, parsingType: .generic)
     for (idx, message) in fitFile.messages.enumerated() {
         let typeNum  = Int(message.messageType)
         let typeName = message.messageType.name()

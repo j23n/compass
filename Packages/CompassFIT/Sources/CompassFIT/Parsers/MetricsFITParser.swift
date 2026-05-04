@@ -39,14 +39,14 @@ public struct MetricsFITParser: Sendable {
                 }
 
             case .hrv_status_summary:
-                if let ts = message.interpretedField(key: "timestamp")?.time,
+                if let ts = FITTimestamp.resolve(message),
                    let avg = message.interpretedField(key: "last_night_average")?.value
                             ?? message.interpretedField(key: "last_night_average")?.valueUnit?.value {
                     results.append(HRVResult(timestamp: ts, rmssd: avg))
                 }
 
             default:
-                if let ts = message.interpretedField(key: "timestamp")?.time {
+                if let ts = FITTimestamp.resolve(message) {
                     currentTimestamp = ts
                 }
             }

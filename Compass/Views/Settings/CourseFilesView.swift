@@ -4,6 +4,8 @@ struct CourseFilesView: View {
     @State private var files: [CourseFileStore.StoredFile] = []
     @State private var showShareSheet = false
     @State private var shareItems: [URL] = []
+    @State private var selectedFiles: Set<UUID> = []
+    @State private var isSelectionMode = false
 
     private let fileStore = CourseFileStore.shared
 
@@ -13,13 +15,31 @@ struct CourseFilesView: View {
                 .navigationTitle("Course Files")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    if !files.isEmpty {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button {
-                                shareItems = files.map { $0.url }
-                                showShareSheet = true
-                            } label: {
-                                Label("Export All", systemImage: "arrow.up.doc")
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        if !files.isEmpty {
+                            if isSelectionMode {
+                                Button("Done") {
+                                    isSelectionMode = false
+                                    selectedFiles.removeAll()
+                                }
+                                
+                                if !selectedFiles.isEmpty {
+                                    Button("Share Selected") {
+                                        shareSelectedFiles()
+                                    }
+                                }
+                            } else {
+                                Button {
+                                    isSelectionMode = true
+                                } label: {
+                                    Label("Select", systemImage: "checklist")
+                                }
+                                
+                                Button {
+                                    shareAllFiles()
+                                } label: {
+                                    Label("Export All", systemImage: "arrow.up.doc")
+                                }
                             }
                         }
                     }
@@ -50,6 +70,30 @@ struct CourseFilesView: View {
     private var filesList: some View {
         List(files, id: \.id) { file in
             fileListRow(for: file)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if isSelectionMode {
+                        if selectedFiles.contains(file.id) {
+                            selectedFiles.remove(file.id)
+                        } else {
+                            selectedFiles.insert(file.id)
+                        }
+                    }
+                }
+                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    if !isSelectionMode {
+                        ShareLink(item: file.url) {
+                            Label("Share", systemImage: "square.and.arrow.up")
+                        }
+                        .tint(.blue)
+
+                        Button(role: .destructive) {
+                            deleteFile(file)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                }
         }
         .listStyle(.plain)
     }
@@ -60,6 +104,12 @@ struct CourseFilesView: View {
         dateFormatter.timeStyle = .short
 
         return HStack(spacing: 12) {
+            if isSelectionMode {
+                Image(systemName: selectedFiles.contains(file.id) ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(selectedFiles.contains(file.id) ? .green : .secondary)
+                    .font(.title3)
+            }
+            
             Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
                 .font(.title3)
                 .foregroundStyle(.green)
@@ -85,20 +135,26 @@ struct CourseFilesView: View {
             Spacer()
         }
         .contentShape(Rectangle())
-        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            ShareLink(item: file.url) {
-                Label("Share", systemImage: "square.and.arrow.up")
-            }
-            .tint(.blue)
-
-            Button(role: .destructive) {
-                deleteFile(file)
-            } label: {
-                Label("Delete", systemImage: "trash")
-            }
-        }
     }
 
+    private func shareSelectedFiles() {
+        let selectedUrls = files.filter { selectedFiles.contains($0.id) }.map { $0.url }
+        if selectedUrls.isEmpty { return }
+        
+        FileArchive.shareMultipleFiles(selectedUrls, archiveName: "course-files") { urlsToShare in
+            shareItems = urlsToShare
+            showShareSheet = true
+        }
+    }
+    
+    private func shareAllFiles() {
+        let allUrls = files.map { $0.url }
+        FileArchive.shareMultipleFiles(allUrls, archiveName: "course-files-all") { urlsToShare in
+            shareItems = urlsToShare
+            showShareSheet = true
+        }
+    }
+    
     private func refreshFiles() {
         files = fileStore.allFiles()
     }

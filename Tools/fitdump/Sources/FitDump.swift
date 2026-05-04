@@ -17,9 +17,11 @@ enum FITKind: String, CaseIterable {
 
 struct Options {
     var path: URL?
+    var paths: [URL] = []
     var explicitType: FITKind?
     var raw: Bool = false
     var profile: DeviceProfile = .default
+    var mergeSleep: Bool = false
 }
 
 extension DeviceProfile {
@@ -66,6 +68,8 @@ func parseArgs() -> Options {
             opts.explicitType = kind
         case "--raw":
             opts.raw = true
+        case "--merge-sleep":
+            opts.mergeSleep = true
         case "--profile":
             guard !argList.isEmpty else {
                 fputs("--profile requires a value\n", stderr); exit(2)
@@ -80,12 +84,14 @@ func parseArgs() -> Options {
             if arg.hasPrefix("-") {
                 fputs("Unknown flag: \(arg)\n", stderr); exit(2)
             }
-            opts.path = URL(fileURLWithPath: arg)
+            let url = URL(fileURLWithPath: arg)
+            if opts.path == nil { opts.path = url }
+            opts.paths.append(url)
         }
     }
 
     guard opts.path != nil else {
-        fputs("Missing file argument.\n\nUsage: fitdump [--type activity|monitor|sleep|metrics] [--raw] [--profile default|instinct-solar-1g] <file.fit>\n", stderr)
+        fputs("Missing file argument.\n\nUsage: fitdump [--type activity|monitor|sleep|metrics] [--raw] [--profile default|instinct-solar-1g] [--merge-sleep] <file.fit>...\n", stderr)
         exit(2)
     }
     return opts
@@ -97,6 +103,11 @@ struct FitDumpTool {
         let opts = parseArgs()
 
         do {
+            if opts.mergeSleep {
+                try await dumpMergedSleep(urls: opts.paths, profile: opts.profile)
+                return
+            }
+
             let data = try Data(contentsOf: opts.path!)
 
             if opts.raw {

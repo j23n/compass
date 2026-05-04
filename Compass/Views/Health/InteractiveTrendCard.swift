@@ -276,8 +276,13 @@ struct InteractiveTrendCard: View {
                     .gesture(DragGesture(minimumDistance: 0)
                         .onChanged { drag in
                             guard let date: Date = proxy.value(atX: drag.location.x) else { return }
-                            let containing = buckets.first { $0.date <= date && date < $0.endDate }
-                            selectedBucket = containing ?? buckets.last
+                            // Use nearest-center matching: when bars are anchored on `bucket.date`
+                            // (start-of-period), Charts can position the bar visually offset from the
+                            // gesture coordinate, making interval-containment off-by-one at boundaries.
+                            selectedBucket = buckets.min(by: {
+                                abs(bucketCenterDate($0.date).timeIntervalSince(date)) <
+                                abs(bucketCenterDate($1.date).timeIntervalSince(date))
+                            }) ?? buckets.last
                         }
                         .onEnded { _ in selectedBucket = nil })
             }

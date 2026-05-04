@@ -67,26 +67,40 @@ public struct SpO2SampleValue: Sendable, Equatable {
 /// Aggregated results from parsing a monitoring FIT file.
 public struct MonitoringData: Sendable {
     public let heartRateSamples: [HeartRateSampleValue]
+    public let restingHeartRateSamples: [HeartRateSampleValue]
     public let stressSamples: [StressSampleValue]
     public let intervals: [MonitoringInterval]
     public let bodyBatterySamples: [BodyBatterySample]
     public let respirationSamples: [RespirationSample]
     public let spo2Samples: [SpO2SampleValue]
+    /// Unique minute-start timestamps where any HR sample met the active-minute threshold.
+    /// One entry per intensity-minute, dedup'd to the second-zero-of-the-minute.
+    public let activeMinuteTimestamps: [Date]
+    /// Day-start → total cumulative steps observed in this file (max across snapshots,
+    /// summed across activity types). Authoritative for daily step totals; SyncCoordinator
+    /// merges with previously-observed values via max.
+    public let dailyStepTotals: [Date: Int]
 
     public init(
         heartRateSamples: [HeartRateSampleValue] = [],
+        restingHeartRateSamples: [HeartRateSampleValue] = [],
         stressSamples: [StressSampleValue] = [],
         intervals: [MonitoringInterval] = [],
         bodyBatterySamples: [BodyBatterySample] = [],
         respirationSamples: [RespirationSample] = [],
-        spo2Samples: [SpO2SampleValue] = []
+        spo2Samples: [SpO2SampleValue] = [],
+        activeMinuteTimestamps: [Date] = [],
+        dailyStepTotals: [Date: Int] = [:]
     ) {
         self.heartRateSamples = heartRateSamples
+        self.restingHeartRateSamples = restingHeartRateSamples
         self.stressSamples = stressSamples
         self.intervals = intervals
         self.bodyBatterySamples = bodyBatterySamples
         self.respirationSamples = respirationSamples
         self.spo2Samples = spo2Samples
+        self.activeMinuteTimestamps = activeMinuteTimestamps
+        self.dailyStepTotals = dailyStepTotals
     }
 }
 
