@@ -53,7 +53,13 @@ struct TodayView: View {
 
     // MARK: - Sleep
 
-    private var lastSleep: SleepSession? { allSleepSessions.first }
+    /// The most recent sleep session that ended on the current calendar day.
+    /// Yesterday's sleep is intentionally hidden — the user wants the Today
+    /// view's sleep card to reflect "today" only and show a placeholder
+    /// otherwise.
+    private var todaySleep: SleepSession? {
+        allSleepSessions.first(where: { $0.endDate >= startOfToday })
+    }
 
     private var weekAgo: Date { Calendar.current.date(byAdding: .day, value: -7, to: Date())! }
 
@@ -237,8 +243,35 @@ struct TodayView: View {
 
     @ViewBuilder
     private var sleepSection: some View {
-        if let session = lastSleep, !session.stages.isEmpty {
+        if let session = todaySleep, !session.stages.isEmpty {
             SleepNightCard(session: session)
+        } else {
+            sleepPlaceholderCard
+        }
+    }
+
+    private var sleepPlaceholderCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("Sleep", systemImage: "bed.double.fill")
+                    .font(.headline)
+                    .foregroundStyle(.purple)
+                Spacer()
+            }
+            Text("No sleep recorded")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(.background)
+                .shadow(color: .black.opacity(0.06), radius: 4, x: 0, y: 1)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(.separator, lineWidth: 0.5)
         }
     }
 

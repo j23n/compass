@@ -462,8 +462,12 @@ struct ActivityDetailView: View {
     // MARK: - Map
 
     private var mapSection: some View {
-        MapRouteView(
+        // Render size at 2x logical width for crispness on retina displays.
+        // Cache key includes "_detail" so it doesn't collide with the row thumbnail.
+        MapSnapshotView(
             trackPoints: sortedTrackPoints,
+            size: CGSize(width: 800, height: 440),
+            cacheKey: "activity_\(activity.id.uuidString)_detail",
             highlightCoordinate: highlightedCoordinate
         )
         .frame(height: 220)

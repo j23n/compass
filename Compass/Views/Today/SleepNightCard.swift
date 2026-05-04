@@ -10,18 +10,7 @@ struct SleepNightCard: View {
         session.endDate.timeIntervalSince(session.startDate)
     }
 
-    /// Stages restricted to the trimmed `[startDate, endDate]` window with any
-    /// leading/trailing awake removed — the persisted stage array still carries
-    /// the raw FIT records, so we trim at render time.
-    private var visibleStages: [SleepStage] {
-        let inBounds = session.stages
-            .filter { $0.endDate > session.startDate && $0.startDate < session.endDate }
-            .sorted { $0.startDate < $1.startDate }
-        let leadingTrimmed = inBounds.drop(while: { $0.stage == .awake })
-        var trimmed = Array(leadingTrimmed)
-        while trimmed.last?.stage == .awake { trimmed.removeLast() }
-        return trimmed
-    }
+    private var visibleStages: [SleepStage] { session.trimmedStages }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {

@@ -71,6 +71,7 @@ struct SleepStagesCard: View {
     @ViewBuilder
     private var dayContent: some View {
         if let recent = mostRecentSession {
+            let trimmed = recent.trimmedStages
             VStack(alignment: .leading, spacing: 8) {
                 let total = recent.endDate.timeIntervalSince(recent.startDate)
                 HStack(alignment: .firstTextBaseline) {
@@ -81,7 +82,7 @@ struct SleepStagesCard: View {
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
-                SleepTimelineBar(stages: recent.stages, height: 28)
+                SleepTimelineBar(stages: trimmed, height: 28)
                     .frame(maxWidth: .infinity)
             }
         } else {
@@ -193,11 +194,12 @@ struct SleepStagesCard: View {
             let inMonth = sessions.filter { $0.endDate >= monthStart && $0.endDate < monthEnd }
             let label = monthStart.formatted(.dateTime.month(.narrow))
             let nightsCount = max(1, inMonth.count)
-            // Average per night, broken down by stage
-            let totalDeep  = inMonth.reduce(0.0) { $0 + $1.stages.duration(for: .deep) }
-            let totalRem   = inMonth.reduce(0.0) { $0 + $1.stages.duration(for: .rem) }
-            let totalLight = inMonth.reduce(0.0) { $0 + $1.stages.duration(for: .light) }
-            let totalAwake = inMonth.reduce(0.0) { $0 + $1.stages.duration(for: .awake) }
+            // Average per night, broken down by stage. Use trimmed stages so
+            // leading/trailing awake noise doesn't inflate the awake band.
+            let totalDeep  = inMonth.reduce(0.0) { $0 + $1.trimmedStages.duration(for: .deep) }
+            let totalRem   = inMonth.reduce(0.0) { $0 + $1.trimmedStages.duration(for: .rem) }
+            let totalLight = inMonth.reduce(0.0) { $0 + $1.trimmedStages.duration(for: .light) }
+            let totalAwake = inMonth.reduce(0.0) { $0 + $1.trimmedStages.duration(for: .awake) }
             return StageBucket(
                 date: monthStart,
                 label: label,
@@ -210,10 +212,10 @@ struct SleepStagesCard: View {
     }
 
     private func aggregate(_ sessions: [SleepSession], date: Date, label: String) -> StageBucket {
-        let deep  = sessions.reduce(0.0) { $0 + $1.stages.duration(for: .deep) } / 3600.0
-        let rem   = sessions.reduce(0.0) { $0 + $1.stages.duration(for: .rem) } / 3600.0
-        let light = sessions.reduce(0.0) { $0 + $1.stages.duration(for: .light) } / 3600.0
-        let awake = sessions.reduce(0.0) { $0 + $1.stages.duration(for: .awake) } / 3600.0
+        let deep  = sessions.reduce(0.0) { $0 + $1.trimmedStages.duration(for: .deep) } / 3600.0
+        let rem   = sessions.reduce(0.0) { $0 + $1.trimmedStages.duration(for: .rem) } / 3600.0
+        let light = sessions.reduce(0.0) { $0 + $1.trimmedStages.duration(for: .light) } / 3600.0
+        let awake = sessions.reduce(0.0) { $0 + $1.trimmedStages.duration(for: .awake) } / 3600.0
         return StageBucket(date: date, label: label, deep: deep, rem: rem, light: light, awake: awake)
     }
 

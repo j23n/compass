@@ -61,9 +61,11 @@ struct CourseRowView: View {
     }
 
     private var mapThumbnail: some View {
-        MapSnapshotView(coordinates: course.waypoints
-            .sorted { $0.order < $1.order }
-            .map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+        MapSnapshotView(
+            coordinates: course.waypoints
+                .sorted { $0.order < $1.order }
+                .map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) },
+            cacheKey: "course_\(course.id.uuidString)_thumb"
         )
         .frame(width: 60, height: 60)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))

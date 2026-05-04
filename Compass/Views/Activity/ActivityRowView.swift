@@ -55,7 +55,10 @@ struct ActivityRowView: View {
     }
 
     private var mapThumbnail: some View {
-        MapSnapshotView(trackPoints: activity.trackPoints)
+        MapSnapshotView(
+            trackPoints: activity.trackPoints,
+            cacheKey: "activity_\(activity.id.uuidString)_thumb"
+        )
             .frame(width: 60, height: 60)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
