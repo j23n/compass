@@ -63,10 +63,25 @@ struct TodayView: View {
     /// resting reading has landed today yet.
     private var heartRateMetric: VitalsMetric {
         let history = allHeartRateSamples
-            .filter { $0.timestamp >= weekAgo && $0.context == .resting }
+            .filter { $0.timestamp >= weekAgo }
             .map { TrendDataPoint(date: $0.timestamp, value: Double($0.bpm)) }
         let last = allHeartRateSamples.last
         let windowSamples = allHeartRateSamples
+            .filter { $0.timestamp >= windowStart }
+            .map { (date: $0.timestamp, value: Double($0.bpm)) }
+        return VitalsMetric(current: last.map { $0.bpm },
+                            lastReadingAt: last?.timestamp,
+                            windowSamples: windowSamples, history: history)
+    }
+
+    /// Resting-only HR samples — same source as Health → Heart → Resting Heart Rate.
+    private var restingHeartRateMetric: VitalsMetric {
+        let resting = allHeartRateSamples.filter { $0.context == .resting }
+        let history = resting
+            .filter { $0.timestamp >= weekAgo }
+            .map { TrendDataPoint(date: $0.timestamp, value: Double($0.bpm)) }
+        let last = resting.last
+        let windowSamples = resting
             .filter { $0.timestamp >= windowStart }
             .map { (date: $0.timestamp, value: Double($0.bpm)) }
         return VitalsMetric(current: last.map { $0.bpm },
@@ -104,22 +119,12 @@ struct TodayView: View {
             .map { day, counts in TrendDataPoint(date: day, value: Double(counts.reduce(0) { $0 + $1.steps })) }
             .sorted { $0.date < $1.date }
 
-        let currentHourStart = cal.dateInterval(of: .hour, for: Date.now)!.start
-        let windowSamples: [(date: Date, value: Double)] = (0..<4).reversed().map { i in
-            let start = cal.date(byAdding: .hour, value: -i, to: currentHourStart)!
-            let end = cal.date(byAdding: .hour, value: 1, to: start)!
-            let sum = allStepSamples
-                .filter { $0.timestamp >= start && $0.timestamp < end }
-                .reduce(0) { $0 + $1.steps }
-            return (start, Double(sum))
-        }
-
         let total = todayStepCounts.reduce(0) { $0 + $1.steps }
         let lastReadingAt = allStepSamples.last?.timestamp
         return VitalsMetric(
             current: total,
             lastReadingAt: lastReadingAt,
-            windowSamples: windowSamples,
+            windowSamples: [],
             history: history
         )
     }
@@ -247,6 +252,7 @@ struct TodayView: View {
 
             VitalsGridView(
                 heartRate: heartRateMetric,
+                restingHeartRate: restingHeartRateMetric,
                 stress: stressMetric,
                 steps: stepsMetric,
                 activeMinutes: activeMinutesMetric,

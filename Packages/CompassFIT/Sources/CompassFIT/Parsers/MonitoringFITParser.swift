@@ -159,10 +159,10 @@ public struct MonitoringFITParser: Sendable {
         //     few day-boundary messages. Resolves to the readable name directly.
         //   - field 24 (`current_activity_type_intensity`): packed byte in streaming
         //     monitoring messages. Lower 5 bits = activity_type, upper 3 = intensity.
-        // Streaming messages dominate, so without the CATI fallback we mis-classify
-        // most cycles updates as "generic" and drop their step contribution.
+        // We accept any type — Garmin's "generic" CATI bucket still carries real
+        // background step counts in the cycles field. Per-type tracking remains so
+        // each type's cumulative resets are handled independently.
         let activityType = resolveActivityType(from: message)
-        let isStepActivity = activityType == "walking" || activityType == "running"
 
         // Per-interval step delta. The `cycles`/`steps` field is cumulative since
         // midnight, so the first reading we see in a file is a snapshot of work
@@ -174,10 +174,10 @@ public struct MonitoringFITParser: Sendable {
         // The field is named `steps` in summary messages (where activity_type is
         // explicit) and `cycles` in streaming messages (where only CATI is set),
         // because of FIT dynamic-field renaming. Read whichever is present.
+        let rawCumulative = doubleValue(message, key: "steps")
+                        ?? doubleValue(message, key: "cycles")
         let steps: Int
-        if isStepActivity {
-            let rawCumulative = doubleValue(message, key: "steps")
-                            ?? doubleValue(message, key: "cycles") ?? 0
+        if let rawCumulative {
             let cumulative = Int(rawCumulative * Double(Self.stridesToStepsFactor))
             if let prev = lastCycles[activityType] {
                 steps = cumulative >= prev ? cumulative - prev : cumulative

@@ -10,12 +10,24 @@ struct SleepNightCard: View {
         session.endDate.timeIntervalSince(session.startDate)
     }
 
+    /// Stages restricted to the trimmed `[startDate, endDate]` window with any
+    /// leading/trailing awake removed — the persisted stage array still carries
+    /// the raw FIT records, so we trim at render time.
+    private var visibleStages: [SleepStage] {
+        let inBounds = session.stages
+            .filter { $0.endDate > session.startDate && $0.startDate < session.endDate }
+            .sorted { $0.startDate < $1.startDate }
+        let leadingTrimmed = inBounds.drop(while: { $0.stage == .awake })
+        var trimmed = Array(leadingTrimmed)
+        while trimmed.last?.stage == .awake { trimmed.removeLast() }
+        return trimmed
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
             durationLine
-            SleepTimelineBar(stages: session.stages, height: 28)
-            legend
+            barAndLegend
         }
         .padding(16)
         .background {
@@ -57,27 +69,35 @@ struct SleepNightCard: View {
         }
     }
 
+    private var barAndLegend: some View {
+        HStack(alignment: .center, spacing: 14) {
+            SleepTimelineBar(stages: visibleStages, height: 56)
+                .frame(maxWidth: .infinity)
+            legend
+                .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+
     private var legend: some View {
         let durations = Dictionary(uniqueKeysWithValues:
-            SleepStageColor.displayOrder.map { ($0, session.stages.duration(for: $0)) }
+            SleepStageColor.displayOrder.map { ($0, visibleStages.duration(for: $0)) }
         )
-        return HStack(spacing: 14) {
+        return VStack(alignment: .leading, spacing: 4) {
             ForEach(SleepStageColor.displayOrder, id: \.self) { stage in
                 let dur = durations[stage] ?? 0
                 if dur > 0 {
                     HStack(spacing: 5) {
                         RoundedRectangle(cornerRadius: 2)
                             .fill(SleepStageColor.color(for: stage))
-                            .frame(width: 10, height: 10)
+                            .frame(width: 8, height: 8)
                         Text(stage.displayName)
-                            .font(.caption)
+                            .font(.caption2)
                             .foregroundStyle(.secondary)
                         Text(formatDuration(dur))
-                            .font(.caption.weight(.semibold).monospacedDigit())
+                            .font(.caption2.weight(.semibold).monospacedDigit())
                     }
                 }
             }
-            Spacer(minLength: 0)
         }
     }
 

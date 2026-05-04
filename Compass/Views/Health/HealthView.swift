@@ -20,8 +20,8 @@ struct HealthView: View {
     @Query(sort: \StressSample.timestamp)
     private var allStress: [StressSample]
 
-    @Query(sort: \StepSample.timestamp)
-    private var allStepSamples: [StepSample]
+    @Query(sort: \StepCount.date)
+    private var allStepCounts: [StepCount]
 
     @Query(sort: \IntensitySample.timestamp)
     private var allIntensity: [IntensitySample]
@@ -53,19 +53,12 @@ struct HealthView: View {
         allStress.map { TrendDataPoint(date: $0.timestamp, value: Double($0.stressScore)) }
     }
 
-    /// Hourly step bins from StepSample — works for Day view (per-hour) and
-    /// Week/Month/Year (makeTrendBuckets aggregates to daily totals automatically).
+    /// Daily step totals from `StepCount` — the same authoritative source the Today
+    /// vitals chit uses. Per-minute step counts proved unreliable on the Instinct
+    /// (intervals are sparse and the cumulative resets land at midnight), so all
+    /// ranges aggregate from the day rollups.
     private var stepsData: [TrendDataPoint] {
-        let cal = Calendar.current
-        let grouped = Dictionary(grouping: allStepSamples) { sample in
-            cal.dateInterval(of: .hour, for: sample.timestamp)?.start
-                ?? cal.startOfDay(for: sample.timestamp)
-        }
-        return grouped
-            .map { hourStart, samples in
-                TrendDataPoint(date: hourStart, value: Double(samples.reduce(0) { $0 + $1.steps }))
-            }
-            .sorted { $0.date < $1.date }
+        allStepCounts.map { TrendDataPoint(date: $0.date, value: Double($0.steps)) }
     }
 
     /// Per-minute intensity samples bucketed hourly so Day view shows minutes/hour
@@ -218,7 +211,7 @@ struct HealthView: View {
             SleepSession.self,
             SleepStage.self,
             StressSample.self,
-            StepSample.self,
+            StepCount.self,
             IntensitySample.self,
             SpO2Sample.self,
         ], inMemory: true)

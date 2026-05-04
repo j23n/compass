@@ -13,6 +13,7 @@ struct VitalsMetric {
 /// Compact 2-column grid of today's key vitals.
 struct VitalsGridView: View {
     let heartRate: VitalsMetric
+    let restingHeartRate: VitalsMetric
     let stress: VitalsMetric
     let steps: VitalsMetric
     let activeMinutes: VitalsMetric
@@ -21,6 +22,7 @@ struct VitalsGridView: View {
     var body: some View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
             heartRateCard
+            restingHeartRateCard
             stressCard
             stepsCard
             activeMinutesCard
@@ -41,12 +43,40 @@ struct VitalsGridView: View {
                 valueFormatter: { "\(Int($0)) bpm" }
             )
         } label: {
-            cardShell(icon: "heart.fill", label: "Heart Rate", color: .red) {
+            cardShell(
+                icon: "heart.fill", label: "Heart Rate", color: .red,
+                chart: heartRate.windowSamples.isEmpty
+                    ? nil
+                    : AnyView(miniChart(for: heartRate, style: .line(color: .red)))
+            ) {
                 metricValue(heartRate.current.map { "\($0)" }, unit: "bpm")
                 readingLine(for: heartRate)
-                chartSlot(!heartRate.windowSamples.isEmpty) {
-                    miniChart(for: heartRate, style: .line(color: .red))
-                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Resting Heart Rate
+
+    private var restingHeartRateCard: some View {
+        NavigationLink {
+            HealthDetailView(
+                metricTitle: "Resting Heart Rate",
+                metricUnit: "bpm",
+                color: .pink,
+                icon: "heart.text.square.fill",
+                data: restingHeartRate.history,
+                valueFormatter: { "\(Int($0)) bpm" }
+            )
+        } label: {
+            cardShell(
+                icon: "heart.text.square.fill", label: "Resting HR", color: .pink,
+                chart: restingHeartRate.windowSamples.isEmpty
+                    ? nil
+                    : AnyView(miniChart(for: restingHeartRate, style: .line(color: .pink)))
+            ) {
+                metricValue(restingHeartRate.current.map { "\($0)" }, unit: "bpm")
+                readingLine(for: restingHeartRate)
             }
         }
         .buttonStyle(.plain)
@@ -65,12 +95,14 @@ struct VitalsGridView: View {
                 valueFormatter: { "\(Int($0))" }
             )
         } label: {
-            cardShell(icon: "brain.head.profile", label: "Stress", color: .orange) {
+            cardShell(
+                icon: "brain.head.profile", label: "Stress", color: .orange,
+                chart: stress.windowSamples.isEmpty
+                    ? nil
+                    : AnyView(miniChart(for: stress, style: .line(color: .orange)))
+            ) {
                 metricValue(stress.current.map { "\($0)" }, unit: nil)
                 readingLine(for: stress)
-                chartSlot(!stress.windowSamples.isEmpty) {
-                    miniChart(for: stress, style: .line(color: .orange))
-                }
             }
         }
         .buttonStyle(.plain)
@@ -95,15 +127,12 @@ struct VitalsGridView: View {
                 }
             )
         } label: {
-            cardShell(icon: "figure.walk", label: "Steps", color: .green) {
+            cardShell(icon: "figure.walk", label: "Steps", color: .green, chart: nil) {
                 metricValue(steps.current.map { $0 >= 1000
                     ? String(format: "%.1fk", Double($0) / 1000)
                     : "\($0)"
                 }, unit: nil)
                 readingLine(for: steps)
-                chartSlot(!steps.windowSamples.isEmpty) {
-                    miniChart(for: steps, style: .bars(color: .green))
-                }
             }
         }
         .buttonStyle(.plain)
@@ -123,12 +152,14 @@ struct VitalsGridView: View {
                 valueFormatter: { "\(Int($0)) min" }
             )
         } label: {
-            cardShell(icon: "figure.run", label: "Active Min", color: .teal) {
+            cardShell(
+                icon: "figure.run", label: "Active Min", color: .teal,
+                chart: activeMinutes.windowSamples.isEmpty
+                    ? nil
+                    : AnyView(miniChart(for: activeMinutes, style: .bars(color: .teal)))
+            ) {
                 metricValue(activeMinutes.current.map { "\($0)" }, unit: "min")
                 readingLine(for: activeMinutes)
-                chartSlot(!activeMinutes.windowSamples.isEmpty) {
-                    miniChart(for: activeMinutes, style: .bars(color: .teal))
-                }
             }
         }
         .buttonStyle(.plain)
@@ -147,12 +178,14 @@ struct VitalsGridView: View {
                 valueFormatter: { "\(Int($0))%" }
             )
         } label: {
-            cardShell(icon: "lungs.fill", label: "Blood Oxygen", color: .cyan) {
+            cardShell(
+                icon: "lungs.fill", label: "Blood Oxygen", color: .cyan,
+                chart: spo2.windowSamples.isEmpty
+                    ? nil
+                    : AnyView(miniChart(for: spo2, style: .line(color: .cyan)))
+            ) {
                 metricValue(spo2.current.map { "\($0)" }, unit: "%")
                 readingLine(for: spo2)
-                chartSlot(!spo2.windowSamples.isEmpty) {
-                    miniChart(for: spo2, style: .line(color: .cyan))
-                }
             }
         }
         .buttonStyle(.plain)
@@ -160,9 +193,12 @@ struct VitalsGridView: View {
 
     // MARK: - Shared card shell
 
+    /// Shell with icon/label header on top, then a horizontal row that places the
+    /// value/timestamp text on the left and (when present) a chart on the right.
     @ViewBuilder
     private func cardShell<Content: View>(
         icon: String, label: String, color: Color,
+        chart: AnyView?,
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -170,12 +206,18 @@ struct VitalsGridView: View {
                 Image(systemName: icon).font(.caption).foregroundStyle(color)
                 Text(label).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
-            VStack(alignment: .leading, spacing: 4) {
-                content()
+            HStack(alignment: .center, spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
+                    content()
+                }
+                .layoutPriority(1)
+                if let chart {
+                    chart
+                        .frame(maxWidth: .infinity, minHeight: 36, maxHeight: 36)
+                }
             }
-            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, minHeight: 94, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .padding(12)
         .background {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -216,16 +258,6 @@ struct VitalsGridView: View {
                     .lineLimit(1)
             }
         }
-    }
-
-    /// Fixed-height slot that shows the chart when data is present, or a clear
-    /// placeholder when it isn't — keeps all cards the same height.
-    @ViewBuilder
-    private func chartSlot<Chart: View>(_ hasData: Bool, @ViewBuilder chart: () -> Chart) -> some View {
-        Group {
-            if hasData { chart() } else { Color.clear }
-        }
-        .frame(height: 24)
     }
 
     private func miniChart(for metric: VitalsMetric, style: MiniWindowChart.Style) -> some View {
