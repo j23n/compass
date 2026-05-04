@@ -41,6 +41,104 @@ public struct SleepStageResult: Sendable {
         self.endDate = endDate
         self.stage = stage
     }
+
+    /// Extracts the dominant real-sleep window from a sorted stage array.
+    ///
+    /// The Instinct Solar 1G emits many short "sleep" files per day during low-motion
+    /// periods that aren't actually sleep. The distinguishing signal is sleep
+    /// architecture: real sleep cycles through deep stages, while watch
+    /// false-positives on quiet wakefulness produce light/rem without ever entering
+    /// deep. This algorithm:
+    ///
+    /// 1. Splits stages into blocks separated by sustained awake gaps
+    ///    (≥ `blockSplitGapMinutes`); short awake interruptions stay in the block.
+    /// 2. Each block's bounds are trimmed to the first/last non-awake stage.
+    /// 3. Filters blocks against quality thresholds (duration, deep minutes,
+    ///    awake fraction).
+    /// 4. Returns the block with the most non-awake minutes; `nil` if none qualify.
+    ///
+    /// - Parameters:
+    ///   - stages: Stages sorted ascending by `startDate`.
+    ///   - blockSplitGapMinutes: An awake stretch this long or longer ends one
+    ///     candidate block and starts a new one.
+    ///   - minBlockDurationMinutes: Trimmed block duration (first→last non-awake)
+    ///     must be at least this long.
+    ///   - minDeepMinutes: A real sleep block must contain at least this many
+    ///     minutes of deep sleep. This is the key noise filter — quiet-wake
+    ///     misclassifications produce light/rem but rarely deep.
+    ///   - maxAwakeFraction: Awake minutes within the trimmed window may not exceed
+    ///     this fraction of total within-window minutes.
+    /// - Returns: `(start, end)` for the best-qualifying sleep block, or `nil`.
+    public static func trimmedBounds(
+        stages: [SleepStageResult],
+        blockSplitGapMinutes: Int = 60,
+        minBlockDurationMinutes: Int = 30,
+        minDeepMinutes: Int = 1,
+        maxAwakeFraction: Double = 0.6
+    ) -> (start: Date, end: Date)? {
+        guard !stages.isEmpty else { return nil }
+
+        let blockSplitGap = TimeInterval(blockSplitGapMinutes * 60)
+        let minBlockDur = TimeInterval(minBlockDurationMinutes * 60)
+        let minDeep = TimeInterval(minDeepMinutes * 60)
+
+        struct Block {
+            var start: Date
+            var end: Date
+            var awake: TimeInterval = 0
+            var light: TimeInterval = 0
+            var deep: TimeInterval = 0
+            var rem: TimeInterval = 0
+            var nonAwake: TimeInterval { light + deep + rem }
+        }
+
+        var blocks: [Block] = []
+        var current: Block?
+        // Awake duration accumulated since the last non-awake stage in `current`.
+        // Committed to current.awake when the next non-awake stage extends the block;
+        // discarded if the block closes (so trailing awake doesn't pollute the window).
+        var awakePending: TimeInterval = 0
+
+        for s in stages {
+            let dur = s.endDate.timeIntervalSince(s.startDate)
+            if s.stage == .awake {
+                guard current != nil else { continue }      // ignore leading awake
+                awakePending += dur
+                if awakePending >= blockSplitGap {
+                    blocks.append(current!)
+                    current = nil
+                    awakePending = 0
+                }
+            } else {
+                if current == nil {
+                    current = Block(start: s.startDate, end: s.endDate)
+                } else {
+                    current!.awake += awakePending
+                }
+                awakePending = 0
+                current!.end = s.endDate
+                switch s.stage {
+                case .light: current!.light += dur
+                case .deep:  current!.deep  += dur
+                case .rem:   current!.rem   += dur
+                case .awake: break
+                }
+            }
+        }
+        if let c = current { blocks.append(c) }
+
+        let qualifying = blocks.filter { b in
+            let dur = b.end.timeIntervalSince(b.start)
+            guard dur >= minBlockDur else { return false }
+            guard b.deep >= minDeep else { return false }
+            let total = b.awake + b.nonAwake
+            guard total > 0 else { return false }
+            return b.awake / total <= maxAwakeFraction
+        }
+
+        guard let main = qualifying.max(by: { $0.nonAwake < $1.nonAwake }) else { return nil }
+        return (main.start, main.end)
+    }
 }
 
 /// Parses Garmin `/GARMIN/Sleep/*.fit` files into sleep session data.
@@ -83,7 +181,7 @@ public struct SleepFITParser: Sendable {
             switch message.messageType {
             case .sleep_data_info:
                 if sessionStart == nil,
-                   let ts = message.interpretedField(key: "timestamp")?.time {
+                   let ts = FITTimestamp.resolve(message) {
                     sessionStart = ts
                 }
 
@@ -98,12 +196,12 @@ public struct SleepFITParser: Sendable {
                 }
 
             case Self.sleepSessionEnd:
-                if let ts = message.interpretedField(key: "timestamp")?.time {
+                if let ts = FITTimestamp.resolve(message) {
                     sessionEnd = ts
                 }
 
             case .sleep_assessment:
-                assessmentTimestamp = message.interpretedField(key: "timestamp")?.time
+                assessmentTimestamp = FITTimestamp.resolve(message)
                 if let v = message.interpretedField(key: "overall_sleep_score")?.value, v > 0 {
                     overallScore = Int(v)
                 }
@@ -166,7 +264,7 @@ public struct SleepFITParser: Sendable {
     // MARK: - Private helpers
 
     private func parseSleepStage(from message: FitMessage) -> (timestamp: Date, stage: SleepStageType)? {
-        guard let timestamp = message.interpretedField(key: "timestamp")?.time,
+        guard let timestamp = FITTimestamp.resolve(message),
               let name = message.interpretedField(key: "sleep_level")?.name,
               let stage = mapSleepStageString(name) else {
             return nil
@@ -240,7 +338,7 @@ public struct SleepFITParser: Sendable {
 
         for message in fitFile.messages where message.messageType == .sleep_data_raw {
             let name = message.interpretedField(key: "sleep_level")?.name
-            let ts = message.interpretedField(key: "timestamp")?.time
+            let ts = FITTimestamp.resolve(message)
 
             if let name, let stage = mapSleepStageString(name), let ts {
                 results.append((timestamp: ts, stage: stage))
