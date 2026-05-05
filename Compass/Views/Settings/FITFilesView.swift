@@ -1,10 +1,14 @@
 import SwiftUI
 
+private struct ShareItemsBox: Identifiable {
+    let id = UUID()
+    let urls: [URL]
+}
+
 struct FITFilesView: View {
     @Environment(SyncCoordinator.self) private var syncCoordinator
     @State private var files: [FITFileStore.StoredFile] = []
-    @State private var showShareSheet = false
-    @State private var shareItems: [URL] = []
+    @State private var shareItems: ShareItemsBox?
     @State private var selectedFiles: Set<UUID> = []
     @State private var isSelectionMode = false
 
@@ -52,8 +56,8 @@ struct FITFilesView: View {
                         }
                     }
                 }
-                .sheet(isPresented: $showShareSheet) {
-                    ActivityView(items: shareItems)
+                .sheet(item: $shareItems) { box in
+                    ActivityView(items: box.urls)
                 }
                 .onAppear {
                     refreshFiles()
@@ -164,8 +168,7 @@ struct FITFilesView: View {
         if selectedUrls.isEmpty { return }
 
         FileArchive.shareMultipleFiles(selectedUrls, archiveName: "fit-files") { urlsToShare in
-            shareItems = urlsToShare
-            showShareSheet = true
+            shareItems = ShareItemsBox(urls: urlsToShare)
         }
     }
 

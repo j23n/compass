@@ -1,9 +1,13 @@
 import SwiftUI
 
+private struct ShareItemsBox: Identifiable {
+    let id = UUID()
+    let urls: [URL]
+}
+
 struct CourseFilesView: View {
     @State private var files: [CourseFileStore.StoredFile] = []
-    @State private var showShareSheet = false
-    @State private var shareItems: [URL] = []
+    @State private var shareItems: ShareItemsBox?
     @State private var selectedFiles: Set<UUID> = []
     @State private var isSelectionMode = false
 
@@ -44,8 +48,8 @@ struct CourseFilesView: View {
                         }
                     }
                 }
-                .sheet(isPresented: $showShareSheet) {
-                    ActivityView(items: shareItems)
+                .sheet(item: $shareItems) { box in
+                    ActivityView(items: box.urls)
                 }
                 .onAppear {
                     refreshFiles()
@@ -142,16 +146,14 @@ struct CourseFilesView: View {
         if selectedUrls.isEmpty { return }
         
         FileArchive.shareMultipleFiles(selectedUrls, archiveName: "course-files") { urlsToShare in
-            shareItems = urlsToShare
-            showShareSheet = true
+            shareItems = ShareItemsBox(urls: urlsToShare)
         }
     }
-    
+
     private func shareAllFiles() {
         let allUrls = files.map { $0.url }
         FileArchive.shareMultipleFiles(allUrls, archiveName: "course-files-all") { urlsToShare in
-            shareItems = urlsToShare
-            showShareSheet = true
+            shareItems = ShareItemsBox(urls: urlsToShare)
         }
     }
     
