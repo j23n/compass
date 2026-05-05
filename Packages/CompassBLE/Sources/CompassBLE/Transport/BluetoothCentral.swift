@@ -93,7 +93,7 @@ public actor BluetoothCentral {
     private var discoveryCharacteristicContinuation: CheckedContinuation<Void, Error>?
 
     /// One pending write — the data we'll hand to `peripheral.writeValue`
-    /// plus the continuation we resume when its `didWriteValueFor` fires.
+    /// plus the continuation we resume once iOS accepts the bytes.
     private struct PendingWrite {
         let data: Data
         let continuation: CheckedContinuation<Void, Error>
@@ -106,16 +106,8 @@ public actor BluetoothCentral {
     /// loses the race forever).
     private var writeQueue: [PendingWrite] = []
 
-    /// The write currently in flight (its `writeValue` has been called and
-    /// we're awaiting `didWriteValueFor`). Nil while idle.
-    private var inflightWrite: PendingWrite?
-
     /// Powered-on continuation — resumed when CBCentralManager reports .poweredOn.
     private var poweredOnContinuation: CheckedContinuation<Void, Error>?
-
-    /// Continuations awaiting `peripheralIsReady(toSendWriteWithoutResponse:)`.
-    /// We use a list because multiple concurrent writes could be queued.
-    private var writeReadyContinuations: [CheckedContinuation<Void, Never>] = []
 
     /// Called after an unexpected BLE disconnect so upper layers can update state.
     private var disconnectHandler: (@Sendable (Error?) -> Void)?
@@ -261,8 +253,6 @@ public actor BluetoothCentral {
         // Resume any pending continuations with a cancellation error so we
         // don't leak them across sessions (which triggers the runtime's
         // "SWIFT TASK CONTINUATION MISUSE" warning on the next attempt).
-        inflightWrite?.continuation.resume(throwing: PairingError.deviceNotFound)
-        inflightWrite = nil
         let queued = writeQueue
         writeQueue.removeAll()
         for w in queued { w.continuation.resume(throwing: PairingError.deviceNotFound) }
@@ -272,11 +262,6 @@ public actor BluetoothCentral {
         discoveryServiceContinuation = nil
         discoveryCharacteristicContinuation?.resume(throwing: PairingError.deviceNotFound)
         discoveryCharacteristicContinuation = nil
-        // Wake any tasks blocked on TX back-pressure — they'll see the
-        // disconnected peripheral on their next attempt and bail.
-        let waiters = writeReadyContinuations
-        writeReadyContinuations.removeAll()
-        for c in waiters { c.resume() }
     }
 
     // MARK: - Service Discovery
@@ -381,57 +366,61 @@ public actor BluetoothCentral {
 
     /// Write data to the write characteristic (phone → watch).
     ///
-    /// Always uses `.withoutResponse`. The Garmin send characteristic only
-    /// declares `Write Without Response` in its GATT properties, so the
-    /// watch firmware never emits an ATT Write Response PDU — using
-    /// `.withResponse` would suspend on `didWriteValueFor` indefinitely.
-    /// Gadgetbridge takes the same approach on Android (writeType is read
-    /// from the characteristic, which advertises `WRITE_TYPE_NO_RESPONSE`).
+    /// Uses `.withoutResponse`: the Garmin send characteristic only declares
+    /// `Write Without Response` in its GATT properties, and the watch firmware
+    /// never emits an ATT Write Response PDU — using `.withResponse` makes
+    /// every fragment block ~1 s waiting for a response that arrives slowly
+    /// or not at all. Gadgetbridge takes the same approach on Android.
+    /// Backpressure: drain only while `canSendWriteWithoutResponse` is true,
+    /// then wait for `peripheralIsReady(toSendWriteWithoutResponse:)`.
     /// See `docs/gadgetbridge-instinct-pairing.md` §2.
     public func write(data: Data) async throws {
         guard connectedPeripheral != nil, writeCharacteristic != nil else {
             throw PairingError.deviceNotFound
         }
 
-        // Append to the write queue and wait. Actual `peripheral.writeValue`
-        // happens in `pumpWriteQueue()`, which fires one write at a time
-        // and waits for `didWriteValueFor` before starting the next.
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             self.writeQueue.append(PendingWrite(data: data, continuation: continuation))
             self.pumpWriteQueue()
         }
     }
 
-    /// If there's a free slot and a queued write, dispatch it.
+    /// Drain the queue while CoreBluetooth can accept writes-without-response.
+    /// Once `canSendWriteWithoutResponse` is false, stops and waits for
+    /// `peripheralIsReady(toSendWriteWithoutResponse:)` to wake us up.
     private func pumpWriteQueue() {
-        guard inflightWrite == nil, let next = writeQueue.first else { return }
-        guard let peripheral = connectedPeripheral, let characteristic = writeCharacteristic else {
-            // Connection went away — fail every pending write so callers don't hang.
-            let queued = writeQueue
-            writeQueue.removeAll()
-            for w in queued { w.continuation.resume(throwing: PairingError.deviceNotFound) }
-            return
-        }
-        writeQueue.removeFirst()
-        inflightWrite = next
+        while let next = writeQueue.first {
+            guard let peripheral = connectedPeripheral, let characteristic = writeCharacteristic else {
+                // Connection went away — fail every pending write so callers don't hang.
+                let queued = writeQueue
+                writeQueue.removeAll()
+                for w in queued { w.continuation.resume(throwing: PairingError.deviceNotFound) }
+                return
+            }
+            guard peripheral.canSendWriteWithoutResponse else {
+                // Backpressure — wait for peripheralIsReady to drain again.
+                return
+            }
 
-        BLELogger.transport.debug("Writing \(next.data.count) bytes to \(characteristic.uuid)")
-        if next.data.count <= 32 {
-            BLELogger.transport.debug("Write data hex: \(next.data.map { String(format: "%02X", $0) }.joined())")
-        } else {
-            let prefix = next.data.prefix(32).map { String(format: "%02X", $0) }.joined()
-            BLELogger.transport.debug("Write data hex (first 32): \(prefix)...")
+            writeQueue.removeFirst()
+            BLELogger.transport.debug("Writing \(next.data.count) bytes to \(characteristic.uuid)")
+            if next.data.count <= 32 {
+                BLELogger.transport.debug("Write data hex: \(next.data.map { String(format: "%02X", $0) }.joined())")
+            } else {
+                let prefix = next.data.prefix(32).map { String(format: "%02X", $0) }.joined()
+                BLELogger.transport.debug("Write data hex (first 32): \(prefix)...")
+            }
+            peripheral.writeValue(next.data, for: characteristic, type: .withoutResponse)
+            // .withoutResponse: no callback fires; bytes are accepted into the
+            // OS BLE stack synchronously. Resume the caller now.
+            next.continuation.resume()
         }
-        peripheral.writeValue(next.data, for: characteristic, type: .withResponse)
     }
 
     /// Called from the CB delegate when `peripheralIsReady(toSendWriteWithoutResponse:)`
-    /// fires. (Kept for completeness — we don't currently use
-    /// `.withoutResponse`, so this never fires in practice.)
+    /// fires — backpressure has cleared, so resume draining the write queue.
     func didBecomeReadyToWrite() {
-        let waiters = writeReadyContinuations
-        writeReadyContinuations.removeAll()
-        for c in waiters { c.resume() }
+        pumpWriteQueue()
     }
 
     /// Get the stream of notification data from the watch.
@@ -529,8 +518,6 @@ public actor BluetoothCentral {
         notificationContinuation = nil
 
         // Fail any in-flight continuations so callers don't hang indefinitely.
-        inflightWrite?.continuation.resume(throwing: error ?? PairingError.deviceNotFound)
-        inflightWrite = nil
         let queued = writeQueue
         writeQueue.removeAll()
         for w in queued { w.continuation.resume(throwing: error ?? PairingError.deviceNotFound) }
@@ -540,9 +527,6 @@ public actor BluetoothCentral {
         discoveryServiceContinuation = nil
         discoveryCharacteristicContinuation?.resume(throwing: error ?? PairingError.deviceNotFound)
         discoveryCharacteristicContinuation = nil
-        let waiters = writeReadyContinuations
-        writeReadyContinuations.removeAll()
-        for c in waiters { c.resume() }
         disconnectHandler?(error)
     }
 
@@ -585,19 +569,6 @@ public actor BluetoothCentral {
         }
     }
 
-    func didWriteValue(error: Error?) {
-        let completed = inflightWrite
-        inflightWrite = nil
-        if let error {
-            BLELogger.transport.error("Write failed: \(error.localizedDescription)")
-            completed?.continuation.resume(throwing: error)
-        } else {
-            BLELogger.transport.debug("Write succeeded")
-            completed?.continuation.resume()
-        }
-        // Drain the next pending write, if any.
-        pumpWriteQueue()
-    }
 }
 
 // MARK: - Delegate Adapter
@@ -662,10 +633,6 @@ private final class CentralManagerDelegateAdapter: NSObject, CBCentralManagerDel
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: (any Error)?) {
         guard let data = characteristic.value else { return }
         Task { await self.central?.didReceiveNotification(data: data) }
-    }
-
-    func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: (any Error)?) {
-        Task { await self.central?.didWriteValue(error: error) }
     }
 
     func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
