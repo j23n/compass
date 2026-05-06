@@ -26,6 +26,9 @@ struct TodayView: View {
     @Query(sort: \StressSample.timestamp)
     private var allStress: [StressSample]
 
+    @Query(sort: \StepCount.date)
+    private var allStepCounts: [StepCount]
+
     @Query(sort: \StepSample.timestamp)
     private var allStepSamples: [StepSample]
 
@@ -142,18 +145,20 @@ struct TodayView: View {
 
     // MARK: - Steps
 
-    /// Steps come from per-record `StepSample` deltas, not the daily `StepCount`
-    /// roll-ups: the per-sample stream is what HealthDetailView's Day chart
-    /// renders, and using it here keeps Today's total consistent with that
-    /// click-through. Note: Instinct sometimes drops file-boundary snapshots,
-    /// so a fragmented day's total can be lower than the device-reported daily
-    /// count.
+    /// Steps mix two sources by design:
+    ///   - Daily totals (chit value, week history, Day-graph header) come from
+    ///     `StepCount`, which is sourced from the firmware's end-of-day summary
+    ///     and matches the watch's display.
+    ///   - Intra-day distribution (Day-graph bars, last-4-hours mini-chart)
+    ///     comes from per-record `StepSample` deltas. Capture is patchy on
+    ///     fragmented-file days, so the bars can sum to less than the chit;
+    ///     that's expected and the header (which uses `data`, not `dayData`)
+    ///     stays watch-accurate regardless.
     private var stepsMetric: VitalsMetric {
         let cal = Calendar.current
-        let weekly = allStepSamples.filter { $0.timestamp >= weekAgo }
-        let grouped = Dictionary(grouping: weekly) { cal.startOfDay(for: $0.timestamp) }
-        let history = grouped
-            .map { day, samples in TrendDataPoint(date: day, value: Double(samples.reduce(0) { $0 + $1.steps })) }
+        let history = allStepCounts
+            .filter { $0.date >= weekAgo }
+            .map { TrendDataPoint(date: $0.date, value: Double($0.steps)) }
             .sorted { $0.date < $1.date }
 
         let dayHistory = allStepSamples.map { TrendDataPoint(date: $0.timestamp, value: Double($0.steps)) }
@@ -169,8 +174,8 @@ struct TodayView: View {
             return (start, Double(sum))
         }
 
-        let total = allStepSamples
-            .filter { $0.timestamp >= startOfToday }
+        let total = allStepCounts
+            .filter { $0.date >= startOfToday }
             .reduce(0) { $0 + $1.steps }
         let lastReadingAt = allStepSamples.last?.timestamp
         return VitalsMetric(

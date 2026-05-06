@@ -10,6 +10,11 @@ struct HealthDetailView: View {
     var color: Color = .blue
     var icon: String = "heart.fill"
     let data: [TrendDataPoint]      // all historical data — detail view filters internally
+    /// Per-sample source for the Day chart. Used in place of `data` when the
+    /// selected range is `.day`, so metrics whose `data` is a daily roll-up
+    /// (one entry per day at midnight, e.g. `StepCount`) can still render an
+    /// hourly distribution from finer-grained samples (e.g. `StepSample`).
+    var dayData: [TrendDataPoint]? = nil
     var useBarChart: Bool = false
     var initialRange: TrendTimeRange = .week
     var valueFormatter: @Sendable (Double) -> String = { String(format: "%.0f", $0) }
@@ -17,15 +22,18 @@ struct HealthDetailView: View {
     @State private var selectedRange: TrendTimeRange
     @State private var offset: Int = 0
     @State private var selectedBucket: TrendBucket?
+    @State private var showingTotalInfo: Bool = false
 
     init(metricTitle: String, metricUnit: String, color: Color = .blue, icon: String = "heart.fill",
-         data: [TrendDataPoint], useBarChart: Bool = false, initialRange: TrendTimeRange = .week,
+         data: [TrendDataPoint], dayData: [TrendDataPoint]? = nil,
+         useBarChart: Bool = false, initialRange: TrendTimeRange = .week,
          valueFormatter: @escaping @Sendable (Double) -> String = { String(format: "%.0f", $0) }) {
         self.metricTitle = metricTitle
         self.metricUnit = metricUnit
         self.color = color
         self.icon = icon
         self.data = data
+        self.dayData = dayData
         self.useBarChart = useBarChart
         self.initialRange = initialRange
         self.valueFormatter = valueFormatter
@@ -38,7 +46,8 @@ struct HealthDetailView: View {
 
     private var filteredData: [TrendDataPoint] {
         let r = activeDateRange
-        return data.filter { r.contains($0.date) }
+        let source = (selectedRange == .day ? (dayData ?? data) : data)
+        return source.filter { r.contains($0.date) }
     }
 
     private var buckets: [TrendBucket] {
@@ -126,12 +135,28 @@ struct HealthDetailView: View {
             : (buckets.max(by: { $0.high < $1.high })?.high ?? 0)
     }
 
+    /// Sum of `data` (the period rollup, *not* `dayData`) within the active
+    /// range — used for the Day-graph header on sum-shaped metrics so it shows
+    /// the authoritative day total even when bars come from a finer-grained
+    /// `dayData` source whose deltas can undercount (e.g. StepSample).
+    private var dayTotalFromData: Double {
+        let r = activeDateRange
+        return data.filter { r.contains($0.date) }.map(\.value).reduce(0, +)
+    }
+
     private var headerValue: String {
-        return selectedBucket.map { valueFormatter($0.display) }
-            ?? (selectedRange == .day
-                ? dayHourBuckets.last.map { valueFormatter($0.display) }
-                : buckets.last.map { valueFormatter($0.display) })
-            ?? "--"
+        if let bucket = selectedBucket {
+            return valueFormatter(bucket.display)
+        }
+        if selectedRange == .day {
+            // Sum metrics: show day total from `data` (watch-accurate).
+            // Range metrics: show the latest hourly bucket (e.g. recent HR).
+            if useBarChart {
+                return valueFormatter(dayTotalFromData)
+            }
+            return dayHourBuckets.last.map { valueFormatter($0.display) } ?? "--"
+        }
+        return buckets.last.map { valueFormatter($0.display) } ?? "--"
     }
 
     private var headerDate: Date? { selectedBucket?.date }
@@ -235,10 +260,29 @@ struct HealthDetailView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(headerValue)
-                    .font(.largeTitle).fontWeight(.bold).foregroundStyle(.primary)
-                    .contentTransition(.numericText())
-                    .animation(.easeInOut(duration: 0.15), value: headerDate)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(headerValue)
+                        .font(.largeTitle).fontWeight(.bold).foregroundStyle(.primary)
+                        .contentTransition(.numericText())
+                        .animation(.easeInOut(duration: 0.15), value: headerDate)
+                    if showsTotalDiscrepancyHint {
+                        Button {
+                            showingTotalInfo = true
+                        } label: {
+                            Image(systemName: "info.circle")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("About this number")
+                        .popover(isPresented: $showingTotalInfo,
+                                 attachmentAnchor: .point(.bottom),
+                                 arrowEdge: .top) {
+                            totalInfoCallout
+                                .presentationCompactAdaptation(.popover)
+                        }
+                    }
+                }
 
                 if let d = headerDate {
                     Text(d, format: calloutFormat)
@@ -250,6 +294,26 @@ struct HealthDetailView: View {
             }
             Spacer()
         }
+    }
+
+    /// True when the day-total in the header comes from a different source than
+    /// the bars below it (i.e. `data` is the watch-accurate rollup, `dayData`
+    /// drives the bars). The (i) explains why bar sums may not match the total.
+    private var showsTotalDiscrepancyHint: Bool {
+        selectedRange == .day && useBarChart && dayData != nil && selectedBucket == nil
+    }
+
+    private var totalInfoCallout: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("About this total")
+                .font(.subheadline).fontWeight(.semibold)
+            Text("The number above is the watch's end-of-day total for \(metricTitle.lowercased()). The bars below show per-record samples for finer time-of-day distribution — capture is sometimes patchy, so the bars may sum to less than the total.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(14)
+        .frame(maxWidth: 280, alignment: .leading)
     }
 
     // MARK: - Navigation controls
