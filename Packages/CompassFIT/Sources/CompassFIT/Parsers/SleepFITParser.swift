@@ -36,6 +36,8 @@ public struct SleepStageResult: Sendable {
     public let endDate: Date
     public let stage: SleepStageType
 
+    private static let logger = Logger(subsystem: "com.compass.fit", category: "SleepValidation")
+
     public init(startDate: Date, endDate: Date, stage: SleepStageType) {
         self.startDate = startDate
         self.endDate = endDate
@@ -54,7 +56,7 @@ public struct SleepStageResult: Sendable {
     ///    (≥ `blockSplitGapMinutes`); short awake interruptions stay in the block.
     /// 2. Each block's bounds are trimmed to the first/last non-awake stage.
     /// 3. Filters blocks against quality thresholds (duration, deep minutes,
-    ///    awake fraction).
+    ///    awake fraction, longest continuous non-awake run).
     /// 4. Returns the block with the most non-awake minutes; `nil` if none qualify.
     ///
     /// - Parameters:
@@ -66,6 +68,9 @@ public struct SleepStageResult: Sendable {
     ///   - minDeepMinutes: A real sleep block must contain at least this many
     ///     minutes of deep sleep. This is the key noise filter — quiet-wake
     ///     misclassifications produce light/rem but rarely deep.
+    ///   - minContinuousNonAwakeMinutes: A real sleep block must contain at least
+    ///     one uninterrupted run of non-awake stages this long. Any awake stage
+    ///     resets the run.
     ///   - maxAwakeFraction: Awake minutes within the trimmed window may not exceed
     ///     this fraction of total within-window minutes.
     /// - Returns: `(start, end)` for the best-qualifying sleep block, or `nil`.
@@ -73,7 +78,8 @@ public struct SleepStageResult: Sendable {
         stages: [SleepStageResult],
         blockSplitGapMinutes: Int = 60,
         minBlockDurationMinutes: Int = 30,
-        minDeepMinutes: Int = 1,
+        minDeepMinutes: Int = 5,
+        minContinuousNonAwakeMinutes: Int = 30,
         maxAwakeFraction: Double = 0.6
     ) -> (start: Date, end: Date)? {
         guard !stages.isEmpty else { return nil }
@@ -81,6 +87,7 @@ public struct SleepStageResult: Sendable {
         let blockSplitGap = TimeInterval(blockSplitGapMinutes * 60)
         let minBlockDur = TimeInterval(minBlockDurationMinutes * 60)
         let minDeep = TimeInterval(minDeepMinutes * 60)
+        let minContRun = TimeInterval(minContinuousNonAwakeMinutes * 60)
 
         struct Block {
             var start: Date
@@ -89,6 +96,7 @@ public struct SleepStageResult: Sendable {
             var light: TimeInterval = 0
             var deep: TimeInterval = 0
             var rem: TimeInterval = 0
+            var longestNonAwakeRun: TimeInterval = 0
             var nonAwake: TimeInterval { light + deep + rem }
         }
 
@@ -98,10 +106,14 @@ public struct SleepStageResult: Sendable {
         // Committed to current.awake when the next non-awake stage extends the block;
         // discarded if the block closes (so trailing awake doesn't pollute the window).
         var awakePending: TimeInterval = 0
+        // Continuous non-awake duration since the last awake stage. Any awake stage
+        // resets this — even one that doesn't trigger a block split.
+        var currentRun: TimeInterval = 0
 
         for s in stages {
             let dur = s.endDate.timeIntervalSince(s.startDate)
             if s.stage == .awake {
+                currentRun = 0
                 guard current != nil else { continue }      // ignore leading awake
                 awakePending += dur
                 if awakePending >= blockSplitGap {
@@ -123,20 +135,50 @@ public struct SleepStageResult: Sendable {
                 case .rem:   current!.rem   += dur
                 case .awake: break
                 }
+                currentRun += dur
+                if currentRun > current!.longestNonAwakeRun {
+                    current!.longestNonAwakeRun = currentRun
+                }
             }
         }
         if let c = current { blocks.append(c) }
 
+        logger.debug("Validating \(blocks.count) candidate sleep block(s) from \(stages.count) stage(s)")
+
         let qualifying = blocks.filter { b in
             let dur = b.end.timeIntervalSince(b.start)
-            guard dur >= minBlockDur else { return false }
-            guard b.deep >= minDeep else { return false }
+            let stats = "block \(b.start)–\(b.end) [dur=\(Int(dur/60))m deep=\(Int(b.deep/60))m light=\(Int(b.light/60))m rem=\(Int(b.rem/60))m awake=\(Int(b.awake/60))m run=\(Int(b.longestNonAwakeRun/60))m]"
+            if dur < minBlockDur {
+                logger.debug("Reject \(stats): duration < \(minBlockDurationMinutes)m")
+                return false
+            }
+            if b.deep < minDeep {
+                logger.debug("Reject \(stats): deep < \(minDeepMinutes)m")
+                return false
+            }
+            if b.longestNonAwakeRun < minContRun {
+                logger.debug("Reject \(stats): continuous non-awake run < \(minContinuousNonAwakeMinutes)m")
+                return false
+            }
             let total = b.awake + b.nonAwake
-            guard total > 0 else { return false }
-            return b.awake / total <= maxAwakeFraction
+            guard total > 0 else {
+                logger.debug("Reject \(stats): zero total time")
+                return false
+            }
+            let frac = b.awake / total
+            if frac > maxAwakeFraction {
+                logger.debug("Reject \(stats): awake fraction \(Int(frac * 100))% > \(Int(maxAwakeFraction * 100))%")
+                return false
+            }
+            logger.debug("Accept \(stats)")
+            return true
         }
 
-        guard let main = qualifying.max(by: { $0.nonAwake < $1.nonAwake }) else { return nil }
+        guard let main = qualifying.max(by: { $0.nonAwake < $1.nonAwake }) else {
+            logger.debug("No qualifying sleep block (rejected all \(blocks.count))")
+            return nil
+        }
+        logger.debug("Selected sleep window \(main.start)–\(main.end) (non-awake \(Int(main.nonAwake/60))m)")
         return (main.start, main.end)
     }
 }
