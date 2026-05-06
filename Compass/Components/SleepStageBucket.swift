@@ -1,44 +1,44 @@
 import Foundation
 import CompassData
 
-/// One stacked segment of a `SleepStageBucket`. `low`/`high` are cumulative
-/// hours so the chart can render each segment with `BarMark(yStart:yEnd:)`.
+/// One stage interval within a `SleepStageBucket`. `startHour`/`endHour` are
+/// hours since the bucket's `anchor` (noon of the day before the bucket's date),
+/// so y-axis values fall in roughly `0...24` and align with time-of-day.
 struct SleepStageSegment: Identifiable, Sendable {
     let id = UUID()
     let stage: SleepStageType
-    let low: Double   // hours
-    let high: Double  // hours
+    let startHour: Double
+    let endHour: Double
 }
 
-/// One x-axis bucket for the sleep stage chart. Each bucket holds the total
-/// time spent in each stage during that period (in hours), pre-stacked into
-/// segments in `SleepStageColor.displayOrder`.
+/// One night's sleep, attributed to the calendar day the user woke up. The
+/// chart plots `segments` at their actual time-of-day so consistent
+/// bedtime/wake-time patterns become visible across nights.
 struct SleepStageBucket: Identifiable, Sendable {
     let id = UUID()
+    /// X-axis: the day this night "belongs to" (startOfDay of the session's endDate).
     let date: Date
-    let perStage: [SleepStageType: Double]  // hours per stage
+    /// Y-axis reference: noon of the day before `date`. `startHour=0` means
+    /// noon-yesterday, `12` is midnight, `24` is noon-today.
+    let anchor: Date
+    let segments: [SleepStageSegment]
+    let perStage: [SleepStageType: Double]   // hours per stage
+    /// Earliest non-awake startHour across the night.
+    let bedHour: Double?
+    /// Latest non-awake endHour across the night.
+    let wakeHour: Double?
 
-    var total: Double { perStage.values.reduce(0, +) }
-
+    var totalSleep: Double { perStage.values.reduce(0, +) }
     func duration(for stage: SleepStageType) -> Double { perStage[stage] ?? 0 }
 
-    var segments: [SleepStageSegment] {
-        var cum: Double = 0
-        var out: [SleepStageSegment] = []
-        for stage in SleepStageColor.displayOrder {
-            let dur = perStage[stage] ?? 0
-            guard dur > 0 else { continue }
-            out.append(SleepStageSegment(stage: stage, low: cum, high: cum + dur))
-            cum += dur
-        }
-        return out
-    }
+    var bedTime: Date? { bedHour.map { anchor.addingTimeInterval($0 * 3600) } }
+    var wakeTime: Date? { wakeHour.map { anchor.addingTimeInterval($0 * 3600) } }
 }
 
-/// Buckets sleep stage durations across `sessions` into the chart grid for
-/// `range`/`offset`. Stages are clipped to each bucket's interval, so partial
-/// overlaps (e.g. a session that starts before the bucket starts) contribute
-/// only the overlapping portion. Empty buckets are dropped.
+/// Buckets sleep sessions into one entry per night (attributed by wake-day) for
+/// the given range/offset. Each segment's `startHour`/`endHour` is the actual
+/// stage time mapped onto a 0–24 hour axis anchored at noon of the prior day.
+/// Empty days are dropped.
 func makeSleepStageBuckets(
     from sessions: [SleepSession],
     range: TrendTimeRange,
@@ -48,47 +48,78 @@ func makeSleepStageBuckets(
     let now = Date()
     let todayStart = cal.startOfDay(for: now)
 
-    let bucketStarts: [Date]
-    let unit: Calendar.Component
-    let step: Int
-
+    let days: [Date]
     switch range {
     case .day:
-        let s = cal.date(byAdding: .day, value: offset, to: todayStart)!
-        bucketStarts = (0..<24).map { cal.date(byAdding: .hour, value: $0, to: s)! }
-        unit = .hour; step = 1
+        days = [cal.date(byAdding: .day, value: offset, to: todayStart)!]
     case .week:
         let anchor = cal.date(byAdding: .day, value: offset * 7, to: todayStart)!
         let start = cal.date(byAdding: .day, value: -6, to: anchor)!
-        bucketStarts = (0..<7).map { cal.date(byAdding: .day, value: $0, to: start)! }
-        unit = .day; step = 1
+        days = (0..<7).map { cal.date(byAdding: .day, value: $0, to: start)! }
     case .month:
         let anchor = cal.date(byAdding: .day, value: offset * 30, to: todayStart)!
         let start = cal.date(byAdding: .day, value: -29, to: anchor)!
-        bucketStarts = (0..<30).map { cal.date(byAdding: .day, value: $0, to: start)! }
-        unit = .day; step = 1
+        days = (0..<30).map { cal.date(byAdding: .day, value: $0, to: start)! }
     case .year:
         let thisMonth = cal.date(from: cal.dateComponents([.year, .month], from: now))!
-        let anchor = cal.date(byAdding: .month, value: offset * 12, to: thisMonth)!
-        let start = cal.date(byAdding: .month, value: -11, to: anchor)!
-        bucketStarts = (0..<12).map { cal.date(byAdding: .month, value: $0, to: start)! }
-        unit = .month; step = 1
+        let yearAnchor = cal.date(byAdding: .month, value: offset * 12, to: thisMonth)!
+        let start = cal.date(byAdding: .month, value: -11, to: yearAnchor)!
+        let end = cal.date(byAdding: .month, value: 1, to: yearAnchor)!
+        var list: [Date] = []
+        var d = start
+        while d < end {
+            list.append(d)
+            d = cal.date(byAdding: .day, value: 1, to: d)!
+        }
+        days = list
     }
 
-    return bucketStarts.compactMap { bStart -> SleepStageBucket? in
-        let bEnd = cal.date(byAdding: unit, value: step, to: bStart)!
+    // Group sessions by wake-day so each bucket only iterates its own night(s).
+    let sessionsByDay = Dictionary(grouping: sessions) { cal.startOfDay(for: $0.endDate) }
+
+    return days.compactMap { day -> SleepStageBucket? in
+        guard let daySessions = sessionsByDay[day], !daySessions.isEmpty else { return nil }
+        let anchor = cal.date(byAdding: .hour, value: -12, to: day)!
+
+        var segments: [SleepStageSegment] = []
         var perStage: [SleepStageType: Double] = [:]
-        for session in sessions where session.endDate > bStart && session.startDate < bEnd {
+        var bedHour: Double = .infinity
+        var wakeHour: Double = -.infinity
+
+        for session in daySessions {
             for stage in session.trimmedStages {
-                let lo = max(stage.startDate, bStart)
-                let hi = min(stage.endDate, bEnd)
-                let overlap = hi.timeIntervalSince(lo)
-                if overlap > 0 {
-                    perStage[stage.stage, default: 0] += overlap / 3600.0
+                let startH = stage.startDate.timeIntervalSince(anchor) / 3600.0
+                let endH   = stage.endDate.timeIntervalSince(anchor)   / 3600.0
+                let dur = endH - startH
+                guard dur > 0 else { continue }
+                segments.append(SleepStageSegment(stage: stage.stage, startHour: startH, endHour: endH))
+                perStage[stage.stage, default: 0] += dur
+                if stage.stage != .awake {
+                    if startH < bedHour { bedHour = startH }
+                    if endH > wakeHour { wakeHour = endH }
                 }
             }
         }
-        guard !perStage.isEmpty else { return nil }
-        return SleepStageBucket(date: bStart, perStage: perStage)
+
+        guard !segments.isEmpty else { return nil }
+
+        return SleepStageBucket(
+            date: day,
+            anchor: anchor,
+            segments: segments,
+            perStage: perStage,
+            bedHour: bedHour.isFinite ? bedHour : nil,
+            wakeHour: wakeHour.isFinite ? wakeHour : nil
+        )
     }
+}
+
+/// Formats a 0–24 hour offset (anchored at noon of the previous day) as a
+/// 12-hour wall-clock label suitable for chart y-axis ticks.
+func formatSleepHour(_ hour: Double) -> String {
+    let h = ((Int(hour.rounded()) + 12) % 24 + 24) % 24
+    if h == 0 { return "12 AM" }
+    if h == 12 { return "12 PM" }
+    if h < 12 { return "\(h) AM" }
+    return "\(h - 12) PM"
 }

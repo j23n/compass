@@ -27,6 +27,7 @@ struct HealthDetailView: View {
     @State private var offset: Int = 0
     @State private var selectedBucket: TrendBucket?
     @State private var selectedSleepBucket: SleepStageBucket?
+    @State private var sleepBuckets: [SleepStageBucket] = []
     @State private var showingTotalInfo: Bool = false
 
     init(metricTitle: String, metricUnit: String, color: Color = .blue, icon: String = "heart.fill",
@@ -63,9 +64,12 @@ struct HealthDetailView: View {
         makeTrendBuckets(from: data, range: selectedRange, isSum: useBarChart, offset: offset)
     }
 
-    private var sleepBuckets: [SleepStageBucket] {
-        guard let sleepSessions else { return [] }
-        return makeSleepStageBuckets(from: sleepSessions, range: selectedRange, offset: offset)
+    /// Recomputed via `.task(id:)` whenever range/offset changes — keeps chart
+    /// rendering cheap (computed-property access fired the bucketing pass on
+    /// every render, which iterated sessions × stages × buckets each time).
+    private func recomputeSleepBuckets() {
+        guard let sleepSessions else { sleepBuckets = []; return }
+        sleepBuckets = makeSleepStageBuckets(from: sleepSessions, range: selectedRange, offset: offset)
     }
 
     // All 24 hourly slots for Day chart (empty hours included as zero bars).
@@ -160,8 +164,8 @@ struct HealthDetailView: View {
 
     private var headerValue: String {
         if sleepMode {
-            if let b = selectedSleepBucket { return valueFormatter(b.total) }
-            return sleepBuckets.last.map { valueFormatter($0.total) } ?? "--"
+            if let b = selectedSleepBucket { return valueFormatter(b.totalSleep) }
+            return sleepBuckets.last.map { valueFormatter($0.totalSleep) } ?? "--"
         }
         if let bucket = selectedBucket {
             return valueFormatter(bucket.display)
@@ -250,7 +254,7 @@ struct HealthDetailView: View {
                 navigationControls
                 chartSection
                 statisticsSection
-                if !listBuckets.isEmpty {
+                if !sleepMode, !listBuckets.isEmpty {
                     dataListSection
                 }
             }
@@ -260,6 +264,9 @@ struct HealthDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: selectedRange) { _, _ in offset = 0; clearSelection() }
         .onChange(of: offset) { _, _ in clearSelection() }
+        .task(id: "\(selectedRange.rawValue)-\(offset)") {
+            if sleepMode { recomputeSleepBuckets() }
+        }
     }
 
     private func clearSelection() {
@@ -474,22 +481,46 @@ struct HealthDetailView: View {
 
     // MARK: - Sleep stage chart
 
+    /// Y-axis domain (in hours-since-anchor) covering all visible sleep windows
+    /// with a small margin. Anchor is noon-of-prior-day, so 12 ≈ midnight.
+    private func sleepYDomain(for buckets: [SleepStageBucket]) -> ClosedRange<Double> {
+        let bedHours = buckets.compactMap(\.bedHour)
+        let wakeHours = buckets.compactMap(\.wakeHour)
+        let lo = (bedHours.min() ?? 8) - 0.5
+        let hi = (wakeHours.max() ?? 20) + 0.5
+        return lo...max(hi, lo + 1)
+    }
+
+    /// Even-hour tick marks within the y-domain (every 2 h for narrow ranges,
+    /// every 4 h once the domain spans more than 14 h).
+    private func sleepYTicks(for domain: ClosedRange<Double>) -> [Double] {
+        let span = domain.upperBound - domain.lowerBound
+        let stepHrs = span > 14 ? 4.0 : 2.0
+        let first = (domain.lowerBound / stepHrs).rounded(.up) * stepHrs
+        return stride(from: first, through: domain.upperBound, by: stepHrs).map { $0 }
+    }
+
+    private func sleepBucketCenter(_ date: Date) -> Date {
+        Calendar.current.date(byAdding: .hour, value: 12, to: date) ?? date
+    }
+
     private func sleepStageChart(for buckets: [SleepStageBucket]) -> some View {
-        let domain = ChartYDomain.zeroAnchored(for: buckets.map(\.total))
+        let domain = sleepYDomain(for: buckets)
+        let ticks = sleepYTicks(for: domain)
         return Chart {
             ForEach(buckets) { bucket in
                 ForEach(bucket.segments) { seg in
                     BarMark(
-                        x: .value("Date", bucket.date, unit: xUnit),
-                        yStart: .value("Low",  seg.low),
-                        yEnd:   .value("High", seg.high)
+                        x: .value("Date", bucket.date, unit: .day),
+                        yStart: .value("Time", seg.startHour),
+                        yEnd:   .value("Time", seg.endHour)
                     )
                     .foregroundStyle(SleepStageColor.color(for: seg.stage))
-                    .cornerRadius(2)
+                    .cornerRadius(1)
                 }
             }
             if let b = selectedSleepBucket {
-                RuleMark(x: .value("Selected", bucketCenterDate(b.date)))
+                RuleMark(x: .value("Selected", sleepBucketCenter(b.date)))
                     .foregroundStyle(Color.secondary.opacity(0.4))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
                     .annotation(position: .top, spacing: 4, overflowResolution: .init(x: .fit, y: .disabled)) {
@@ -506,9 +537,13 @@ struct HealthDetailView: View {
             }
         }
         .chartYAxis {
-            AxisMarks(position: .leading) { _ in
+            AxisMarks(position: .leading, values: ticks) { value in
                 AxisGridLine()
-                AxisValueLabel()
+                AxisValueLabel {
+                    if let v = value.as(Double.self) {
+                        Text(formatSleepHour(v))
+                    }
+                }
             }
         }
         .chartOverlay { proxy in
@@ -519,8 +554,8 @@ struct HealthDetailView: View {
                             let x = drag.location.x - geo[proxy.plotAreaFrame].origin.x
                             guard let date: Date = proxy.value(atX: x) else { return }
                             selectedSleepBucket = buckets.min(by: {
-                                abs(bucketCenterDate($0.date).timeIntervalSince(date)) <
-                                abs(bucketCenterDate($1.date).timeIntervalSince(date))
+                                abs(sleepBucketCenter($0.date).timeIntervalSince(date)) <
+                                abs(sleepBucketCenter($1.date).timeIntervalSince(date))
                             }) ?? buckets.last
                         }
                         .onEnded { _ in selectedSleepBucket = nil })
@@ -530,12 +565,14 @@ struct HealthDetailView: View {
 
     private func sleepCalloutView(bucket: SleepStageBucket) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Text("Total")
-                    .font(.caption2).foregroundStyle(.secondary)
-                Spacer(minLength: 12)
-                Text(valueFormatter(bucket.total))
-                    .font(.caption.weight(.semibold).monospacedDigit())
+            if let bed = bucket.bedTime, let wake = bucket.wakeTime {
+                HStack(spacing: 6) {
+                    Text("\(timeOfDay(bed)) – \(timeOfDay(wake))")
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                    Spacer(minLength: 12)
+                    Text(valueFormatter(bucket.totalSleep))
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                }
             }
             ForEach(SleepStageColor.displayOrder, id: \.self) { stage in
                 let dur = bucket.duration(for: stage)
@@ -552,13 +589,13 @@ struct HealthDetailView: View {
                     }
                 }
             }
-            Text(bucket.date, format: calloutFormat)
+            Text(bucket.date, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day())
                 .font(.caption2).foregroundStyle(.secondary)
                 .padding(.top, 2)
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 6)
-        .frame(minWidth: 140, alignment: .leading)
+        .frame(minWidth: 160, alignment: .leading)
         .background {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color.white)
@@ -569,6 +606,10 @@ struct HealthDetailView: View {
                 .strokeBorder(Color.gray.opacity(0.2), lineWidth: 0.5)
         }
         .colorScheme(.light)
+    }
+
+    private func timeOfDay(_ date: Date) -> String {
+        date.formatted(.dateTime.hour().minute())
     }
 
     private func calloutView(value: String, date: Date) -> some View {
@@ -627,13 +668,25 @@ struct HealthDetailView: View {
     private var sleepStatisticsSection: some View {
         if !sleepBuckets.isEmpty {
             let n = Double(sleepBuckets.count)
-            let meanTotal = sleepBuckets.map(\.total).reduce(0, +) / n
+            let meanTotal = sleepBuckets.map(\.totalSleep).reduce(0, +) / n
+            let bedHours = sleepBuckets.compactMap(\.bedHour)
+            let wakeHours = sleepBuckets.compactMap(\.wakeHour)
+            let meanBed = bedHours.isEmpty ? nil : bedHours.reduce(0, +) / Double(bedHours.count)
+            let meanWake = wakeHours.isEmpty ? nil : wakeHours.reduce(0, +) / Double(wakeHours.count)
             VStack(alignment: .leading, spacing: 12) {
                 Text("Statistics").font(.headline)
                 Grid(alignment: .leadingFirstTextBaseline,
                      horizontalSpacing: 24,
                      verticalSpacing: 10) {
-                    statRow("Mean Total", valueFormatter(meanTotal))
+                    if let meanBed {
+                        statRow("Mean Bedtime", formatSleepHour(meanBed))
+                        Divider()
+                    }
+                    if let meanWake {
+                        statRow("Mean Wake-up", formatSleepHour(meanWake))
+                        Divider()
+                    }
+                    statRow("Mean Duration", valueFormatter(meanTotal))
                     ForEach(SleepStageColor.displayOrder, id: \.self) { stage in
                         let mean = sleepBuckets.map { $0.duration(for: stage) }.reduce(0, +) / n
                         if mean > 0 {
