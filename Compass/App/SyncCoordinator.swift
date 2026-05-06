@@ -445,17 +445,28 @@ final class SyncCoordinator {
             }
         }
 
-        for savedEntry in savedEntries {
-            await parseAndPersistFITFile(url: savedEntry.url, fileIndex: savedEntry.fileIndex,
-                                         archiveOnSuccess: true, context: context)
-        }
-
-        cleanupSleepSessions(context: context)
-
-        try? context.save()
-        AppLogger.sync.info("SwiftData save complete")
+        await parseAndFinalize(savedEntries, archiveOnSuccess: true, context: context)
         lastSyncDate = Date()
         return savedEntries.count
+    }
+
+    /// Shared post-pass for every flow that turns FIT files into SwiftData rows:
+    /// parse each entry, run sleep-session cleanup over the full merged set, then
+    /// save. Centralising this means `sync` / `importFITFiles` / `reparseLocalFITFiles`
+    /// can never silently diverge on the post-parse steps (e.g. forgetting to call
+    /// `cleanupSleepSessions`, which re-validates merged sleep across midnight-split
+    /// halves and trims edge awake).
+    private func parseAndFinalize(
+        _ entries: [(url: URL, fileIndex: UInt16)],
+        archiveOnSuccess: Bool,
+        context: ModelContext
+    ) async {
+        for entry in entries {
+            await parseAndPersistFITFile(url: entry.url, fileIndex: entry.fileIndex,
+                                         archiveOnSuccess: archiveOnSuccess, context: context)
+        }
+        cleanupSleepSessions(context: context)
+        try? context.save()
     }
 
     /// Imports FIT files from external URLs (e.g. an archive of files previously
@@ -465,8 +476,9 @@ final class SyncCoordinator {
     @discardableResult
     func importFITFiles(urls: [URL]) async -> Int {
         let context = ModelContext(modelContainer)
-        var imported = 0
         AppLogger.sync.info("Importing \(urls.count) external FIT file(s)")
+
+        var savedEntries: [(url: URL, fileIndex: UInt16)] = []
         for url in urls {
             let securityScoped = url.startAccessingSecurityScopedResource()
             defer { if securityScoped { url.stopAccessingSecurityScopedResource() } }
@@ -476,14 +488,12 @@ final class SyncCoordinator {
                 continue
             }
             AppLogger.sync.debug("Copied imported file to: \(saved.lastPathComponent)")
-            await parseAndPersistFITFile(url: saved, fileIndex: 0,
-                                         archiveOnSuccess: false, context: context)
-            imported += 1
+            savedEntries.append((url: saved, fileIndex: 0))
         }
-        cleanupSleepSessions(context: context)
-        try? context.save()
-        AppLogger.sync.info("Import complete (\(imported)/\(urls.count) file(s))")
-        return imported
+
+        await parseAndFinalize(savedEntries, archiveOnSuccess: false, context: context)
+        AppLogger.sync.info("Import complete (\(savedEntries.count)/\(urls.count) file(s))")
+        return savedEntries.count
     }
 
     /// Wipes every FIT-derived row from the local database and re-imports from the
@@ -511,17 +521,18 @@ final class SyncCoordinator {
 
         let files = FITFileStore.shared.allFiles()
         AppLogger.sync.info("Reparsing \(files.count) local FIT file(s)")
-        for file in files {
-            // Pull a numeric suffix off the stored filename if present (used only for logging
-            // since archiveOnSuccess is false here — we never re-archive on the watch).
+
+        // Pull a numeric suffix off each stored filename for logging only —
+        // `archiveOnSuccess` is false here so we never re-archive on the watch.
+        let entries: [(url: URL, fileIndex: UInt16)] = files.map { file in
             let suffix = file.name
                 .replacingOccurrences(of: ".fit", with: "")
                 .split(separator: "_").last
             let fileIndex = suffix.flatMap { UInt16($0) } ?? 0
-            await parseAndPersistFITFile(url: file.url, fileIndex: fileIndex,
-                                         archiveOnSuccess: false, context: context)
+            return (url: file.url, fileIndex: fileIndex)
         }
-        try? context.save()
+
+        await parseAndFinalize(entries, archiveOnSuccess: false, context: context)
         AppLogger.sync.info("Reparse complete (\(files.count) file(s))")
         return files.count
     }
