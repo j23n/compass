@@ -703,14 +703,20 @@ final class SyncCoordinator {
                     // max (authoritative even when the file starts mid-day); intensity
                     // minutes are counted from `activeMinuteTimestamps` per day; calories
                     // are summed from the intervals.
+                    // `dayBucket` matches the parser's bucketing so end-of-day summary
+                    // records (timestamped exactly at local midnight) attribute to the
+                    // day they describe rather than the next one. Intensity minutes
+                    // come from HR samples, which never land at exact midnight, so
+                    // either bucketing function would work — using `dayBucket` for
+                    // consistency.
                     var dayCalories: [Date: Double] = [:]
                     for interval in results.intervals {
-                        let day = calendar.startOfDay(for: interval.timestamp)
+                        let day = MonitoringFITParser.dayBucket(for: interval.timestamp)
                         dayCalories[day, default: 0] += interval.activeCalories
                     }
                     var dayIntensityMin: [Date: Int] = [:]
                     for ts in results.activeMinuteTimestamps {
-                        let day = calendar.startOfDay(for: ts)
+                        let day = MonitoringFITParser.dayBucket(for: ts)
                         dayIntensityMin[day, default: 0] += 1
                     }
 
@@ -839,6 +845,21 @@ final class SyncCoordinator {
     /// sleep block, so a single night typically arrives as 4-6 segments.
     private static let sleepMergeWindow: TimeInterval = 30 * 60
 
+    /// Tolerance used to detect a sleep-file boundary that lands on local midnight —
+    /// the watch firmware closes one sleep file and opens the next at exactly that
+    /// instant, so msg 273/276 timestamps within this window of midnight are treated
+    /// as "this is the firmware's daily split, not a real session boundary."
+    private static let midnightTolerance: TimeInterval = 5 * 60
+
+    private static func isNearLocalMidnight(_ date: Date) -> Bool {
+        let cal = Calendar.current
+        let startOfDay = cal.startOfDay(for: date)
+        guard let nextDay = cal.date(byAdding: .day, value: 1, to: startOfDay) else { return false }
+        let toStart = abs(date.timeIntervalSince(startOfDay))
+        let toNext = abs(date.timeIntervalSince(nextDay))
+        return min(toStart, toNext) <= midnightTolerance
+    }
+
     /// Merges a parsed `SleepResult` into any adjacent `SleepSession`, or inserts a new one.
     /// Recomputes the session's `startDate`/`endDate` from the merged stages using
     /// `SleepStageResult.trimmedBounds`. Files whose stages don't yield a qualifying
@@ -924,15 +945,27 @@ final class SyncCoordinator {
             return
         }
 
-        // No adjacent session — only insert if the file's own stages qualify as real sleep.
+        // No adjacent session — insert if the file's own stages qualify as real sleep,
+        // OR if its bounds touch local midnight. The Instinct firmware splits one night
+        // across two files at the local-midnight rollover; each half can fail the
+        // quality gate alone but becomes valid once merged. We persist these partial
+        // halves at raw msg 273/276 bounds so a later sibling file can find them via
+        // the merge query; `cleanupSleepSessions` at end of sync deletes any that
+        // remain orphaned and still don't qualify.
         let sortedStages = result.stages.sorted { $0.startDate < $1.startDate }
-        guard let bounds = SleepStageResult.trimmedBounds(stages: sortedStages) else {
+        let qualifying = SleepStageResult.trimmedBounds(stages: sortedStages)
+        let touchesMidnight = Self.isNearLocalMidnight(result.startDate)
+                           || Self.isNearLocalMidnight(result.endDate)
+
+        guard qualifying != nil || touchesMidnight else {
             AppLogger.sync.debug("Sleep file dropped — no qualifying sleep block (likely watch false-positive)")
             return
         }
+        let sessionStart = qualifying?.start ?? result.startDate
+        let sessionEnd = qualifying?.end ?? result.endDate
         let session = SleepSession(
-            startDate: bounds.start,
-            endDate: bounds.end,
+            startDate: sessionStart,
+            endDate: sessionEnd,
             score: result.score,
             recoveryScore: result.recoveryScore,
             qualifier: result.qualifier

@@ -303,6 +303,17 @@ motion    = blob[16] | blob[17]  # 0=still >0=moving
 - `motion = 0 AND hr_stage = 81` → deep sleep
 - `motion = 0 AND hr_stage = 82` → light sleep
 
+> **Bytes 86 / 87 / 88 — possibly nap markers? (TO BE CONFIRMED)**
+>
+> Observed in `sleep_2026-05-05_08-26-12_76.fit` clustered between 16:40–16:51
+> local, surrounded by `awake` (84/85) runs during the daytime portion of a
+> "sleep" file that the firmware had opened mid-afternoon and kept appending to
+> until local midnight. Hypothesis: these encode nap or light-doze states the
+> watch detected during waking hours but didn't promote to a full sleep
+> classification. Needs more samples — particularly daytime files — to confirm.
+> The parser currently skips them, which has the same effect as treating them as
+> awake for `trimmedBounds` (they don't contribute to the night-sleep block).
+
 This yields 507 per-minute stage estimates vs. 18 incomplete records from
 msg 275, making msg 274 the primary source for sleep staging on this firmware.
 

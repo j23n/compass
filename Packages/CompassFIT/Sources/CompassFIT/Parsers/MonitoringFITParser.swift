@@ -141,11 +141,44 @@ public struct MonitoringFITParser: Sendable {
 
     // MARK: - Private helpers
 
-    /// Conversion factor for monitoring step values. Empirically the firmware emits
-    /// stride-pairs (left+right footstrike = 1 unit) in the `cycles`/`steps` field,
-    /// so the watch's daily step display = 2× the raw FIT value. Verified across
-    /// multiple known-good days against the user's watch readout.
+    /// Multiplier applied to the cumulative value read from monitoring field 3
+    /// (named `cycles` or `steps` depending on dynamic-rename). The factor is 2
+    /// for both spellings of the field — *not* a strides-to-steps conversion, but
+    /// a compensation for a field-ordering quirk inside the vendored FitFileParser:
+    ///
+    /// In Instinct Solar 1G monitoring_b summary records, the FIT field definition
+    /// lists field 3 (cycles/steps) *before* field 5 (activity_type). The C
+    /// interpreter (`FitInterpretMesg.m:251-252`) resolves a field's scale at the
+    /// moment that field is processed; for field 3 it calls
+    /// `fit_interp_string_value(interp, 5)` to look up activity_type and pick the
+    /// per-activity scale. Because field 5 hasn't been seen yet, the call returns
+    /// `FIT_UINT32_INVALID`, so the lookup falls through to the default `scale=2`
+    /// branch even when activity_type is actually `walking` (which the FIT profile
+    /// would otherwise map to `scale=1`). The interpreter then divides the raw
+    /// uint32 by 2, halving the step count before Swift sees it.
+    ///
+    /// Streaming records (no activity_type field at all) intentionally use the
+    /// `scale=2` default in the FIT profile, so the same multiplier applies there
+    /// for the same numeric reason. Either way, multiplying by 2 here recovers the
+    /// firmware's intended cumulative step count and matches the watch's display.
     private static let stridesToStepsFactor: Int = 2
+
+    /// Returns the local day a monitoring record should be attributed to.
+    ///
+    /// The Instinct firmware closes a `monitoring_b` file at exactly local midnight
+    /// and emits the day's final cumulative summary as the file's last record,
+    /// timestamped at that midnight instant. Naive `startOfDay` bucketing pushes
+    /// that summary into the *next* day, so day N's total leaks into day N+1.
+    /// Treat a timestamp that lands exactly on `startOfDay(timestamp)` as the
+    /// closing instant of the previous day instead.
+    public static func dayBucket(for timestamp: Date) -> Date {
+        let cal = Calendar.current
+        let start = cal.startOfDay(for: timestamp)
+        if timestamp == start, let prev = cal.date(byAdding: .day, value: -1, to: start) {
+            return prev
+        }
+        return start
+    }
 
     private func parseMonitoringInterval(
         from message: FitMessage,
@@ -164,16 +197,17 @@ public struct MonitoringFITParser: Sendable {
         // each type's cumulative resets are handled independently.
         let activityType = resolveActivityType(from: message)
 
-        // Per-interval step delta. The `cycles`/`steps` field is cumulative since
-        // midnight, so the first reading we see in a file is a snapshot of work
-        // already done before the file's window started — we can't attribute those
-        // steps to any specific minute, so skip emitting a delta for it. The day's
-        // cumulative max still feeds the daily total via `dailyMaxByType`, so the
-        // total isn't lost — just not bucketed into an hour.
+        // Per-interval step delta. The cumulative-since-midnight count appears
+        // in field 3, dynamically renamed to `steps` on summary records (where
+        // `activity_type` is set explicitly) and `cycles` on streaming records
+        // (where only CATI is set). Both spellings come back from FitFileParser
+        // halved — see `stridesToStepsFactor` for the field-order bug that causes
+        // this — so we multiply by 2 either way.
         //
-        // The field is named `steps` in summary messages (where activity_type is
-        // explicit) and `cycles` in streaming messages (where only CATI is set),
-        // because of FIT dynamic-field renaming. Read whichever is present.
+        // The first reading we see in a file is a snapshot of work already done
+        // before the file's window started — we can't attribute those steps to any
+        // specific minute, so skip emitting a delta. The day's cumulative max still
+        // feeds the daily total via `dailyMaxByType`, so the total isn't lost.
         let rawCumulative = doubleValue(message, key: "steps")
                         ?? doubleValue(message, key: "cycles")
         let steps: Int
@@ -186,7 +220,7 @@ public struct MonitoringFITParser: Sendable {
             }
             lastCycles[activityType] = cumulative
 
-            let day = Calendar.current.startOfDay(for: timestamp)
+            let day = Self.dayBucket(for: timestamp)
             let prevMax = dailyMaxByType[day, default: [:]][activityType] ?? 0
             dailyMaxByType[day, default: [:]][activityType] = max(prevMax, cumulative)
         } else {
