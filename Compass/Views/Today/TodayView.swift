@@ -309,7 +309,8 @@ struct TodayView: View {
                     let h = Int(hours)
                     let m = Int((hours - Double(h)) * 60)
                     return "\(h)h \(m)m"
-                }
+                },
+                sleepSessions: allSleepSessions
             )
         } label: {
             if let session = todaySleep, !session.stages.isEmpty {

@@ -1,5 +1,6 @@
 import SwiftUI
 import Charts
+import CompassData
 
 /// Fullscreen chart detail for a single health metric.
 /// All ranges → ranged bar chart. Day range uses hourly buckets; Week/Month/Year use daily/monthly.
@@ -18,16 +19,21 @@ struct HealthDetailView: View {
     var useBarChart: Bool = false
     var initialRange: TrendTimeRange = .week
     var valueFormatter: @Sendable (Double) -> String = { String(format: "%.0f", $0) }
+    /// When non-nil, the chart switches to stage-stacked sleep mode: bars are
+    /// segmented by sleep stage, popover & stats break down per stage.
+    var sleepSessions: [SleepSession]? = nil
 
     @State private var selectedRange: TrendTimeRange
     @State private var offset: Int = 0
     @State private var selectedBucket: TrendBucket?
+    @State private var selectedSleepBucket: SleepStageBucket?
     @State private var showingTotalInfo: Bool = false
 
     init(metricTitle: String, metricUnit: String, color: Color = .blue, icon: String = "heart.fill",
          data: [TrendDataPoint], dayData: [TrendDataPoint]? = nil,
          useBarChart: Bool = false, initialRange: TrendTimeRange = .week,
-         valueFormatter: @escaping @Sendable (Double) -> String = { String(format: "%.0f", $0) }) {
+         valueFormatter: @escaping @Sendable (Double) -> String = { String(format: "%.0f", $0) },
+         sleepSessions: [SleepSession]? = nil) {
         self.metricTitle = metricTitle
         self.metricUnit = metricUnit
         self.color = color
@@ -37,8 +43,11 @@ struct HealthDetailView: View {
         self.useBarChart = useBarChart
         self.initialRange = initialRange
         self.valueFormatter = valueFormatter
+        self.sleepSessions = sleepSessions
         _selectedRange = State(initialValue: initialRange)
     }
+
+    private var sleepMode: Bool { sleepSessions != nil }
 
     // MARK: - Filtered data
 
@@ -52,6 +61,11 @@ struct HealthDetailView: View {
 
     private var buckets: [TrendBucket] {
         makeTrendBuckets(from: data, range: selectedRange, isSum: useBarChart, offset: offset)
+    }
+
+    private var sleepBuckets: [SleepStageBucket] {
+        guard let sleepSessions else { return [] }
+        return makeSleepStageBuckets(from: sleepSessions, range: selectedRange, offset: offset)
     }
 
     // All 24 hourly slots for Day chart (empty hours included as zero bars).
@@ -145,6 +159,10 @@ struct HealthDetailView: View {
     }
 
     private var headerValue: String {
+        if sleepMode {
+            if let b = selectedSleepBucket { return valueFormatter(b.total) }
+            return sleepBuckets.last.map { valueFormatter($0.total) } ?? "--"
+        }
         if let bucket = selectedBucket {
             return valueFormatter(bucket.display)
         }
@@ -159,7 +177,7 @@ struct HealthDetailView: View {
         return buckets.last.map { valueFormatter($0.display) } ?? "--"
     }
 
-    private var headerDate: Date? { selectedBucket?.date }
+    private var headerDate: Date? { selectedSleepBucket?.date ?? selectedBucket?.date }
 
     private var periodLabel: String {
         let r = activeDateRange
@@ -246,6 +264,7 @@ struct HealthDetailView: View {
 
     private func clearSelection() {
         selectedBucket = nil
+        selectedSleepBucket = nil
     }
 
     // MARK: - Header
@@ -368,7 +387,10 @@ struct HealthDetailView: View {
 
     @ViewBuilder
     private var chartSection: some View {
-        if selectedRange == .day {
+        if sleepMode {
+            if sleepBuckets.isEmpty { emptyChart }
+            else { sleepStageChart(for: sleepBuckets).frame(height: 300) }
+        } else if selectedRange == .day {
             if filteredData.isEmpty { emptyChart } else { barChart(for: dayChartBuckets).frame(height: 300) }
         } else if buckets.isEmpty {
             emptyChart
@@ -450,6 +472,105 @@ struct HealthDetailView: View {
             : "\(valueFormatter(b.low)) – \(valueFormatter(b.high))"
     }
 
+    // MARK: - Sleep stage chart
+
+    private func sleepStageChart(for buckets: [SleepStageBucket]) -> some View {
+        let domain = ChartYDomain.zeroAnchored(for: buckets.map(\.total))
+        return Chart {
+            ForEach(buckets) { bucket in
+                ForEach(bucket.segments) { seg in
+                    BarMark(
+                        x: .value("Date", bucket.date, unit: xUnit),
+                        yStart: .value("Low",  seg.low),
+                        yEnd:   .value("High", seg.high)
+                    )
+                    .foregroundStyle(SleepStageColor.color(for: seg.stage))
+                    .cornerRadius(2)
+                }
+            }
+            if let b = selectedSleepBucket {
+                RuleMark(x: .value("Selected", bucketCenterDate(b.date)))
+                    .foregroundStyle(Color.secondary.opacity(0.4))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                    .annotation(position: .top, spacing: 4, overflowResolution: .init(x: .fit, y: .disabled)) {
+                        sleepCalloutView(bucket: b)
+                    }
+            }
+        }
+        .chartXScale(domain: xDomain)
+        .chartYScale(domain: domain)
+        .chartXAxis {
+            AxisMarks(values: .automatic(desiredCount: selectedRange == .year ? 12 : 6)) { _ in
+                AxisGridLine()
+                AxisValueLabel(format: xAxisFormat)
+            }
+        }
+        .chartYAxis {
+            AxisMarks(position: .leading) { _ in
+                AxisGridLine()
+                AxisValueLabel()
+            }
+        }
+        .chartOverlay { proxy in
+            GeometryReader { geo in
+                Rectangle().fill(.clear).contentShape(Rectangle())
+                    .gesture(DragGesture(minimumDistance: 0)
+                        .onChanged { drag in
+                            let x = drag.location.x - geo[proxy.plotAreaFrame].origin.x
+                            guard let date: Date = proxy.value(atX: x) else { return }
+                            selectedSleepBucket = buckets.min(by: {
+                                abs(bucketCenterDate($0.date).timeIntervalSince(date)) <
+                                abs(bucketCenterDate($1.date).timeIntervalSince(date))
+                            }) ?? buckets.last
+                        }
+                        .onEnded { _ in selectedSleepBucket = nil })
+            }
+        }
+    }
+
+    private func sleepCalloutView(bucket: SleepStageBucket) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text("Total")
+                    .font(.caption2).foregroundStyle(.secondary)
+                Spacer(minLength: 12)
+                Text(valueFormatter(bucket.total))
+                    .font(.caption.weight(.semibold).monospacedDigit())
+            }
+            ForEach(SleepStageColor.displayOrder, id: \.self) { stage in
+                let dur = bucket.duration(for: stage)
+                if dur > 0 {
+                    HStack(spacing: 5) {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(SleepStageColor.color(for: stage))
+                            .frame(width: 7, height: 7)
+                        Text(stage.displayName)
+                            .font(.caption2)
+                        Spacer(minLength: 12)
+                        Text(valueFormatter(dur))
+                            .font(.caption2.monospacedDigit())
+                    }
+                }
+            }
+            Text(bucket.date, format: calloutFormat)
+                .font(.caption2).foregroundStyle(.secondary)
+                .padding(.top, 2)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .frame(minWidth: 140, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.white)
+                .shadow(color: .black.opacity(0.12), radius: 4, x: 0, y: 2)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color.gray.opacity(0.2), lineWidth: 0.5)
+        }
+        .colorScheme(.light)
+    }
+
     private func calloutView(value: String, date: Date) -> some View {
         VStack(spacing: 2) {
             Text(value)
@@ -475,26 +596,77 @@ struct HealthDetailView: View {
 
     @ViewBuilder
     private var statisticsSection: some View {
-        let hasData = selectedRange == .day ? !filteredData.isEmpty : !buckets.isEmpty
-        if hasData {
+        if sleepMode {
+            sleepStatisticsSection
+        } else {
+            let hasData = selectedRange == .day ? !filteredData.isEmpty : !buckets.isEmpty
+            if hasData {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Statistics").font(.headline)
+                    Grid(alignment: .leadingFirstTextBaseline,
+                         horizontalSpacing: 24,
+                         verticalSpacing: 10) {
+                        statRow("Mean",    valueFormatter(averageDisplay))
+                        Divider()
+                        statRow("Std Dev", valueFormatter(stdDevDisplay))
+                        Divider()
+                        statRow("Min",     valueFormatter(minDisplay))
+                        Divider()
+                        statRow("Max",     valueFormatter(maxDisplay))
+                        Divider()
+                        statRow("Count",   String(sampleCount))
+                    }
+                }
+                .padding()
+                .background(card)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var sleepStatisticsSection: some View {
+        if !sleepBuckets.isEmpty {
+            let n = Double(sleepBuckets.count)
+            let meanTotal = sleepBuckets.map(\.total).reduce(0, +) / n
             VStack(alignment: .leading, spacing: 12) {
                 Text("Statistics").font(.headline)
                 Grid(alignment: .leadingFirstTextBaseline,
                      horizontalSpacing: 24,
                      verticalSpacing: 10) {
-                    statRow("Mean",    valueFormatter(averageDisplay))
+                    statRow("Mean Total", valueFormatter(meanTotal))
+                    ForEach(SleepStageColor.displayOrder, id: \.self) { stage in
+                        let mean = sleepBuckets.map { $0.duration(for: stage) }.reduce(0, +) / n
+                        if mean > 0 {
+                            Divider()
+                            stageStatRow(stage: stage, value: valueFormatter(mean))
+                        }
+                    }
                     Divider()
-                    statRow("Std Dev", valueFormatter(stdDevDisplay))
-                    Divider()
-                    statRow("Min",     valueFormatter(minDisplay))
-                    Divider()
-                    statRow("Max",     valueFormatter(maxDisplay))
-                    Divider()
-                    statRow("Count",   String(sampleCount))
+                    statRow("Count", String(sleepBuckets.count))
                 }
             }
             .padding()
             .background(card)
+        }
+    }
+
+    @ViewBuilder
+    private func stageStatRow(stage: SleepStageType, value: String) -> some View {
+        GridRow {
+            HStack(spacing: 6) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(SleepStageColor.color(for: stage))
+                    .frame(width: 8, height: 8)
+                Text("Mean \(stage.displayName)")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .gridColumnAlignment(.leading)
+            Text(value)
+                .font(.subheadline).fontWeight(.semibold)
+                .monospacedDigit()
+                .gridColumnAlignment(.trailing)
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
     }
 
