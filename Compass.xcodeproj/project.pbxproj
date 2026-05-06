@@ -12,7 +12,6 @@
 		08EF78B33E0BEC8567ABE14F /* FindMyPhoneService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F895C1DE3D221686BB2BFD7 /* FindMyPhoneService.swift */; };
 		12AF5059E4AEE5DC6D473933 /* MapSnapshotView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0F250C485A8D924F3DE3C50 /* MapSnapshotView.swift */; };
 		14FEC3B36A75047D158A29CF /* SleepTimelineBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BC856412A5B34250373E2B9 /* SleepTimelineBar.swift */; };
-		18FE52E438779A021B840D7B /* SleepStagesCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26AF8A9C1EB4F6B7C0B98A0C /* SleepStagesCard.swift */; };
 		1ECE48914DC75CBE7FA95FC4 /* MusicService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A675699E286A5D1EE4F96157 /* MusicService.swift */; };
 		26B126355BC9D6C3F3D277E7 /* ActivitiesListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93B71F0583278E54AAE879AA /* ActivitiesListView.swift */; };
 		330DE8B61FCC45FD477ABF1E /* CourseFileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5ED41DBDA73B5A4BD512EB0 /* CourseFileStore.swift */; };
@@ -27,7 +26,6 @@
 		7F66ADDB18893B509DF51C3D /* FITFileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81F4753EEB4B8FFB778FBCFA /* FITFileStore.swift */; };
 		828D76A8788E378DD151BA9A /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE68E6FEB88696AB9D459324 /* ContentView.swift */; };
 		849BDEF3DCDDE1C11AB65F70 /* CourseRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E595EBFC0032E4A36808EB59 /* CourseRowView.swift */; };
-		880E3114FC1EE7EBDA2ACA59 /* HealthView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5512F60331520C299D42F604 /* HealthView.swift */; };
 		8B709A7D7D4E459CD7006768 /* TodayViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35B616B28C57B7C5DA43CA6B /* TodayViewModel.swift */; };
 		8C1FF6F31EAD077BD75F07AE /* LogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18F573121C079EF19C621678 /* LogStore.swift */; };
 		8E3B0A1D4F2C6B5A7D8E9C20 /* MapSnapshotCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D9C7B2E5F1A8E3D2C0B6F90 /* MapSnapshotCache.swift */; };
@@ -36,7 +34,6 @@
 		91FF28BD920460859321964D /* CourseFilesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1367C853B9217F54A818D824 /* CourseFilesView.swift */; };
 		A091498A9A8F5A6160133675 /* StatCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 613CE3D8C070B65F4F40AE6E /* StatCell.swift */; };
 		A2659E0867E505D218C2431A /* HealthDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BA0E1E132468A60CCF51A13 /* HealthDetailView.swift */; };
-		A3C742D0DB7F16B32BE2409F /* InteractiveTrendCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D4C001F81589F0D37F45A27 /* InteractiveTrendCard.swift */; };
 		A644476816FC419C0BE661DB /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35A2BA7F0CFC5430A008040A /* SettingsView.swift */; };
 		AF25231DC99F0BBD1F7EC8B4 /* TrendChartView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 054458D3773E3474BBDAAD23 /* TrendChartView.swift */; };
 		BD700844C17010534F502A34 /* SyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D3DBAB5FAC5E338AC5A1FE4 /* SyncCoordinator.swift */; };
@@ -58,7 +55,6 @@
 		E781A0DBAAA0802E09BF7B77 /* CourseDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E4DAEBEFF28D0FBFC1C9B3A /* CourseDetailView.swift */; };
 		EB1A9E08AF60C4721170D17A /* DependencyContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DB74BA52726F9C5ECBDF01D /* DependencyContainer.swift */; };
 		F2DD6E94F0E70496C10671A5 /* TodayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E894DAB2813A23F28CC0DEE /* TodayView.swift */; };
-		F86EEC69C82FF51A684A3CAD /* HealthViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAA923EB4B4F6E0D7F2A0386 /* HealthViewModel.swift */; };
 		FB5862A043926010ABD26ADB /* Sport+UI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F680123EE4C6C3BB4840D11E /* Sport+UI.swift */; };
 		FD655A86C53ED1EFFA26FF2B /* CoursesListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 665EE9956A0F92054D603F0A /* CoursesListView.swift */; };
 /* End PBXBuildFile section */
@@ -73,17 +69,14 @@
 		1BF57BA01F2477CA55BC7407 /* Compass.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Compass.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2091CE66772E3E60DB0CAE0E /* FileArchive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileArchive.swift; sourceTree = "<group>"; };
 		2399241D1129827B533BF73A /* WeatherService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeatherService.swift; sourceTree = "<group>"; };
-		26AF8A9C1EB4F6B7C0B98A0C /* SleepStagesCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepStagesCard.swift; sourceTree = "<group>"; };
 		291F08030DDECFA63DC57CD3 /* CourseEditView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseEditView.swift; sourceTree = "<group>"; };
 		2D3DBAB5FAC5E338AC5A1FE4 /* SyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncCoordinator.swift; sourceTree = "<group>"; };
-		2D4C001F81589F0D37F45A27 /* InteractiveTrendCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InteractiveTrendCard.swift; sourceTree = "<group>"; };
 		3502B0EDE3324077F26D3EF8 /* ChartYDomain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChartYDomain.swift; sourceTree = "<group>"; };
 		35A2BA7F0CFC5430A008040A /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		35B616B28C57B7C5DA43CA6B /* TodayViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayViewModel.swift; sourceTree = "<group>"; };
 		374694B7478BB4C57955778B /* RingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RingsView.swift; sourceTree = "<group>"; };
 		3F895C1DE3D221686BB2BFD7 /* FindMyPhoneService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FindMyPhoneService.swift; sourceTree = "<group>"; };
 		4E0160168241D922AE5F2E9E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
-		5512F60331520C299D42F604 /* HealthView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthView.swift; sourceTree = "<group>"; };
 		613CE3D8C070B65F4F40AE6E /* StatCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatCell.swift; sourceTree = "<group>"; };
 		63F7DF49430F745E634711B5 /* CompassApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompassApp.swift; sourceTree = "<group>"; };
 		665EE9956A0F92054D603F0A /* CoursesListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoursesListView.swift; sourceTree = "<group>"; };
@@ -120,7 +113,6 @@
 		F31BADC1B754136FEA67BC25 /* VitalsGridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VitalsGridView.swift; sourceTree = "<group>"; };
 		F680123EE4C6C3BB4840D11E /* Sport+UI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Sport+UI.swift"; sourceTree = "<group>"; };
 		F99774EFF0EAC82BF2A0AF53 /* ActivityRowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityRowView.swift; sourceTree = "<group>"; };
-		FAA923EB4B4F6E0D7F2A0386 /* HealthViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthViewModel.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -141,9 +133,6 @@
 			isa = PBXGroup;
 			children = (
 				7BA0E1E132468A60CCF51A13 /* HealthDetailView.swift */,
-				5512F60331520C299D42F604 /* HealthView.swift */,
-				2D4C001F81589F0D37F45A27 /* InteractiveTrendCard.swift */,
-				26AF8A9C1EB4F6B7C0B98A0C /* SleepStagesCard.swift */,
 			);
 			path = Health;
 			sourceTree = "<group>";
@@ -250,7 +239,6 @@
 		9CA0E694D868C9C290A7043F /* ViewModels */ = {
 			isa = PBXGroup;
 			children = (
-				FAA923EB4B4F6E0D7F2A0386 /* HealthViewModel.swift */,
 				35B616B28C57B7C5DA43CA6B /* TodayViewModel.swift */,
 			);
 			path = ViewModels;
@@ -430,9 +418,6 @@
 				5C4CAC0CA52B67717CA79508 /* FileArchive.swift in Sources */,
 				08EF78B33E0BEC8567ABE14F /* FindMyPhoneService.swift in Sources */,
 				A2659E0867E505D218C2431A /* HealthDetailView.swift in Sources */,
-				880E3114FC1EE7EBDA2ACA59 /* HealthView.swift in Sources */,
-				F86EEC69C82FF51A684A3CAD /* HealthViewModel.swift in Sources */,
-				A3C742D0DB7F16B32BE2409F /* InteractiveTrendCard.swift in Sources */,
 				8C1FF6F31EAD077BD75F07AE /* LogStore.swift in Sources */,
 				8E3B0A1D4F2C6B5A7D8E9C20 /* MapSnapshotCache.swift in Sources */,
 				E297034AD1CE858EC8614DDC /* LogsView.swift in Sources */,
@@ -446,7 +431,6 @@
 				4A667935CCA7EFCBD4ED46F4 /* RingsView.swift in Sources */,
 				A644476816FC419C0BE661DB /* SettingsView.swift in Sources */,
 				8F4957986E1B909BF0318A78 /* SleepNightCard.swift in Sources */,
-				18FE52E438779A021B840D7B /* SleepStagesCard.swift in Sources */,
 				14FEC3B36A75047D158A29CF /* SleepTimelineBar.swift in Sources */,
 				DD4309AD30E777BC4EC503B3 /* SparklineChart.swift in Sources */,
 				FB5862A043926010ABD26ADB /* Sport+UI.swift in Sources */,

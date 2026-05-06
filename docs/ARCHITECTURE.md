@@ -49,9 +49,7 @@ Compass/
 │   │   ├── MapSnapshotView.swift     Static map thumbnail
 │   │   └── StatCell.swift            Single stat display (label + value + unit)
 │   ├── Health/
-│   │   ├── HealthView.swift          Metrics hub with time-range picker
-│   │   ├── HealthDetailView.swift    Full-screen detail for one metric
-│   │   └── InteractiveTrendCard.swift Draggable card with chart + range selector
+│   │   └── HealthDetailView.swift    Full-screen chart detail for one metric (entered from Today's chits)
 │   ├── Courses/
 │   │   ├── CoursesListView.swift     List of courses with upload-status badge
 │   │   ├── CourseDetailView.swift    Map + metadata + upload/delete controls
@@ -62,8 +60,7 @@ Compass/
 │       ├── CourseFilesView.swift     Manage course FIT files
 │       └── LogsView.swift            In-app debug log viewer with filter
 ├── ViewModels/
-│   ├── TodayViewModel.swift          @Observable; today metrics from repositories
-│   └── HealthViewModel.swift         @Observable; health trend queries
+│   └── TodayViewModel.swift          @Observable; today metrics from repositories
 ├── Components/
 │   ├── RingsView.swift               2×2 grid of progress rings
 │   ├── RingView.swift                Single circular ring with icon + label
@@ -348,8 +345,9 @@ struct DependencyContainer {
 ```
 ContentView (TabView)
 ├── TodayView
-│   ├── VitalsGridView           HR, HRV, sleep score, body battery, stress, steps
-│   ├── SleepStageBar
+│   ├── SleepNightCard           Last night's stages; tap → HealthDetailView (sleep duration trend)
+│   ├── VitalsGridView           HR, Resting HR, HRV, Stress, Steps, Active Min, SpO₂
+│   │   └── chit tap → HealthDetailView (per-metric chart, day/week/month/year)
 │   └── ActivityRowView (recent)
 │       └── → ActivityDetailView
 ├── ActivitiesListView           Sport-filter chips + chronological list
@@ -357,9 +355,6 @@ ContentView (TabView)
 │       ├── MapRouteView         GPS track; highlights point as chart is scrubbed
 │       ├── StatCell (grid)      Duration, distance, pace, calories, avg/max HR, elevation
 │       └── TrendChartView       HR / elevation / pace / speed over time
-├── HealthView                   Sectioned by Heart / Sleep / Recovery / Activity
-│   └── InteractiveTrendCard     Draggable; week / month / 3 mo / year range
-│       └── → HealthDetailView
 └── CoursesListView
     └── CourseDetailView
         ├── MapRouteView         Course track + POIs

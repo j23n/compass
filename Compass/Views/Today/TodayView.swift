@@ -20,11 +20,11 @@ struct TodayView: View {
     @Query(sort: \HeartRateSample.timestamp)
     private var allHeartRateSamples: [HeartRateSample]
 
+    @Query(sort: \HRVSample.timestamp)
+    private var allHRV: [HRVSample]
+
     @Query(sort: \StressSample.timestamp)
     private var allStress: [StressSample]
-
-    @Query(sort: \StepCount.date)
-    private var allSteps: [StepCount]
 
     @Query(sort: \StepSample.timestamp)
     private var allStepSamples: [StepSample]
@@ -63,6 +63,17 @@ struct TodayView: View {
 
     private var weekAgo: Date { Calendar.current.date(byAdding: .day, value: -7, to: Date())! }
 
+    /// One point per night, dated at the day the session "belongs to" (morning
+    /// of), valued in hours. Drives the HealthDetailView Sleep click-through.
+    private var sleepDurationHistory: [TrendDataPoint] {
+        let cal = Calendar.current
+        return allSleepSessions.map { session in
+            let day = cal.startOfDay(for: session.endDate)
+            let hours = session.endDate.timeIntervalSince(session.startDate) / 3600.0
+            return TrendDataPoint(date: day, value: hours)
+        }
+    }
+
     // MARK: - Heart rate
 
     /// Latest HR sample regardless of context — keeps the card useful even when no
@@ -81,6 +92,8 @@ struct TodayView: View {
     }
 
     /// Resting-only HR samples — same source as Health → Heart → Resting Heart Rate.
+    /// Mini chart spans 24h (not 4h like continuous HR): the watch only emits
+    /// resting samples when it detects rest, so a 4h window is often empty.
     private var restingHeartRateMetric: VitalsMetric {
         let resting = allHeartRateSamples.filter { $0.context == .resting }
         let history = resting
@@ -88,9 +101,26 @@ struct TodayView: View {
             .map { TrendDataPoint(date: $0.timestamp, value: Double($0.bpm)) }
         let last = resting.last
         let windowSamples = resting
-            .filter { $0.timestamp >= windowStart }
+            .filter { $0.timestamp >= last24h }
             .map { (date: $0.timestamp, value: Double($0.bpm)) }
         return VitalsMetric(current: last.map { $0.bpm },
+                            lastReadingAt: last?.timestamp,
+                            windowSamples: windowSamples, history: history)
+    }
+
+    // MARK: - HRV
+
+    /// HRV mini chart spans 24h: Garmin typically samples HRV during sleep,
+    /// so a 4h daytime window is almost always empty.
+    private var hrvMetric: VitalsMetric {
+        let history = allHRV
+            .filter { $0.timestamp >= weekAgo }
+            .map { TrendDataPoint(date: $0.timestamp, value: $0.rmssd) }
+        let last = allHRV.last
+        let windowSamples = allHRV
+            .filter { $0.timestamp >= last24h }
+            .map { (date: $0.timestamp, value: $0.rmssd) }
+        return VitalsMetric(current: last.map { Int($0.rmssd.rounded()) },
                             lastReadingAt: last?.timestamp,
                             windowSamples: windowSamples, history: history)
     }
@@ -112,26 +142,43 @@ struct TodayView: View {
 
     // MARK: - Steps
 
-    private var todayStepCounts: [StepCount] {
-        allSteps.filter { $0.date >= startOfToday }
-    }
-
+    /// Steps come from per-record `StepSample` deltas, not the daily `StepCount`
+    /// roll-ups: the per-sample stream is what HealthDetailView's Day chart
+    /// renders, and using it here keeps Today's total consistent with that
+    /// click-through. Note: Instinct sometimes drops file-boundary snapshots,
+    /// so a fragmented day's total can be lower than the device-reported daily
+    /// count.
     private var stepsMetric: VitalsMetric {
         let cal = Calendar.current
-        let grouped = Dictionary(grouping: allSteps.filter { $0.date >= weekAgo }) {
-            cal.startOfDay(for: $0.date)
-        }
+        let weekly = allStepSamples.filter { $0.timestamp >= weekAgo }
+        let grouped = Dictionary(grouping: weekly) { cal.startOfDay(for: $0.timestamp) }
         let history = grouped
-            .map { day, counts in TrendDataPoint(date: day, value: Double(counts.reduce(0) { $0 + $1.steps })) }
+            .map { day, samples in TrendDataPoint(date: day, value: Double(samples.reduce(0) { $0 + $1.steps })) }
             .sorted { $0.date < $1.date }
 
-        let total = todayStepCounts.reduce(0) { $0 + $1.steps }
+        let dayHistory = allStepSamples.map { TrendDataPoint(date: $0.timestamp, value: Double($0.steps)) }
+
+        // Last 4 hours, hourly bucketed — matches activeMinutes' mini bar chart.
+        let currentHourStart = cal.dateInterval(of: .hour, for: Date.now)!.start
+        let windowSamples: [(date: Date, value: Double)] = (0..<4).reversed().map { i in
+            let start = cal.date(byAdding: .hour, value: -i, to: currentHourStart)!
+            let end = cal.date(byAdding: .hour, value: 1, to: start)!
+            let sum = allStepSamples
+                .filter { $0.timestamp >= start && $0.timestamp < end }
+                .reduce(0) { $0 + $1.steps }
+            return (start, Double(sum))
+        }
+
+        let total = allStepSamples
+            .filter { $0.timestamp >= startOfToday }
+            .reduce(0) { $0 + $1.steps }
         let lastReadingAt = allStepSamples.last?.timestamp
         return VitalsMetric(
             current: total,
             lastReadingAt: lastReadingAt,
-            windowSamples: [],
-            history: history
+            windowSamples: windowSamples,
+            history: history,
+            dayHistory: dayHistory
         )
     }
 
@@ -170,9 +217,11 @@ struct TodayView: View {
 
     // MARK: - SpO2
 
+    /// SpO₂ mini chart spans 24h: Garmin typically samples SpO₂ overnight or
+    /// as occasional spot checks, so a 4h daytime window is usually empty.
     private var spo2Metric: VitalsMetric {
         let last = allSpO2.first   // reverse sort → first is latest
-        let recent = allSpO2.filter { $0.timestamp >= windowStart }
+        let recent = allSpO2.filter { $0.timestamp >= last24h }
         let history = allSpO2
             .filter { $0.timestamp >= weekAgo }
             .map { TrendDataPoint(date: $0.timestamp, value: Double($0.percent)) }
@@ -243,11 +292,28 @@ struct TodayView: View {
 
     @ViewBuilder
     private var sleepSection: some View {
-        if let session = todaySleep, !session.stages.isEmpty {
-            SleepNightCard(session: session)
-        } else {
-            sleepPlaceholderCard
+        NavigationLink {
+            HealthDetailView(
+                metricTitle: "Sleep",
+                metricUnit: "h",
+                color: .indigo,
+                icon: "bed.double.fill",
+                data: sleepDurationHistory,
+                useBarChart: true,
+                valueFormatter: { hours in
+                    let h = Int(hours)
+                    let m = Int((hours - Double(h)) * 60)
+                    return "\(h)h \(m)m"
+                }
+            )
+        } label: {
+            if let session = todaySleep, !session.stages.isEmpty {
+                SleepNightCard(session: session)
+            } else {
+                sleepPlaceholderCard
+            }
         }
+        .buttonStyle(.plain)
     }
 
     private var sleepPlaceholderCard: some View {
@@ -286,6 +352,7 @@ struct TodayView: View {
             VitalsGridView(
                 heartRate: heartRateMetric,
                 restingHeartRate: restingHeartRateMetric,
+                hrv: hrvMetric,
                 stress: stressMetric,
                 steps: stepsMetric,
                 activeMinutes: activeMinutesMetric,
@@ -347,7 +414,7 @@ struct TodayView: View {
 #Preview {
     let container = try! ModelContainer(
         for: ConnectedDevice.self, Activity.self, TrackPoint.self, SleepSession.self,
-             SleepStage.self, HeartRateSample.self, BodyBatterySample.self,
+             SleepStage.self, HeartRateSample.self, HRVSample.self, BodyBatterySample.self,
              StressSample.self, StepCount.self, StepSample.self,
              SpO2Sample.self, IntensitySample.self,
         configurations: ModelConfiguration(isStoredInMemoryOnly: true)

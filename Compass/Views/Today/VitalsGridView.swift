@@ -8,12 +8,17 @@ struct VitalsMetric {
     let lastReadingAt: Date?                        // nil → no timestamp line
     let windowSamples: [(date: Date, value: Double)] // last 4h for the mini chart
     let history: [TrendDataPoint]                   // full history for the detail view
+    /// Per-sample source for HealthDetailView's Day chart. Use when `history`
+    /// holds daily roll-ups (e.g. one `StepCount` per day at midnight) but Day
+    /// view should render hourly distribution from finer-grained samples.
+    var dayHistory: [TrendDataPoint]? = nil
 }
 
 /// Compact 2-column grid of today's key vitals.
 struct VitalsGridView: View {
     let heartRate: VitalsMetric
     let restingHeartRate: VitalsMetric
+    let hrv: VitalsMetric
     let stress: VitalsMetric
     let steps: VitalsMetric
     let activeMinutes: VitalsMetric
@@ -23,6 +28,7 @@ struct VitalsGridView: View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
             heartRateCard
             restingHeartRateCard
+            hrvCard
             stressCard
             stepsCard
             activeMinutesCard
@@ -82,6 +88,32 @@ struct VitalsGridView: View {
         .buttonStyle(.plain)
     }
 
+    // MARK: - HRV
+
+    private var hrvCard: some View {
+        NavigationLink {
+            HealthDetailView(
+                metricTitle: "Heart Rate Variability",
+                metricUnit: "ms",
+                color: .purple,
+                icon: "waveform.path.ecg",
+                data: hrv.history,
+                valueFormatter: { "\(Int($0)) ms" }
+            )
+        } label: {
+            cardShell(
+                icon: "waveform.path.ecg", label: "HRV", color: .purple,
+                chart: hrv.windowSamples.isEmpty
+                    ? nil
+                    : AnyView(miniChart(for: hrv, style: .line(color: .purple)))
+            ) {
+                metricValue(hrv.current.map { "\($0)" }, unit: "ms")
+                readingLine(for: hrv)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
     // MARK: - Stress
 
     private var stressCard: some View {
@@ -118,6 +150,7 @@ struct VitalsGridView: View {
                 color: .green,
                 icon: "figure.walk",
                 data: steps.history,
+                dayData: steps.dayHistory,
                 useBarChart: true,
                 valueFormatter: { steps in
                     let n = Int(steps)
@@ -127,7 +160,12 @@ struct VitalsGridView: View {
                 }
             )
         } label: {
-            cardShell(icon: "figure.walk", label: "Steps", color: .green, chart: nil) {
+            cardShell(
+                icon: "figure.walk", label: "Steps", color: .green,
+                chart: steps.windowSamples.isEmpty
+                    ? nil
+                    : AnyView(miniChart(for: steps, style: .bars(color: .green)))
+            ) {
                 metricValue(steps.current.map { $0 >= 1000
                     ? String(format: "%.1fk", Double($0) / 1000)
                     : "\($0)"

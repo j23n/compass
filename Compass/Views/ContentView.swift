@@ -15,10 +15,6 @@ struct ContentView: View {
                 ActivitiesListView()
             }
 
-            Tab("Health", systemImage: "heart.text.square.fill") {
-                HealthView()
-            }
-
             Tab("Courses", systemImage: "map") {
                 CoursesListView()
             }
