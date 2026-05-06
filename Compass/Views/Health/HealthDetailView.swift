@@ -67,12 +67,12 @@ struct HealthDetailView: View {
             let vals = filteredData.filter { $0.date >= s && $0.date < e }.map(\.value)
             if useBarChart {
                 let total = vals.reduce(0, +)
-                return TrendBucket(date: s, endDate: e, low: 0, high: total, display: total)
+                return TrendBucket(date: s, low: 0, high: total, display: total)
             } else {
                 let lo = vals.min() ?? 0
                 let hi = vals.max() ?? 0
                 let avg = vals.isEmpty ? 0 : vals.reduce(0, +) / Double(vals.count)
-                return TrendBucket(date: s, endDate: e, low: lo, high: hi, display: avg)
+                return TrendBucket(date: s, low: lo, high: hi, display: avg)
             }
         }
     }
@@ -91,10 +91,10 @@ struct HealthDetailView: View {
             guard !vals.isEmpty else { return nil }
             if useBarChart {
                 let total = vals.reduce(0, +)
-                return TrendBucket(date: s, endDate: e, low: 0, high: total, display: total)
+                return TrendBucket(date: s, low: 0, high: total, display: total)
             } else {
                 let lo = vals.min()!, hi = vals.max()!
-                return TrendBucket(date: s, endDate: e, low: lo, high: hi, display: vals.reduce(0, +) / Double(vals.count))
+                return TrendBucket(date: s, low: lo, high: hi, display: vals.reduce(0, +) / Double(vals.count))
             }
         }
     }
@@ -428,14 +428,12 @@ struct HealthDetailView: View {
             }
         }
         .chartOverlay { proxy in
-            GeometryReader { _ in
+            GeometryReader { geo in
                 Rectangle().fill(.clear).contentShape(Rectangle())
                     .gesture(DragGesture(minimumDistance: 0)
                         .onChanged { drag in
-                            guard let date: Date = proxy.value(atX: drag.location.x) else { return }
-                            // Match by nearest bucket center — bars anchored on `bucket.date`
-                            // (start-of-period) can render offset from the gesture x-coordinate,
-                            // so interval-containment was selecting the wrong bucket near boundaries.
+                            let x = drag.location.x - geo[proxy.plotAreaFrame].origin.x
+                            guard let date: Date = proxy.value(atX: x) else { return }
                             selectedBucket = data.min(by: {
                                 abs(bucketCenterDate($0.date).timeIntervalSince(date)) <
                                 abs(bucketCenterDate($1.date).timeIntervalSince(date))
