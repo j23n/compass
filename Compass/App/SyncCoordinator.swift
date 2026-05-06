@@ -945,27 +945,43 @@ final class SyncCoordinator {
             return
         }
 
-        // No adjacent session — insert if the file's own stages qualify as real sleep,
-        // OR if its bounds touch local midnight. The Instinct firmware splits one night
-        // across two files at the local-midnight rollover; each half can fail the
-        // quality gate alone but becomes valid once merged. We persist these partial
-        // halves at raw msg 273/276 bounds so a later sibling file can find them via
-        // the merge query; `cleanupSleepSessions` at end of sync deletes any that
-        // remain orphaned and still don't qualify.
+        // No adjacent session — pick session bounds from strongest to weakest source:
+        //   1. `trimmedBounds`   — quality-validated sleep block (preferred).
+        //   2. First→last non-awake stage — used only when the file touches local
+        //      midnight, so the firmware's nightly midnight-split halves still get
+        //      persisted long enough for a sibling file to find them via the merge
+        //      query. Skipping the quality gate here means we may briefly hold a
+        //      noisy half-session, but `cleanupSleepSessions` re-runs `trimmedBounds`
+        //      at end of sync and deletes any that don't qualify after merging.
+        //   3. Drop the file otherwise.
+        // We never use raw msg 273/276 bounds verbatim — those include the file's
+        // leading/trailing awake padding and would land "too-long" sessions on disk.
         let sortedStages = result.stages.sorted { $0.startDate < $1.startDate }
         let qualifying = SleepStageResult.trimmedBounds(stages: sortedStages)
         let touchesMidnight = Self.isNearLocalMidnight(result.startDate)
                            || Self.isNearLocalMidnight(result.endDate)
 
-        guard qualifying != nil || touchesMidnight else {
+        let bounds: (start: Date, end: Date)?
+        if let q = qualifying {
+            bounds = q
+        } else if touchesMidnight {
+            let nonAwake = sortedStages.filter { $0.stage != .awake }
+            if let first = nonAwake.first, let last = nonAwake.last {
+                bounds = (first.startDate, last.endDate)
+            } else {
+                bounds = nil
+            }
+        } else {
+            bounds = nil
+        }
+
+        guard let bounds else {
             AppLogger.sync.debug("Sleep file dropped — no qualifying sleep block (likely watch false-positive)")
             return
         }
-        let sessionStart = qualifying?.start ?? result.startDate
-        let sessionEnd = qualifying?.end ?? result.endDate
         let session = SleepSession(
-            startDate: sessionStart,
-            endDate: sessionEnd,
+            startDate: bounds.start,
+            endDate: bounds.end,
             score: result.score,
             recoveryScore: result.recoveryScore,
             qualifier: result.qualifier
