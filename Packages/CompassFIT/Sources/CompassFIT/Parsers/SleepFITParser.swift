@@ -54,7 +54,10 @@ public struct SleepStageResult: Sendable {
     ///
     /// 1. Splits stages into blocks separated by sustained awake gaps
     ///    (≥ `blockSplitGapMinutes`); short awake interruptions stay in the block.
-    /// 2. Each block's bounds are trimmed to the first/last non-awake stage.
+    /// 2. Each block's `start` anchors to the first non-awake stage that begins
+    ///    a run of `minContinuousNonAwakeMinutes`+; `end` anchors to the last
+    ///    non-awake stage in a run of `minTrailingRunMinutes`+. Isolated rem/light
+    ///    fragments at the edges before/after sustained sleep are trimmed away.
     /// 3. Filters blocks against quality thresholds (duration, deep minutes,
     ///    awake fraction, longest continuous non-awake run).
     /// 4. Returns the block with the most non-awake minutes; `nil` if none qualify.
@@ -70,7 +73,13 @@ public struct SleepStageResult: Sendable {
     ///     misclassifications produce light/rem but rarely deep.
     ///   - minContinuousNonAwakeMinutes: A real sleep block must contain at least
     ///     one uninterrupted run of non-awake stages this long. Any awake stage
-    ///     resets the run.
+    ///     resets the run. Also the threshold for the leading-edge anchor: the
+    ///     block's `start` is the beginning of the first run that reaches it.
+    ///   - minTrailingRunMinutes: Threshold for the trailing-edge anchor: the
+    ///     block's `end` is the end of the last run of non-awake stages that
+    ///     reached this length. Lower than the leading threshold because brief
+    ///     post-wake stages are usually still real sleep, while pre-sleep
+    ///     fragments are usually noise.
     ///   - maxAwakeFraction: Awake minutes within the trimmed window may not exceed
     ///     this fraction of total within-window minutes.
     /// - Returns: `(start, end)` for the best-qualifying sleep block, or `nil`.
@@ -80,6 +89,7 @@ public struct SleepStageResult: Sendable {
         minBlockDurationMinutes: Int = 30,
         minDeepMinutes: Int = 5,
         minContinuousNonAwakeMinutes: Int = 30,
+        minTrailingRunMinutes: Int = 10,
         maxAwakeFraction: Double = 0.6
     ) -> (start: Date, end: Date)? {
         guard !stages.isEmpty else { return nil }
@@ -88,10 +98,21 @@ public struct SleepStageResult: Sendable {
         let minBlockDur = TimeInterval(minBlockDurationMinutes * 60)
         let minDeep = TimeInterval(minDeepMinutes * 60)
         let minContRun = TimeInterval(minContinuousNonAwakeMinutes * 60)
+        let minTrailRun = TimeInterval(minTrailingRunMinutes * 60)
 
         struct Block {
             var start: Date
             var end: Date
+            /// Start of the first non-awake run in this block that reached
+            /// `minContinuousNonAwakeMinutes`. Used as the block's reported
+            /// start so fragmentary pre-sleep stages get trimmed away.
+            /// Always non-nil when `longestNonAwakeRun ≥ minContRun`.
+            var qualifyingStart: Date?
+            /// End of the latest non-awake stage in a run that has reached
+            /// `minTrailingRunMinutes`. Updates as long as the run continues;
+            /// frozen when broken by awake. Used as the block's reported end
+            /// so brief post-wake fragments get trimmed away.
+            var trailingEnd: Date?
             var awake: TimeInterval = 0
             var light: TimeInterval = 0
             var deep: TimeInterval = 0
@@ -109,11 +130,16 @@ public struct SleepStageResult: Sendable {
         // Continuous non-awake duration since the last awake stage. Any awake stage
         // resets this — even one that doesn't trigger a block split.
         var currentRun: TimeInterval = 0
+        // Start of the first non-awake stage in the active run. Reset when the
+        // run breaks. Promoted to `current.qualifyingStart` once the run reaches
+        // `minContRun`.
+        var currentRunStart: Date?
 
         for s in stages {
             let dur = s.endDate.timeIntervalSince(s.startDate)
             if s.stage == .awake {
                 currentRun = 0
+                currentRunStart = nil
                 guard current != nil else { continue }      // ignore leading awake
                 awakePending += dur
                 if awakePending >= blockSplitGap {
@@ -135,9 +161,16 @@ public struct SleepStageResult: Sendable {
                 case .rem:   current!.rem   += dur
                 case .awake: break
                 }
+                if currentRunStart == nil { currentRunStart = s.startDate }
                 currentRun += dur
                 if currentRun > current!.longestNonAwakeRun {
                     current!.longestNonAwakeRun = currentRun
+                }
+                if currentRun >= minContRun, current!.qualifyingStart == nil {
+                    current!.qualifyingStart = currentRunStart
+                }
+                if currentRun >= minTrailRun {
+                    current!.trailingEnd = s.endDate
                 }
             }
         }
@@ -178,8 +211,10 @@ public struct SleepStageResult: Sendable {
             logger.debug("No qualifying sleep block (rejected all \(blocks.count))")
             return nil
         }
-        logger.debug("Selected sleep window \(main.start)–\(main.end) (non-awake \(Int(main.nonAwake/60))m)")
-        return (main.start, main.end)
+        let trimmedStart = main.qualifyingStart ?? main.start
+        let trimmedEnd = main.trailingEnd ?? main.end
+        logger.debug("Selected sleep window \(trimmedStart)–\(trimmedEnd) (non-awake \(Int(main.nonAwake/60))m)")
+        return (trimmedStart, trimmedEnd)
     }
 }
 
