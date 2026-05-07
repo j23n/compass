@@ -58,6 +58,10 @@ final class SyncCoordinator {
     /// The last device we successfully connected to, kept for auto-reconnect.
     private var lastConnectedDevice: PairedDevice?
 
+    /// Name of the most recent paired device, kept for status UI while
+    /// disconnected/connecting (when `connectionState` carries no name).
+    var lastKnownDeviceName: String? { lastConnectedDevice?.name }
+
     /// Device profile derived from the paired device's product ID.
     private var deviceProfile: DeviceProfile = .default
 

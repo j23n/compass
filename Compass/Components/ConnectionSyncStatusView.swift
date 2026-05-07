@@ -3,43 +3,55 @@ import SwiftData
 import CompassBLE
 import CompassData
 
-/// Compact status indicator for the navigation bar.
-/// Sync-in-progress takes precedence over connection state.
+/// Centered navigation-bar status indicator showing device name,
+/// connection state, and live sync progress.
 struct ConnectionSyncStatusView: View {
     @Environment(SyncCoordinator.self) private var sync
 
     var body: some View {
-        HStack(spacing: 6) {
-            statusDot
-            Text(primaryLabel)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-            if let secondary = secondaryLabel {
-                Text("·").foregroundStyle(.tertiary)
-                HStack(spacing: 4) {
-                    if isSyncing {
-                        ProgressView().controlSize(.mini).tint(.secondary)
-                    }
-                    Text(secondary)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
+        VStack(spacing: 2) {
+            HStack(spacing: 6) {
+                Circle().fill(connectionDotColor).frame(width: 9, height: 9)
+                Text(deviceLabel)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
             }
+            secondaryRow
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
         .background(.ultraThinMaterial, in: Capsule())
         .overlay(Capsule().stroke(Color.primary.opacity(0.08), lineWidth: 0.5))
-        .frame(maxWidth: 220, alignment: .leading)
+        .frame(maxWidth: 320)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityDescription)
     }
 
-    private var statusDot: some View {
-        Circle().fill(connectionDotColor).frame(width: 8, height: 8)
+    @ViewBuilder
+    private var secondaryRow: some View {
+        if isSyncing {
+            HStack(spacing: 6) {
+                if sync.progress > 0 {
+                    ProgressView(value: sync.progress)
+                        .progressViewStyle(.linear)
+                        .tint(.accentColor)
+                        .frame(width: 70)
+                } else {
+                    ProgressView().controlSize(.mini).tint(.secondary)
+                }
+                Text(syncDetail)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+        } else {
+            Text(connectionStatusText)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
     }
 
     private var isSyncing: Bool {
@@ -47,22 +59,29 @@ struct ConnectionSyncStatusView: View {
         return false
     }
 
-    private var primaryLabel: String {
-        if case .failed = sync.state { return "Sync failed" }
-        return connectionLabel
+    private var deviceLabel: String {
+        if case .connected(let name) = sync.connectionState { return name }
+        if let name = sync.lastKnownDeviceName { return name }
+        return "No device"
     }
 
-    private var secondaryLabel: String? {
-        switch sync.state {
-        case .syncing(let desc):
-            if let bytes = sync.transferBytes {
-                return "\(byteString(bytes.received)) / \(byteString(bytes.total ?? 0))"
-            }
-            if sync.progress > 0 { return "\(Int(sync.progress * 100))%" }
-            return abbreviated(desc)
-        default:
-            return nil
+    private var connectionStatusText: String {
+        switch sync.connectionState {
+        case .connected:        "Connected"
+        case .connecting:       "Connecting…"
+        case .reconnecting:     "Reconnecting…"
+        case .disconnected:     "Not connected"
+        case .failed(let msg):  msg.isEmpty ? "Connection failed" : "Failed: \(msg)"
         }
+    }
+
+    private var syncDetail: String {
+        guard case .syncing(let desc) = sync.state else { return "" }
+        if let bytes = sync.transferBytes, let total = bytes.total, total > 0 {
+            return "\(Int(sync.progress * 100))% · \(byteString(bytes.received)) / \(byteString(total))"
+        }
+        if sync.progress > 0 { return "\(Int(sync.progress * 100))%" }
+        return abbreviated(desc)
     }
 
     private var connectionDotColor: Color {
@@ -73,20 +92,10 @@ struct ConnectionSyncStatusView: View {
         }
     }
 
-    private var connectionLabel: String {
-        switch sync.connectionState {
-        case .connected(let name): name
-        case .connecting:          "Connecting…"
-        case .reconnecting:        "Reconnecting…"
-        case .disconnected:        "Not connected"
-        case .failed:              "Connection failed"
-        }
-    }
-
     private func abbreviated(_ s: String) -> String {
         let trimmed = s.replacingOccurrences(of: " files...", with: "…")
                        .replacingOccurrences(of: "...", with: "…")
-        return trimmed.count > 24 ? String(trimmed.prefix(23)) + "…" : trimmed
+        return trimmed.count > 28 ? String(trimmed.prefix(27)) + "…" : trimmed
     }
 
     private func byteString(_ bytes: Int) -> String {
@@ -97,21 +106,19 @@ struct ConnectionSyncStatusView: View {
     }
 
     private var accessibilityDescription: String {
-        if let secondary = secondaryLabel {
-            return "\(primaryLabel), \(secondary)"
-        }
-        return primaryLabel
+        let secondary = isSyncing ? syncDetail : connectionStatusText
+        return "\(deviceLabel), \(secondary)"
     }
 }
 
 // MARK: - View modifier
 
 extension View {
-    /// Adds the global connection / sync indicator to the leading edge of the
+    /// Adds the global connection / sync indicator centered in the
     /// nearest navigation bar. Apply once on the root view of each tab's NavigationStack.
     func connectionStatusToolbar() -> some View {
         toolbar {
-            ToolbarItem(placement: .topBarLeading) {
+            ToolbarItem(placement: .principal) {
                 ConnectionSyncStatusView()
             }
         }
