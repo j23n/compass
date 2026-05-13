@@ -1,4 +1,5 @@
 import Foundation
+import CompassData
 
 public enum GPXCourseParserError: LocalizedError {
     case invalidGPXFormat(String)
@@ -139,21 +140,30 @@ public struct GPXCourseParser: Sendable {
         }
 
         // Build POIs at their actual lat/lon, with distance taken from the
-        // closest track point along the route.
-        let pois: [GPXPointOfInterest] = delegate.namedWaypoints.map { wpt in
+        // closest track point along the route. Prefer GPX <type> (Garmin /
+        // Strava / RWGPS) over <sym> (Komoot) when both are present.
+        var pois: [GPXPointOfInterest] = delegate.namedWaypoints.map { wpt in
             let closestDistance = findClosestWaypoint(
                 to: (wpt.latitude, wpt.longitude),
                 in: waypoints
             ).map { waypoints[$0].distanceFromStart } ?? 0
+            let resolved = CoursePointType.resolve(gpxType: wpt.type, gpxSym: wpt.symbol)
             return GPXPointOfInterest(
                 latitude: wpt.latitude,
                 longitude: wpt.longitude,
                 name: wpt.name,
-                symbol: wpt.symbol,
+                symbol: wpt.symbol ?? wpt.type,
                 distanceFromStart: closestDistance,
-                coursePointType: coursePointType(forSymbol: wpt.symbol)
+                coursePointType: resolved.fitCode
             )
         }
+
+        // Synthesise turn cues from sharp bearing changes in the simplified
+        // polyline. These become extra POIs with type left/right/slight/sharp/
+        // u_turn so the watch fires turn alerts even when the GPX source
+        // (Komoot, plain track exports) doesn't include navigation cues.
+        let synthesisedTurns = detectTurns(in: waypoints)
+        pois.append(contentsOf: synthesisedTurns)
 
         // Return the raw trk name (possibly empty); callers should fall back to
         // the source filename if they need a non-empty name.
@@ -167,20 +177,149 @@ public struct GPXCourseParser: Sendable {
         )
     }
 
-    /// Map a GPX `<sym>` value to a FIT `course_point` type enum.
-    /// Common Garmin/OsmAnd symbol names → FIT course_point. Unknown → generic (0).
-    private static func coursePointType(forSymbol sym: String?) -> UInt8 {
-        guard let s = sym?.lowercased() else { return 0 }
-        if s.contains("water") || s.contains("fountain") || s.contains("drinking") { return 3 }
-        if s.contains("summit") || s.contains("peak") || s.contains("mountain") { return 1 }
-        if s.contains("valley") { return 2 }
-        if s.contains("food") || s.contains("restaurant") || s.contains("cafe") { return 4 }
-        if s.contains("danger") || s.contains("warning") { return 5 }
-        if s.contains("first aid") || s.contains("medical") || s.contains("hospital") { return 9 }
-        if s.contains("left") { return 6 }
-        if s.contains("right") { return 7 }
-        if s.contains("straight") { return 8 }
-        return 0  // generic
+    // MARK: - Turn detection
+
+    /// Bearing-change thresholds (degrees) for synthesising turn course_points
+    /// from a track polyline. Tiered so a 50° kink becomes a `slightLeft`
+    /// rather than an aggressive `left`.
+    private static let turnSlightThreshold: Double = 45
+    private static let turnNormalThreshold: Double = 70
+    private static let turnSharpThreshold:  Double = 120
+    private static let turnUTurnThreshold:  Double = 160
+
+    /// Minimum spacing between successive synthetic turn cues (m). Prevents
+    /// emitting two adjacent turns on a tight switchback that simplifies to
+    /// two close vertices.
+    private static let minTurnSpacing: Double = 20
+
+    /// Window used to compute the bearing on either side of a vertex (m).
+    /// We average bearings over the segment(s) up to this length so a
+    /// single noisy GPS point doesn't masquerade as a turn.
+    private static let bearingWindow: Double = 25
+
+    /// Detect sharp bearing changes in the simplified track and emit
+    /// `GPXPointOfInterest` markers for each. Names are auto-generated
+    /// ("Left", "Sharp right", "U-turn"); the user can rename them later
+    /// in the POI editor.
+    private static func detectTurns(in waypoints: [GPXWaypoint]) -> [GPXPointOfInterest] {
+        guard waypoints.count >= 3 else { return [] }
+
+        var turns: [GPXPointOfInterest] = []
+        var lastEmittedDistance: Double = -Double.infinity
+
+        for i in 1..<(waypoints.count - 1) {
+            let pivot = waypoints[i]
+
+            // Skip if we just emitted a turn very close by.
+            if pivot.distanceFromStart - lastEmittedDistance < minTurnSpacing {
+                continue
+            }
+
+            // Bearing in: average over points up to bearingWindow metres
+            // before the pivot. Bearing out: same, after.
+            guard let bearingIn  = averageBearing(approaching: i, in: waypoints),
+                  let bearingOut = averageBearing(departing:   i, in: waypoints) else {
+                continue
+            }
+
+            let delta = signedBearingDelta(from: bearingIn, to: bearingOut)
+            let absDelta = abs(delta)
+            guard absDelta >= turnSlightThreshold else { continue }
+
+            let isLeft = delta < 0
+            let type: CoursePointType
+            if absDelta >= turnUTurnThreshold {
+                type = .uTurn
+            } else if absDelta >= turnSharpThreshold {
+                type = isLeft ? .sharpLeft : .sharpRight
+            } else if absDelta >= turnNormalThreshold {
+                type = isLeft ? .left : .right
+            } else {
+                type = isLeft ? .slightLeft : .slightRight
+            }
+
+            turns.append(GPXPointOfInterest(
+                latitude: pivot.latitude,
+                longitude: pivot.longitude,
+                name: type.displayName,
+                symbol: nil,
+                distanceFromStart: pivot.distanceFromStart,
+                coursePointType: type.fitCode
+            ))
+            lastEmittedDistance = pivot.distanceFromStart
+        }
+
+        return turns
+    }
+
+    /// Average bearing over the segments immediately *before* index `i`,
+    /// walking backwards until we've covered `bearingWindow` metres (or run
+    /// out of points). Bearings are averaged in vector form to handle the
+    /// 360°/0° wraparound correctly.
+    private static func averageBearing(approaching i: Int, in waypoints: [GPXWaypoint]) -> Double? {
+        guard i > 0 else { return nil }
+        var sumX: Double = 0, sumY: Double = 0
+        var travelled: Double = 0
+        var j = i
+        while j > 0 && travelled < bearingWindow {
+            let a = waypoints[j - 1], b = waypoints[j]
+            let seg = haversineDistance(lat1: a.latitude, lon1: a.longitude,
+                                        lat2: b.latitude, lon2: b.longitude)
+            if seg > 0 {
+                let bearing = bearingDegrees(from: a, to: b)
+                let rad = bearing * .pi / 180
+                sumX += cos(rad) * seg
+                sumY += sin(rad) * seg
+                travelled += seg
+            }
+            j -= 1
+        }
+        guard sumX != 0 || sumY != 0 else { return nil }
+        let avg = atan2(sumY, sumX) * 180 / .pi
+        return (avg + 360).truncatingRemainder(dividingBy: 360)
+    }
+
+    private static func averageBearing(departing i: Int, in waypoints: [GPXWaypoint]) -> Double? {
+        guard i < waypoints.count - 1 else { return nil }
+        var sumX: Double = 0, sumY: Double = 0
+        var travelled: Double = 0
+        var j = i
+        while j < waypoints.count - 1 && travelled < bearingWindow {
+            let a = waypoints[j], b = waypoints[j + 1]
+            let seg = haversineDistance(lat1: a.latitude, lon1: a.longitude,
+                                        lat2: b.latitude, lon2: b.longitude)
+            if seg > 0 {
+                let bearing = bearingDegrees(from: a, to: b)
+                let rad = bearing * .pi / 180
+                sumX += cos(rad) * seg
+                sumY += sin(rad) * seg
+                travelled += seg
+            }
+            j += 1
+        }
+        guard sumX != 0 || sumY != 0 else { return nil }
+        let avg = atan2(sumY, sumX) * 180 / .pi
+        return (avg + 360).truncatingRemainder(dividingBy: 360)
+    }
+
+    /// Initial bearing from a → b, in degrees [0, 360).
+    private static func bearingDegrees(from a: GPXWaypoint, to b: GPXWaypoint) -> Double {
+        let lat1 = a.latitude * .pi / 180
+        let lat2 = b.latitude * .pi / 180
+        let dLon = (b.longitude - a.longitude) * .pi / 180
+        let y = sin(dLon) * cos(lat2)
+        let x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon)
+        let deg = atan2(y, x) * 180 / .pi
+        return (deg + 360).truncatingRemainder(dividingBy: 360)
+    }
+
+    /// Signed angle from bearing `a` to bearing `b`, in range (-180, 180].
+    /// Negative = left turn, positive = right turn.
+    private static func signedBearingDelta(from a: Double, to b: Double) -> Double {
+        var d = b - a
+        while d <= -180 { d += 360 }
+        while d > 180   { d -= 360 }
+        return d
     }
 
     // MARK: - Helpers
@@ -212,7 +351,7 @@ public struct GPXCourseParser: Sendable {
 
 private class GPXParserDelegate: NSObject, XMLParserDelegate {
     var trackPoints: [(latitude: Double, longitude: Double, altitude: Double?, timestamp: Date?)] = []
-    var namedWaypoints: [(latitude: Double, longitude: Double, name: String, symbol: String?)] = []
+    var namedWaypoints: [(latitude: Double, longitude: Double, name: String, symbol: String?, type: String?)] = []
     var trackName: String = ""
 
     nonisolated(unsafe) private static let iso8601: ISO8601DateFormatter = {
@@ -228,6 +367,11 @@ private class GPXParserDelegate: NSObject, XMLParserDelegate {
     private var currentTimestamp: Date? = nil
     private var currentName: String = ""
     private var currentSymbol: String? = nil
+    private var currentType: String? = nil
+    /// True while we're inside a `<wpt>` element; the `<type>` child means
+    /// "POI category" there. Outside a `<wpt>` (e.g., on `<rtept>` or stray
+    /// `<type>` tags in `<author><link>`), we ignore it.
+    private var insideWaypoint: Bool = false
 
     func parser(
         _ parser: XMLParser,
@@ -262,7 +406,9 @@ private class GPXParserDelegate: NSObject, XMLParserDelegate {
             }
             currentName = ""
             currentSymbol = nil
+            currentType = nil
             currentTimestamp = nil
+            insideWaypoint = true
 
         case "trk":
             currentName = ""
@@ -290,12 +436,14 @@ private class GPXParserDelegate: NSObject, XMLParserDelegate {
 
         case "wpt":
             if let lat = currentLat, let lon = currentLon, !currentName.isEmpty {
-                namedWaypoints.append((latitude: lat, longitude: lon, name: currentName, symbol: currentSymbol))
+                namedWaypoints.append((latitude: lat, longitude: lon, name: currentName, symbol: currentSymbol, type: currentType))
                 currentLat = nil
                 currentLon = nil
                 currentName = ""
                 currentSymbol = nil
+                currentType = nil
             }
+            insideWaypoint = false
 
         case "trk":
             if trackName.isEmpty && !currentName.isEmpty {
@@ -327,6 +475,12 @@ private class GPXParserDelegate: NSObject, XMLParserDelegate {
             currentName.append(trimmed)
         case "sym":
             currentSymbol = (currentSymbol ?? "") + trimmed
+        case "type":
+            // Only collect <type> inside a <wpt>; outside a waypoint the tag
+            // typically describes a link MIME type (text/html) and isn't useful.
+            if insideWaypoint {
+                currentType = (currentType ?? "") + trimmed
+            }
         default:
             break
         }

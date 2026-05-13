@@ -54,6 +54,8 @@ public struct CourseFITEncoder: Sendable {
     ///   - waypoints: Track points along the route. These become FIT `record` messages.
     ///   - pointsOfInterest: Named POI markers (separate from track points). Each becomes a FIT `course_point`. The watch displays these as POI markers. Track points whose `name != nil` are also emitted as course points for backwards compatibility.
     ///   - totalDistance: Course total distance in meters.
+    ///   - totalAscent: Cumulative climb (m). Written into `lap.total_ascent`; the watch shows it on the course summary screen.
+    ///   - totalDescent: Cumulative descent (m). Written into `lap.total_descent`.
     ///   - estimatedDuration: Expected moving time in seconds.
     ///     Written into `lap.total_elapsed_time` AND distributed across record timestamps
     ///     so the watch virtual-partner knows the expected pace at every point on the route.
@@ -64,6 +66,8 @@ public struct CourseFITEncoder: Sendable {
         waypoints: [FITCourseWaypoint],
         pointsOfInterest: [FITCourseWaypoint] = [],
         totalDistance: Double,
+        totalAscent: Double? = nil,
+        totalDescent: Double? = nil,
         estimatedDuration: TimeInterval = 0
     ) -> Data {
         var body = Data()
@@ -111,16 +115,26 @@ public struct CourseFITEncoder: Sendable {
         // 2. Course
         encodeCourseMessage(name: name, sport: sport, into: &body)
 
-        // 3. Lap
+        // 3. Lap (with bounding box, ascent, descent, timer time)
+        let bbox = boundingBox(of: waypoints)
         encodeLapMessage(
             waypoints: waypoints,
             totalDistance: totalDistance,
+            totalAscent: totalAscent,
+            totalDescent: totalDescent,
+            boundingBox: bbox,
             baseTime: baseTime,
             endTime: endTime,
             into: &body
         )
 
-        // 4. Records — each with its proportional virtual-partner timestamp
+        // 4. Event timer_start — frames the course so the watch enables
+        // Virtual Partner / ETA. Without this, several Fenix / Forerunner
+        // models treat the file as a static map preview only.
+        encodeEventDefinition(into: &body)
+        encodeEventMessage(timestamp: baseTime, eventType: .timerStart, into: &body)
+
+        // 5. Records — each with its proportional virtual-partner timestamp
         for (index, waypoint) in waypoints.enumerated() {
             encodeRecordMessage(
                 waypoint: waypoint,
@@ -130,7 +144,10 @@ public struct CourseFITEncoder: Sendable {
             )
         }
 
-        // 5. Course points (POIs) — emit definition once, then one data msg per point.
+        // 6. Event timer_stop_all — closes the timer bracket.
+        encodeEventMessage(timestamp: endTime, eventType: .timerStopAll, into: &body)
+
+        // 7. Course points (POIs) — emit definition once, then one data msg per point.
         // Sort by distance so message_index ordering matches route progression
         // (some watches assume monotonically-increasing distance per index).
         let namedTrackPoints = waypoints.filter { $0.name != nil }
@@ -139,11 +156,71 @@ public struct CourseFITEncoder: Sendable {
         if !allCoursePoints.isEmpty {
             encodeCoursePointDefinition(into: &body)
             for (index, point) in allCoursePoints.enumerated() {
-                encodeCoursePointMessage(waypoint: point, messageIndex: UInt16(index), into: &body)
+                // Align each POI's timestamp with the nearest record so the
+                // watch's "next POI in X" / ETA-to-cue display works. The
+                // wall-clock fallback we used before showed "--:--" because
+                // the timestamp was decades off the record stream.
+                let poiTimestamp = nearestRecordTimestamp(
+                    forDistance: point.distanceFromStart,
+                    waypoints: waypoints,
+                    timestamps: waypointTimestamps,
+                    fallback: baseTime
+                )
+                encodeCoursePointMessage(
+                    waypoint: point,
+                    timestamp: poiTimestamp,
+                    messageIndex: UInt16(index),
+                    into: &body
+                )
             }
         }
 
         return buildFITFile(body: body)
+    }
+
+    // MARK: - Geometry helpers
+
+    private struct BoundingBox {
+        let minLat: Double
+        let minLon: Double
+        let maxLat: Double
+        let maxLon: Double
+    }
+
+    private static func boundingBox(of waypoints: [FITCourseWaypoint]) -> BoundingBox? {
+        guard let first = waypoints.first else { return nil }
+        var minLat = first.latitude, maxLat = first.latitude
+        var minLon = first.longitude, maxLon = first.longitude
+        for wp in waypoints.dropFirst() {
+            minLat = min(minLat, wp.latitude)
+            maxLat = max(maxLat, wp.latitude)
+            minLon = min(minLon, wp.longitude)
+            maxLon = max(maxLon, wp.longitude)
+        }
+        return BoundingBox(minLat: minLat, minLon: minLon, maxLat: maxLat, maxLon: maxLon)
+    }
+
+    /// Find the timestamp of the record whose `distanceFromStart` is closest
+    /// to `distance`. Linear scan — fine for typical course sizes (<2k points).
+    private static func nearestRecordTimestamp(
+        forDistance distance: Double,
+        waypoints: [FITCourseWaypoint],
+        timestamps: [UInt32],
+        fallback: UInt32
+    ) -> UInt32 {
+        guard !waypoints.isEmpty, waypoints.count == timestamps.count else {
+            return fallback
+        }
+        var bestIndex = 0
+        var bestDelta = abs(waypoints[0].distanceFromStart - distance)
+        for (i, wp) in waypoints.enumerated().dropFirst() {
+            let d = abs(wp.distanceFromStart - distance)
+            if d < bestDelta {
+                bestDelta = d
+                bestIndex = i
+            }
+        }
+        return timestamps[bestIndex]
     }
 
     // MARK: - FIT File Structure
@@ -240,23 +317,36 @@ public struct CourseFITEncoder: Sendable {
         body.append(dataMsg)
     }
 
-    private static func encodeLapMessage(waypoints: [FITCourseWaypoint], totalDistance: Double, baseTime: UInt32, endTime: UInt32, into body: inout Data) {
+    private static func encodeLapMessage(
+        waypoints: [FITCourseWaypoint],
+        totalDistance: Double,
+        totalAscent: Double?,
+        totalDescent: Double?,
+        boundingBox: BoundingBox?,
+        baseTime: UInt32,
+        endTime: UInt32,
+        into body: inout Data
+    ) {
         // Definition message (local type 2, global type 19 = lap)
-        var defMsg = Data()
-        defMsg.append(0)  // reserved
-        defMsg.append(0)  // architecture
-        defMsg.appendUInt16LE(19)  // global message type (lap)
-        defMsg.append(8)  // numFields
-
-        // FIT profile: lap (mesg_num=19)
-        //   253 timestamp           date_time
-        //   0   event               enum
-        //   1   event_type          enum
-        //   2   start_time          date_time
-        //   3   start_position_lat  sint32 (semicircles)
-        //   4   start_position_long sint32 (semicircles)
-        //   7   total_elapsed_time  uint32 (scale 1000, units s)
-        //   9   total_distance      uint32 (scale 100,  units m → cm)
+        //
+        // FIT profile: lap (mesg_num=19) — fields we emit:
+        //   253 timestamp            date_time
+        //   0   event                enum
+        //   1   event_type           enum
+        //   2   start_time           date_time
+        //   3   start_position_lat   sint32 (semicircles)
+        //   4   start_position_long  sint32 (semicircles)
+        //   5   end_position_lat     sint32 (semicircles)
+        //   6   end_position_long    sint32 (semicircles)
+        //   7   total_elapsed_time   uint32 (scale 1000, units s)
+        //   8   total_timer_time     uint32 (scale 1000, units s)   ← used by Virtual Partner / ETA
+        //   9   total_distance       uint32 (scale 100,  units m → cm)
+        //   21  total_ascent         uint16 (units m)
+        //   22  total_descent        uint16 (units m)
+        //   27  swc_lat              sint32 (semicircles)  ← bounding box for map preview
+        //   28  swc_long             sint32 (semicircles)
+        //   29  nec_lat              sint32 (semicircles)
+        //   30  nec_long             sint32 (semicircles)
         let fields: [(UInt8, UInt8, UInt8)] = [
             (253, 4, 0x86),  // timestamp
             (0, 1, 0),       // event
@@ -264,38 +354,123 @@ public struct CourseFITEncoder: Sendable {
             (2, 4, 0x86),    // start_time
             (3, 4, 0x85),    // start_position_lat
             (4, 4, 0x85),    // start_position_long
+            (5, 4, 0x85),    // end_position_lat
+            (6, 4, 0x85),    // end_position_long
             (7, 4, 0x86),    // total_elapsed_time (ms)
+            (8, 4, 0x86),    // total_timer_time (ms)
             (9, 4, 0x86),    // total_distance (cm)
+            (21, 2, 0x84),   // total_ascent (m)
+            (22, 2, 0x84),   // total_descent (m)
+            (27, 4, 0x85),   // swc_lat
+            (28, 4, 0x85),   // swc_long
+            (29, 4, 0x85),   // nec_lat
+            (30, 4, 0x85),   // nec_long
         ]
 
+        var defMsg = Data()
+        defMsg.append(0)  // reserved
+        defMsg.append(0)  // architecture
+        defMsg.appendUInt16LE(19)
+        defMsg.append(UInt8(fields.count))
         for (fieldNum, size, baseType) in fields {
             defMsg.append(fieldNum)
             defMsg.append(size)
             defMsg.append(baseType)
         }
-
         encodeDefinitionMessageHeader(&defMsg, localType: 2)
         body.append(defMsg)
 
-        // Data message (local type 2) — order matches definition above
+        // Data message (local type 2) — order matches definition above.
         var dataMsg = Data()
         let firstWaypoint = waypoints.first
+        let lastWaypoint  = waypoints.last
+        let elapsedSec    = endTime > baseTime ? endTime - baseTime : 0
+        let elapsedMS: UInt32 = elapsedSec > 0 ? elapsedSec * 1000 : 0xFFFFFFFF
+        // FIT invalid sentinels.
+        let invalidUInt16: UInt16 = 0xFFFF
+        let invalidSemicircles: Int32 = 0x7FFFFFFF
 
-        dataMsg.appendUInt32LE(endTime)                                              // timestamp (lap end)
+        dataMsg.appendUInt32LE(endTime)                                              // timestamp
         dataMsg.append(0)                                                            // event = TIMER
-        dataMsg.append(0)                                                            // event_type = START
+        dataMsg.append(1)                                                            // event_type = STOP
         dataMsg.appendUInt32LE(baseTime)                                             // start_time
         dataMsg.appendInt32LE(degreesToSemicircles(firstWaypoint?.latitude ?? 0))    // start_position_lat
         dataMsg.appendInt32LE(degreesToSemicircles(firstWaypoint?.longitude ?? 0))   // start_position_long
-        // total_elapsed_time: ms (scale=1000). Derives from endTime−baseTime so GPS
-        // timestamps and estimated-duration paths both work without extra arguments.
-        // FIT invalid sentinel = 0xFFFFFFFF (no timing data).
-        let elapsedSec = endTime > baseTime ? endTime - baseTime : 0
-        let elapsedMS: UInt32 = elapsedSec > 0 ? elapsedSec * 1000 : 0xFFFFFFFF
+        dataMsg.appendInt32LE(degreesToSemicircles(lastWaypoint?.latitude  ?? 0))    // end_position_lat
+        dataMsg.appendInt32LE(degreesToSemicircles(lastWaypoint?.longitude ?? 0))    // end_position_long
         dataMsg.appendUInt32LE(elapsedMS)                                            // total_elapsed_time (ms)
+        dataMsg.appendUInt32LE(elapsedMS)                                            // total_timer_time  (ms) — same as elapsed for courses
         dataMsg.appendUInt32LE(UInt32(totalDistance * 100))                          // total_distance (cm)
+        dataMsg.appendUInt16LE(totalAscent.map  { UInt16(clamping: Int($0.rounded())) } ?? invalidUInt16)  // total_ascent
+        dataMsg.appendUInt16LE(totalDescent.map { UInt16(clamping: Int($0.rounded())) } ?? invalidUInt16)  // total_descent
+        // Bounding box (SW corner = min lat/lon, NE corner = max lat/lon).
+        if let bbox = boundingBox {
+            dataMsg.appendInt32LE(degreesToSemicircles(bbox.minLat))                 // swc_lat
+            dataMsg.appendInt32LE(degreesToSemicircles(bbox.minLon))                 // swc_long
+            dataMsg.appendInt32LE(degreesToSemicircles(bbox.maxLat))                 // nec_lat
+            dataMsg.appendInt32LE(degreesToSemicircles(bbox.maxLon))                 // nec_long
+        } else {
+            dataMsg.appendInt32LE(invalidSemicircles)
+            dataMsg.appendInt32LE(invalidSemicircles)
+            dataMsg.appendInt32LE(invalidSemicircles)
+            dataMsg.appendInt32LE(invalidSemicircles)
+        }
 
         encodeDataMessageHeader(&dataMsg, localType: 2)
+        body.append(dataMsg)
+    }
+
+    // MARK: - Event message
+
+    private enum FITEventType {
+        case timerStart
+        case timerStopAll
+
+        /// (event, event_type) pair per FIT SDK.
+        var bytes: (UInt8, UInt8) {
+            switch self {
+            case .timerStart:   (0, 0)  // event=TIMER, event_type=START
+            case .timerStopAll: (0, 4)  // event=TIMER, event_type=STOP_ALL
+            }
+        }
+    }
+
+    /// Emit the FIT `event` (mesg_num=21) definition message once, on local
+    /// type 5. The data message is emitted by `encodeEventMessage`.
+    private static func encodeEventDefinition(into body: inout Data) {
+        // Fields we emit:
+        //   253 timestamp   date_time
+        //   0   event       enum
+        //   1   event_type  enum
+        //   3   data        uint32   (timer_trigger source — set to 0)
+        let fields: [(UInt8, UInt8, UInt8)] = [
+            (253, 4, 0x86),
+            (0, 1, 0),
+            (1, 1, 0),
+            (3, 4, 0x86),
+        ]
+        var defMsg = Data()
+        defMsg.append(0)
+        defMsg.append(0)
+        defMsg.appendUInt16LE(21)
+        defMsg.append(UInt8(fields.count))
+        for (fieldNum, size, baseType) in fields {
+            defMsg.append(fieldNum)
+            defMsg.append(size)
+            defMsg.append(baseType)
+        }
+        encodeDefinitionMessageHeader(&defMsg, localType: 5)
+        body.append(defMsg)
+    }
+
+    private static func encodeEventMessage(timestamp: UInt32, eventType: FITEventType, into body: inout Data) {
+        let (event, evType) = eventType.bytes
+        var dataMsg = Data()
+        dataMsg.appendUInt32LE(timestamp)
+        dataMsg.append(event)
+        dataMsg.append(evType)
+        dataMsg.appendUInt32LE(0)  // data — timer_trigger source (0 = manual)
+        encodeDataMessageHeader(&dataMsg, localType: 5)
         body.append(dataMsg)
     }
 
@@ -385,10 +560,12 @@ public struct CourseFITEncoder: Sendable {
         body.append(defMsg)
     }
 
-    private static func encodeCoursePointMessage(waypoint: FITCourseWaypoint, messageIndex: UInt16, into body: inout Data) {
-        // Data message (local type 4) — order matches definition above
+    private static func encodeCoursePointMessage(waypoint: FITCourseWaypoint, timestamp: UInt32, messageIndex: UInt16, into body: inout Data) {
+        // Data message (local type 4) — order matches definition above.
+        // `timestamp` MUST line up with the record stream so the watch can
+        // compute time-to-cue. Passing real wall-clock here (as we used to)
+        // pegs the ETA display at "--".
         var dataMsg = Data()
-        let timestamp = UInt32(Date().timeIntervalSince(FITTimestamp.epoch))
         dataMsg.appendUInt16LE(messageIndex)                                    // message_index
         dataMsg.appendUInt32LE(timestamp)                                       // timestamp
         dataMsg.appendInt32LE(degreesToSemicircles(waypoint.latitude))          // position_lat

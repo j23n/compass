@@ -12,6 +12,7 @@ struct CourseDetailView: View {
 
     @State private var uploadError: String?
     @State private var isEditing = false
+    @State private var editingPOI: CoursePOI?
 
     init(course: Course) {
         self.course = course
@@ -74,6 +75,9 @@ struct CourseDetailView: View {
         .sheet(isPresented: $isEditing) {
             CourseEditView(course: course)
         }
+        .sheet(item: $editingPOI) { poi in
+            POIEditView(poi: poi)
+        }
     }
 
     private var poiSection: some View {
@@ -83,23 +87,34 @@ struct CourseDetailView: View {
                 .font(.headline)
             VStack(spacing: 0) {
                 ForEach(Array(sortedPOIs.enumerated()), id: \.element.persistentModelID) { index, poi in
-                    HStack(spacing: 12) {
-                        Image(systemName: poiSystemImage(forType: poi.coursePointType))
-                            .font(.body)
-                            .foregroundStyle(.blue)
-                            .frame(width: 24)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(poi.name)
-                                .font(.subheadline)
-                                .lineLimit(1)
-                            Text(String(format: "%.2f km", poi.distanceFromStart / 1_000))
+                    Button {
+                        editingPOI = poi
+                    } label: {
+                        let type = CoursePointType(fitCode: UInt8(clamping: poi.coursePointType))
+                        HStack(spacing: 12) {
+                            Image(systemName: type.systemImage)
+                                .font(.body)
+                                .foregroundStyle(.blue)
+                                .frame(width: 24)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(poi.name)
+                                    .font(.subheadline)
+                                    .lineLimit(1)
+                                    .foregroundStyle(.primary)
+                                Text("\(String(format: "%.2f", poi.distanceFromStart / 1_000)) km · \(type.displayName)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.tertiary)
                         }
-                        Spacer()
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 12)
+                        .contentShape(Rectangle())
                     }
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 12)
+                    .buttonStyle(.plain)
                     if index < sortedPOIs.count - 1 {
                         Divider().padding(.leading, 48)
                     }
@@ -107,21 +122,6 @@ struct CourseDetailView: View {
             }
             .background(Color(.systemGray6))
             .cornerRadius(10)
-        }
-    }
-
-    private func poiSystemImage(forType type: Int) -> String {
-        switch type {
-        case 1: return "mountain.2.fill"
-        case 2: return "arrow.down.to.line"
-        case 3: return "drop.fill"
-        case 4: return "fork.knife"
-        case 5: return "exclamationmark.triangle"
-        case 6: return "arrow.turn.up.left"
-        case 7: return "arrow.turn.up.right"
-        case 8: return "arrow.up"
-        case 9: return "cross.fill"
-        default: return "mappin"
         }
     }
 
@@ -218,6 +218,8 @@ struct CourseDetailView: View {
             waypoints: fitWaypoints,
             pointsOfInterest: fitPOIs,
             totalDistance: course.totalDistance,
+            totalAscent: course.totalAscent,
+            totalDescent: course.totalDescent,
             estimatedDuration: course.estimatedDuration
         )
 

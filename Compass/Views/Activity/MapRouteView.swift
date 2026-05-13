@@ -128,7 +128,8 @@ struct MapRouteView: UIViewRepresentable {
             if let poi = annotation as? POIAnnotation {
                 let view = MKMarkerAnnotationView(annotation: poi, reuseIdentifier: "POI")
                 view.markerTintColor = .systemBlue
-                view.glyphImage = UIImage(systemName: poiSystemImage(forType: poi.poi.coursePointType))
+                let type = CoursePointType(fitCode: UInt8(clamping: poi.poi.coursePointType))
+                view.glyphImage = UIImage(systemName: type.systemImage)
                 view.canShowCallout = true
                 view.titleVisibility = .adaptive
                 return view
@@ -150,20 +151,6 @@ struct MapRouteView: UIViewRepresentable {
             return nil
         }
 
-        private func poiSystemImage(forType type: Int) -> String {
-            switch type {
-            case 1: return "mountain.2.fill"
-            case 2: return "arrow.down.to.line"
-            case 3: return "drop.fill"
-            case 4: return "fork.knife"
-            case 5: return "exclamationmark.triangle"
-            case 6: return "arrow.turn.up.left"
-            case 7: return "arrow.turn.up.right"
-            case 8: return "arrow.up"
-            case 9: return "cross.fill"
-            default: return "mappin"
-            }
-        }
     }
 }
 
