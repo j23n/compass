@@ -137,7 +137,7 @@ final class SyncCoordinator {
         AppLogger.sync.debug("Watch-initiated progress: \(event.description)")
         switch event {
         case .starting:
-            state = .syncing(description: "Watch syncing...")
+            state = .syncing(description: "Connecting...")
         case .listing(let dir):
             state = .syncing(description: "Listing \(dir.rawValue) files...")
         case .downloading(let file, let received, let total):
