@@ -38,6 +38,8 @@
 		A644476816FC419C0BE661DB /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35A2BA7F0CFC5430A008040A /* SettingsView.swift */; };
 		AF25231DC99F0BBD1F7EC8B4 /* TrendChartView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 054458D3773E3474BBDAAD23 /* TrendChartView.swift */; };
 		BD700844C17010534F502A34 /* SyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D3DBAB5FAC5E338AC5A1FE4 /* SyncCoordinator.swift */; };
+		A1C2E5F913B4D687C5092E48 /* CourseImportCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8B30A2C1D5E947A6F1B3C95 /* CourseImportCoordinator.swift */; };
+		D4E7F8A91B2C5063879ABCDF /* DuplicateImportSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1B25E73894A0F62D578E0A4 /* DuplicateImportSheet.swift */; };
 		C50098134F965E6A549044FE /* CompassData in Frameworks */ = {isa = PBXBuildFile; productRef = 9049E5DD8AE098DC4CB2913F /* CompassData */; };
 		C92B21FA835C4672774DF1FC /* ActivityDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B52DC488550FEC3D8883493F /* ActivityDetailView.swift */; };
 		CA08357C40DF211C8AE2B097 /* MiniWindowChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9458BB642CB63826CB513B12 /* MiniWindowChart.swift */; };
@@ -73,6 +75,8 @@
 		2399241D1129827B533BF73A /* WeatherService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeatherService.swift; sourceTree = "<group>"; };
 		291F08030DDECFA63DC57CD3 /* CourseEditView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseEditView.swift; sourceTree = "<group>"; };
 		2D3DBAB5FAC5E338AC5A1FE4 /* SyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncCoordinator.swift; sourceTree = "<group>"; };
+		F8B30A2C1D5E947A6F1B3C95 /* CourseImportCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseImportCoordinator.swift; sourceTree = "<group>"; };
+		C1B25E73894A0F62D578E0A4 /* DuplicateImportSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DuplicateImportSheet.swift; sourceTree = "<group>"; };
 		3502B0EDE3324077F26D3EF8 /* ChartYDomain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChartYDomain.swift; sourceTree = "<group>"; };
 		35A2BA7F0CFC5430A008040A /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		35B616B28C57B7C5DA43CA6B /* TodayViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayViewModel.swift; sourceTree = "<group>"; };
@@ -174,6 +178,7 @@
 				E595EBFC0032E4A36808EB59 /* CourseRowView.swift */,
 				665EE9956A0F92054D603F0A /* CoursesListView.swift */,
 				A4E9C1F602D7B6859E3C7A82 /* POIEditView.swift */,
+				C1B25E73894A0F62D578E0A4 /* DuplicateImportSheet.swift */,
 			);
 			path = Courses;
 			sourceTree = "<group>";
@@ -254,6 +259,7 @@
 			isa = PBXGroup;
 			children = (
 				D5ED41DBDA73B5A4BD512EB0 /* CourseFileStore.swift */,
+				F8B30A2C1D5E947A6F1B3C95 /* CourseImportCoordinator.swift */,
 				3F895C1DE3D221686BB2BFD7 /* FindMyPhoneService.swift */,
 				81F4753EEB4B8FFB778FBCFA /* FITFileStore.swift */,
 				18F573121C079EF19C621678 /* LogStore.swift */,
@@ -413,6 +419,8 @@
 				E781A0DBAAA0802E09BF7B77 /* CourseDetailView.swift in Sources */,
 				E0B84A084BC696B93EBFBC04 /* CourseEditView.swift in Sources */,
 				B3F7A0E81C5D6E97A4B82F11 /* POIEditView.swift in Sources */,
+				A1C2E5F913B4D687C5092E48 /* CourseImportCoordinator.swift in Sources */,
+				D4E7F8A91B2C5063879ABCDF /* DuplicateImportSheet.swift in Sources */,
 				330DE8B61FCC45FD477ABF1E /* CourseFileStore.swift in Sources */,
 				91FF28BD920460859321964D /* CourseFilesView.swift in Sources */,
 				849BDEF3DCDDE1C11AB65F70 /* CourseRowView.swift in Sources */,

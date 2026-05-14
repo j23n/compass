@@ -7,6 +7,7 @@ import CompassBLE
 struct CompassApp: App {
     let container: ModelContainer
     @State private var syncCoordinator: SyncCoordinator
+    @State private var importCoordinator = CourseImportCoordinator()
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -59,10 +60,46 @@ struct CompassApp: App {
         WindowGroup {
             ContentView()
                 .environment(syncCoordinator)
+                .environment(importCoordinator)
+                .modifier(CourseImportRouting(coordinator: importCoordinator))
         }
         .modelContainer(container)
         .onChange(of: scenePhase) { _, newPhase in
             Task { await syncCoordinator.handleScenePhase(newPhase) }
         }
+    }
+}
+
+/// Wires `.onOpenURL`, the duplicate-prompt sheet, and the import-error
+/// alert onto the root scene content. Lives here (rather than directly on
+/// the `WindowGroup` body) so it has access to the `\.modelContext`
+/// environment provided by `.modelContainer`.
+private struct CourseImportRouting: ViewModifier {
+    let coordinator: CourseImportCoordinator
+    @Environment(\.modelContext) private var modelContext
+
+    func body(content: Content) -> some View {
+        @Bindable var bindable = coordinator
+        return content
+            .onOpenURL { url in
+                coordinator.handle(url: url, context: modelContext)
+            }
+            .sheet(item: $bindable.pendingImport) { pending in
+                DuplicateImportSheet(pending: pending) { resolution in
+                    coordinator.resolvePending(resolution, context: modelContext)
+                }
+            }
+            .alert(
+                "Import Failed",
+                isPresented: Binding(
+                    get: { coordinator.lastError != nil },
+                    set: { if !$0 { coordinator.lastError = nil } }
+                ),
+                presenting: coordinator.lastError
+            ) { _ in
+                Button("OK") { coordinator.lastError = nil }
+            } message: { error in
+                Text(error)
+            }
     }
 }

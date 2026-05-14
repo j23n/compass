@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UniformTypeIdentifiers
 import CompassData
 import CompassFIT
 
@@ -8,8 +9,16 @@ struct CoursesListView: View {
     private var courses: [Course]
 
     @State private var isImporting = false
-    @State private var importError: String?
     @Environment(\.modelContext) private var modelContext
+    @Environment(CourseImportCoordinator.self) private var importCoordinator
+
+    /// Allowed types for the in-app file picker. Both UTIs are declared in
+    /// Info.plist via UTImportedTypeDeclarations; the optional unwrap is
+    /// safe at runtime because the declarations are bundled with the app.
+    private static let importableTypes: [UTType] = [
+        UTType(filenameExtension: "gpx", conformingTo: .xml) ?? .xml,
+        UTType(filenameExtension: "fit", conformingTo: .data) ?? .data,
+    ]
 
     var body: some View {
         NavigationStack {
@@ -31,13 +40,13 @@ struct CoursesListView: View {
             .connectionStatusToolbar()
             .fileImporter(
                 isPresented: $isImporting,
-                allowedContentTypes: [.init(filenameExtension: "gpx", conformingTo: .text)!],
+                allowedContentTypes: Self.importableTypes,
                 onCompletion: { result in
                     switch result {
                     case .success(let url):
-                        importGPX(from: url)
+                        importCoordinator.handle(url: url, context: modelContext)
                     case .failure(let error):
-                        importError = error.localizedDescription
+                        importCoordinator.lastError = error.localizedDescription
                     }
                 }
             )
@@ -50,7 +59,7 @@ struct CoursesListView: View {
         ContentUnavailableView {
             Label("No Courses", systemImage: "map")
         } description: {
-            Text("Import a GPX file to get started.")
+            Text("Import a GPX or FIT file to get started.")
         }
     }
 
@@ -75,68 +84,13 @@ struct CoursesListView: View {
         }
     }
 
-    // MARK: - File Import
-
-    private func importGPX(from url: URL) {
-        let securityScoped = url.startAccessingSecurityScopedResource()
-        defer { if securityScoped { url.stopAccessingSecurityScopedResource() } }
-
-        do {
-            let data = try Data(contentsOf: url)
-            let parsed = try GPXCourseParser.parse(data: data)
-
-            let waypoints = parsed.waypoints.enumerated().map { index, gpxWaypoint in
-                CourseWaypoint(
-                    order: index,
-                    latitude: gpxWaypoint.latitude,
-                    longitude: gpxWaypoint.longitude,
-                    altitude: gpxWaypoint.altitude,
-                    name: gpxWaypoint.name,
-                    distanceFromStart: gpxWaypoint.distanceFromStart,
-                    timestamp: gpxWaypoint.timestamp
-                )
-            }
-
-            let pois = parsed.pointsOfInterest.map { poi in
-                CoursePOI(
-                    latitude: poi.latitude,
-                    longitude: poi.longitude,
-                    name: poi.name,
-                    coursePointType: Int(poi.coursePointType),
-                    distanceFromStart: poi.distanceFromStart
-                )
-            }
-
-            // Use the GPX track's <name> if set, otherwise fall back to the
-            // source filename (without extension) so users see a meaningful
-            // course name in the list.
-            let trimmedName = parsed.name.trimmingCharacters(in: .whitespaces)
-            let courseName = trimmedName.isEmpty
-                ? url.deletingPathExtension().lastPathComponent
-                : trimmedName
-
-            let course = Course(
-                name: courseName,
-                importDate: Date(),
-                sport: .running,
-                totalDistance: parsed.totalDistance,
-                totalAscent: parsed.totalAscent,
-                totalDescent: parsed.totalDescent,
-                waypoints: waypoints
-            )
-            course.pointsOfInterest = pois
-
-            modelContext.insert(course)
-            try modelContext.save()
-            AppLogger.sync.info("Imported course: \(course.name) with \(course.waypoints.count) waypoints and \(pois.count) POIs")
-        } catch {
-            importError = error.localizedDescription
-            AppLogger.sync.error("GPX import error: \(error)")
-        }
-    }
+    // File import is handled centrally by `CourseImportCoordinator` so
+    // share-sheet "Open in" and the in-app picker share the same parse +
+    // duplicate-resolution flow.
 }
 
 #Preview {
     CoursesListView()
+        .environment(CourseImportCoordinator())
         .modelContainer(for: [Course.self, CourseWaypoint.self, CoursePOI.self], inMemory: true)
 }
