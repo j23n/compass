@@ -19,8 +19,27 @@ public final class Activity {
     public var totalDescent: Double?
     public var sourceFileName: String?
 
+    /// Pause intervals during the activity, in chronological order.
+    /// Combined source: FIT `event` (timer stop ↔ start pairs) plus
+    /// gap-detection over the trackpoint stream (gaps >30 s that aren't
+    /// already inside a FIT-explicit pause).
+    /// Parallel arrays for SwiftData friendliness — each (start[i], end[i])
+    /// is one pause. Always have the same length.
+    public var pauseStarts: [Date] = []
+    public var pauseEnds: [Date] = []
+
     @Relationship(deleteRule: .cascade, inverse: \TrackPoint.activity)
     public var trackPoints: [TrackPoint]
+
+    /// Pause intervals as a convenience computed pair. Empty if either
+    /// underlying array is empty or they disagree in length (data drift).
+    public var pauses: [DateInterval] {
+        guard pauseStarts.count == pauseEnds.count else { return [] }
+        return zip(pauseStarts, pauseEnds).compactMap { start, end in
+            guard end > start else { return nil }
+            return DateInterval(start: start, end: end)
+        }
+    }
 
     public init(
         id: UUID = UUID(),
@@ -35,6 +54,8 @@ public final class Activity {
         totalAscent: Double? = nil,
         totalDescent: Double? = nil,
         sourceFileName: String? = nil,
+        pauseStarts: [Date] = [],
+        pauseEnds: [Date] = [],
         trackPoints: [TrackPoint] = []
     ) {
         self.id = id
@@ -49,6 +70,8 @@ public final class Activity {
         self.totalAscent = totalAscent
         self.totalDescent = totalDescent
         self.sourceFileName = sourceFileName
+        self.pauseStarts = pauseStarts
+        self.pauseEnds = pauseEnds
         self.trackPoints = trackPoints
     }
 }

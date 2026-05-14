@@ -338,6 +338,50 @@ struct ActivityDetailView: View {
         cadenceOverTime.map { (elapsed($0.timestamp), Double($0.cadence)) }
     }
 
+    /// Pause intervals expressed as elapsed-time pairs (seconds from
+    /// activity start), used to (a) split chart series so the line breaks
+    /// across each pause and (b) draw the dashed vertical rules.
+    private var pausesElapsed: [(start: TimeInterval, end: TimeInterval)] {
+        activity.pauses
+            .map { (elapsed($0.start), elapsed($0.end)) }
+            .filter { $0.end > $0.start }
+            .sorted { $0.start < $1.start }
+    }
+
+    /// Annotate each chart sample with the index of the play-segment it
+    /// falls in (0 = before the first pause, 1 = between first and second
+    /// pause, etc.). Swift Charts uses the `series:` value on LineMark /
+    /// AreaMark to decide which points to connect, so distinct segment IDs
+    /// produce a visual break.
+    private func segmented(
+        _ data: [(t: TimeInterval, v: Double)]
+    ) -> [(seg: Int, t: TimeInterval, v: Double)] {
+        let pauses = pausesElapsed
+        guard !pauses.isEmpty else {
+            return data.map { (0, $0.t, $0.v) }
+        }
+        return data.map { point in
+            // Segment index = number of pauses that have already ended at
+            // or before this sample's elapsed time. Points falling *inside*
+            // a pause (rare; FIT generally drops them) get the segment id
+            // of the next play interval, which keeps them visually separate
+            // from the previous segment.
+            var seg = 0
+            for p in pauses {
+                if p.end <= point.t {
+                    seg += 1
+                } else if p.start <= point.t {
+                    // Inside a pause — push to the next segment.
+                    seg += 1
+                    break
+                } else {
+                    break
+                }
+            }
+            return (seg, point.t, point.v)
+        }
+    }
+
     private func formatElapsed(_ seconds: TimeInterval) -> String {
         let total = Int(max(0, seconds))
         let h = total / 3600
@@ -677,12 +721,20 @@ struct ActivityDetailView: View {
         // For reversed scales (pace), the visual floor is the max data value.
         let values = data.map(\.v)
         let baseline = reversed ? (values.max() ?? 0) : (values.min() ?? 0)
+        let segmentedData = segmented(data)
+        let pauses = pausesElapsed
         return Chart {
-            ForEach(Array(data.enumerated()), id: \.offset) { _, point in
+            ForEach(Array(segmentedData.enumerated()), id: \.offset) { _, point in
+                // `series:` on both marks makes each play-segment its own
+                // line/area; without it SwiftCharts connects the last
+                // pre-pause sample to the first post-pause sample with a
+                // straight cross-pause segment. Colour stays uniform across
+                // segments via the explicit foregroundStyle(color).
                 AreaMark(
                     x: .value("T", point.t),
                     yStart: .value("Base", baseline),
-                    yEnd: .value("V", point.v)
+                    yEnd: .value("V", point.v),
+                    series: .value("Seg", point.seg)
                 )
                 .foregroundStyle(
                     LinearGradient(
@@ -692,10 +744,26 @@ struct ActivityDetailView: View {
                     )
                 )
                 .interpolationMethod(.catmullRom)
-                LineMark(x: .value("T", point.t), y: .value("V", point.v))
-                    .foregroundStyle(color)
-                    .interpolationMethod(.catmullRom)
-                    .lineStyle(StrokeStyle(lineWidth: 2))
+                LineMark(
+                    x: .value("T", point.t),
+                    y: .value("V", point.v),
+                    series: .value("Seg", point.seg)
+                )
+                .foregroundStyle(color)
+                .interpolationMethod(.catmullRom)
+                .lineStyle(StrokeStyle(lineWidth: 2))
+            }
+
+            // Mark each pause with a pair of dashed vertical rules — one at
+            // the stop, one at the resume — so the gap is visually obvious
+            // even on flat metrics where the segment break alone is subtle.
+            ForEach(Array(pauses.enumerated()), id: \.offset) { _, pause in
+                RuleMark(x: .value("PauseStart", pause.start))
+                    .foregroundStyle(.gray.opacity(0.45))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                RuleMark(x: .value("PauseEnd", pause.end))
+                    .foregroundStyle(.gray.opacity(0.45))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
             }
 
             if let hl = highlightedElapsed, let nearest = nearestPoint(in: data, elapsed: hl) {

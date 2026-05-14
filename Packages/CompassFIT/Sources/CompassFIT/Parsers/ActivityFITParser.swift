@@ -18,6 +18,7 @@ public struct ActivityFITParser: Sendable {
 
         var sessionMessage: FitMessage?
         var trackPoints: [TrackPoint] = []
+        var timerEvents: [(timestamp: Date, isStart: Bool)] = []
 
         for message in fitFile.messages {
             switch message.messageType {
@@ -29,6 +30,11 @@ public struct ActivityFITParser: Sendable {
             case .record:
                 if let tp = parseTrackPoint(from: message) {
                     trackPoints.append(tp)
+                }
+
+            case Self.eventMesgNum:
+                if let parsed = parseTimerEvent(from: message) {
+                    timerEvents.append(parsed)
                 }
 
             case .lap:
@@ -44,7 +50,85 @@ public struct ActivityFITParser: Sendable {
             return nil
         }
 
-        return buildActivity(from: session, trackPoints: trackPoints)
+        let pauses = derivePauses(events: timerEvents, trackPoints: trackPoints)
+        return buildActivity(from: session, trackPoints: trackPoints, pauses: pauses)
+    }
+
+    // FIT global mesg_num for `event` (21). FitMessageType isn't an enum,
+    // it's an Int typealias, so we match against the raw value.
+    private static let eventMesgNum: FitMessageType = 21
+
+    /// Pull a (timestamp, isStart) pair out of a FIT `event` message if it's
+    /// a timer event we care about. Returns nil for non-timer events.
+    ///
+    /// FIT semantics: event=0 (timer), event_type=0 (start) bracket recording;
+    /// stop/stop_all/stop_disable/stop_disable_all all mean "pause". A
+    /// resume is a subsequent timer-start.
+    private func parseTimerEvent(from message: FitMessage) -> (timestamp: Date, isStart: Bool)? {
+        guard let ts = message.interpretedField(key: "timestamp")?.time else { return nil }
+        guard let event = message.interpretedField(key: "event")?.name, event == "timer" else { return nil }
+        guard let evType = message.interpretedField(key: "event_type")?.name else { return nil }
+        switch evType {
+        case "start":
+            return (ts, true)
+        case "stop", "stop_all", "stop_disable", "stop_disable_all":
+            return (ts, false)
+        default:
+            return nil
+        }
+    }
+
+    /// Threshold (s) for treating a gap in the trackpoint stream as a pause.
+    /// 30 s ignores normal 1 Hz jitter / brief satellite re-locks but catches
+    /// water-bottle stops on devices that don't emit explicit pause events.
+    private static let gapPauseThreshold: TimeInterval = 30
+
+    /// Combine FIT timer events with trackpoint-gap detection. FIT events
+    /// are authoritative when present; gap-detected pauses are added only
+    /// where they don't overlap an existing FIT-explicit pause.
+    private func derivePauses(
+        events: [(timestamp: Date, isStart: Bool)],
+        trackPoints: [TrackPoint]
+    ) -> [(start: Date, end: Date)] {
+        var pauses: [(start: Date, end: Date)] = []
+
+        // Walk sorted timer events; each stop opens a pause, the next start
+        // closes it. Discard unclosed/duplicate pairs defensively.
+        let sortedEvents = events.sorted { $0.timestamp < $1.timestamp }
+        var openStop: Date?
+        for ev in sortedEvents {
+            if ev.isStart {
+                if let stopAt = openStop, ev.timestamp > stopAt {
+                    pauses.append((start: stopAt, end: ev.timestamp))
+                }
+                openStop = nil
+            } else {
+                // Only the FIRST stop in a sequence matters — repeated stops
+                // before a start don't open new pauses.
+                if openStop == nil { openStop = ev.timestamp }
+            }
+        }
+
+        // Gap detection: any inter-trackpoint gap longer than
+        // `gapPauseThreshold` is treated as a pause unless it sits inside
+        // an existing FIT pause (within ~5 s tolerance for clock skew).
+        let sortedPoints = trackPoints.sorted { $0.timestamp < $1.timestamp }
+        for i in 1..<sortedPoints.count {
+            let prev = sortedPoints[i - 1].timestamp
+            let curr = sortedPoints[i].timestamp
+            let gap = curr.timeIntervalSince(prev)
+            guard gap >= Self.gapPauseThreshold else { continue }
+            // Skip if covered by a FIT pause.
+            let inFitPause = pauses.contains { existing in
+                existing.start <= prev.addingTimeInterval(5)
+                    && existing.end >= curr.addingTimeInterval(-5)
+            }
+            if !inFitPause {
+                pauses.append((start: prev, end: curr))
+            }
+        }
+
+        return pauses.sorted { $0.start < $1.start }
     }
 
     // MARK: - Private helpers
@@ -79,7 +163,11 @@ public struct ActivityFITParser: Sendable {
         )
     }
 
-    private func buildActivity(from session: FitMessage, trackPoints: [TrackPoint]) -> Activity {
+    private func buildActivity(
+        from session: FitMessage,
+        trackPoints: [TrackPoint],
+        pauses: [(start: Date, end: Date)]
+    ) -> Activity {
         let startDate = session.interpretedField(key: "start_time")?.time
                      ?? session.interpretedField(key: "timestamp")?.time
                      ?? Date()
@@ -104,6 +192,8 @@ public struct ActivityFITParser: Sendable {
             maxHeartRate: maxHR,
             totalAscent: ascent,
             totalDescent: descent,
+            pauseStarts: pauses.map(\.start),
+            pauseEnds: pauses.map(\.end),
             trackPoints: trackPoints
         )
     }
