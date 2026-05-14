@@ -29,6 +29,43 @@ targets:
                 UIBackgroundModes:
                     - bluetooth-central
                     - audio
+                # Allow Files / share-sheet "Open in Compass" for GPX + FIT.
+                LSSupportsOpeningDocumentsInPlace: true
+                CFBundleDocumentTypes:
+                    - CFBundleTypeName: GPX Course
+                      CFBundleTypeRole: Viewer
+                      LSHandlerRank: Alternate
+                      LSItemContentTypes:
+                          - com.topografix.gpx
+                    - CFBundleTypeName: FIT Course
+                      CFBundleTypeRole: Viewer
+                      LSHandlerRank: Alternate
+                      LSItemContentTypes:
+                          - com.garmin.fit
+                # Community-adopted UTIs (Apple doesn't issue official ones for
+                # either). Import — not export — because we're declaring support
+                # for types defined by others.
+                UTImportedTypeDeclarations:
+                    - UTTypeIdentifier: com.topografix.gpx
+                      UTTypeDescription: GPS Exchange File
+                      UTTypeConformsTo:
+                          - public.xml
+                      UTTypeTagSpecification:
+                          public.filename-extension:
+                              - gpx
+                          public.mime-type:
+                              - application/gpx+xml
+                              - application/gpx
+                              - application/xml+gpx
+                    - UTTypeIdentifier: com.garmin.fit
+                      UTTypeDescription: Garmin FIT File
+                      UTTypeConformsTo:
+                          - public.data
+                      UTTypeTagSpecification:
+                          public.filename-extension:
+                              - fit
+                          public.mime-type:
+                              - application/vnd.ant.fit
         sources:
             - path: Compass
               excludes:

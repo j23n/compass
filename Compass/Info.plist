@@ -25,6 +25,8 @@
 		<string>bluetooth-central</string>
 		<string>audio</string>
 	</array>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
@@ -72,6 +74,8 @@
 				<key>public.mime-type</key>
 				<array>
 					<string>application/gpx+xml</string>
+					<string>application/gpx</string>
+					<string>application/xml+gpx</string>
 				</array>
 			</dict>
 		</dict>
