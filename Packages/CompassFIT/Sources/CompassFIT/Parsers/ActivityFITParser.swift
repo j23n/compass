@@ -78,15 +78,27 @@ public struct ActivityFITParser: Sendable {
         }
     }
 
-    /// Threshold (s) for treating a gap in the trackpoint stream as a pause.
-    /// 60 s ignores normal 1 Hz jitter, brief satellite re-locks, and short
-    /// stationary moments (traffic light, crossing) but catches longer
-    /// breaks on devices that don't emit explicit pause events.
-    private static let gapPauseThreshold: TimeInterval = 60
+    /// Speed (m/s) below which a sample counts as "stationary" for inferred
+    /// pause detection. 0.3 m/s ≈ 1.1 km/h — slower than the slowest walk,
+    /// well above typical GPS noise on a stationary device.
+    private static let stationarySpeedThreshold: Double = 0.3
 
-    /// Combine FIT timer events with trackpoint-gap detection. FIT events
-    /// are authoritative when present; gap-detected pauses are added only
+    /// Minimum continuous duration (s) of stationary samples to register as
+    /// an inferred pause. Same threshold as before so brief stops (traffic
+    /// lights, photo breaks) aren't surfaced.
+    private static let stationaryPauseDuration: TimeInterval = 60
+
+    /// Combine FIT timer events with stationary-speed inference. FIT events
+    /// are authoritative when present; the inferred pauses are added only
     /// where they don't overlap an existing FIT-explicit pause.
+    ///
+    /// "Stationary" requires the watch to have recorded a speed reading
+    /// below the threshold — samples *without* a speed field (yoga,
+    /// strength training, any indoor sport without a speed sensor) are
+    /// skipped entirely, so non-GPS workouts can never produce false
+    /// positives. The previous wall-clock gap heuristic was replaced
+    /// because it missed the common case of sitting on a bench with the
+    /// watch still recording 1 Hz HR and zero-speed samples.
     private func derivePauses(
         events: [(timestamp: Date, isStart: Bool)],
         trackPoints: [TrackPoint]
@@ -110,24 +122,45 @@ public struct ActivityFITParser: Sendable {
             }
         }
 
-        // Gap detection: any inter-trackpoint gap longer than
-        // `gapPauseThreshold` is treated as a pause unless it sits inside
-        // an existing FIT pause (within ~5 s tolerance for clock skew).
+        // Stationary-speed inference. Walk the trackpoint stream and
+        // track runs of consecutive low-speed samples; a run that lasts
+        // ≥ stationaryPauseDuration becomes an inferred pause. Samples
+        // without a speed value are passed over without closing the run
+        // (rare in practice — GPS streams are consistent) but also
+        // without opening one, so indoor workouts produce nothing.
         let sortedPoints = trackPoints.sorted { $0.timestamp < $1.timestamp }
-        for i in 1..<sortedPoints.count {
-            let prev = sortedPoints[i - 1].timestamp
-            let curr = sortedPoints[i].timestamp
-            let gap = curr.timeIntervalSince(prev)
-            guard gap >= Self.gapPauseThreshold else { continue }
-            // Skip if covered by a FIT pause.
-            let inFitPause = pauses.contains { existing in
-                existing.start <= prev.addingTimeInterval(5)
-                    && existing.end >= curr.addingTimeInterval(-5)
+        var runStart: Date?
+        var runEnd: Date?
+
+        func closeRunIfQualifies() {
+            guard let s = runStart, let e = runEnd,
+                  e.timeIntervalSince(s) >= Self.stationaryPauseDuration else {
+                runStart = nil; runEnd = nil
+                return
             }
-            if !inFitPause {
-                pauses.append((start: prev, end: curr))
+            // Skip if covered by a FIT pause (5 s clock-skew tolerance).
+            let overlapsFit = pauses.contains { fit in
+                fit.start <= s.addingTimeInterval(5)
+                    && fit.end >= e.addingTimeInterval(-5)
+            }
+            if !overlapsFit {
+                pauses.append((start: s, end: e))
+            }
+            runStart = nil; runEnd = nil
+        }
+
+        for tp in sortedPoints {
+            guard let speed = tp.speed else { continue }
+            if speed < Self.stationarySpeedThreshold {
+                if runStart == nil { runStart = tp.timestamp }
+                runEnd = tp.timestamp
+            } else {
+                closeRunIfQualifies()
             }
         }
+        // Activity may end while still stationary (watch stopped without
+        // moving again) — close out any open run.
+        closeRunIfQualifies()
 
         return pauses.sorted { $0.start < $1.start }
     }
