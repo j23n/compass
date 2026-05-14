@@ -71,6 +71,20 @@ final class SyncCoordinator {
     /// The last device we successfully connected to, kept for auto-reconnect.
     private var lastConnectedDevice: PairedDevice?
 
+    /// Context the per-file parse callback inserts into during an in-flight sync.
+    /// Set by `sync(context:)` for phone-initiated syncs (using the caller's context)
+    /// and created lazily by `parseFromWatchInitiated` for watch-initiated syncs.
+    /// Cleared after `finalizeActiveSync` runs.
+    ///
+    /// Holding this as an instance property avoids capturing the non-`Sendable`
+    /// `ModelContext` inside the `@Sendable` parse callback.
+    private var activeSyncContext: ModelContext?
+
+    /// `true` when `activeSyncContext` was created locally (watch-initiated path)
+    /// and should be discarded after finalize. Phone-initiated syncs use the
+    /// caller-owned context and only clear the reference.
+    private var ownsActiveSyncContext = false
+
     /// Name of the most recent paired device, kept for status UI while
     /// disconnected/connecting (when `connectionState` carries no name).
     var lastKnownDeviceName: String? { lastConnectedDevice?.name }
@@ -418,6 +432,14 @@ final class SyncCoordinator {
             await self.processWatchInitiatedURLs(entries)
         }
 
+        // Per-file parse callback for watch-initiated sync. Phone-initiated sync
+        // passes its own callback through `pullFITFiles`; this one is used when the
+        // watch triggers a sync via SYNCHRONIZATION.
+        await gm.setSyncParseHandler { [weak self] url, fileIndex in
+            guard let self else { return false }
+            return await self.parseFromWatchInitiated(url: url, fileIndex: fileIndex)
+        }
+
         AppLogger.sync.info("Watch services wired: weather, find-my-phone, music, phone-location")
     }
 
@@ -437,6 +459,7 @@ final class SyncCoordinator {
             await gm.setMusicCommandHandler(nil)
             await gm.setFindMyPhoneHandler(nil)
             await gm.setWatchInitiatedSyncHandler(nil)
+            await gm.setSyncParseHandler(nil)
         }
         musicService.stopObserving()
         phoneLocationService.stopUpdating()
@@ -494,17 +517,34 @@ final class SyncCoordinator {
 
             let directories: Set<FITDirectory> = [.activity, .monitor, .sleep, .metrics]
             AppLogger.sync.debug("Requesting FIT files from directories: \(directories.map(\.rawValue).joined(separator: ", "))")
+
+            // Stash the caller's context where the parse callback can find it; the
+            // callback runs on MainActor (so accessing self.activeSyncContext is
+            // safe) without needing to capture the non-Sendable context directly.
+            activeSyncContext = context
+            ownsActiveSyncContext = false
+
+            // In-loop parse callback: returning `true` causes FileSyncSession to
+            // archive the file on the watch before the next download, while the sync
+            // session is still open.
+            let parseCallback: @Sendable (URL, UInt16) async -> Bool = { [weak self] url, fileIndex in
+                guard let self else { return false }
+                return await self.parseDuringActiveSync(url: url, fileIndex: fileIndex)
+            }
+
             let fitEntries = try await deviceManager.pullFITFiles(
                 directories: directories,
-                progress: continuation
+                progress: continuation,
+                parseAndPersist: parseCallback
             )
             continuation.finish()
             progressTask.cancel()
 
-            AppLogger.sync.info("Received \(fitEntries.count) FIT file(s), beginning parse")
+            AppLogger.sync.info("Received \(fitEntries.count) FIT file(s); running post-sync finalize")
 
-            state = .syncing(description: "Parsing \(fitEntries.count) files...")
-            let count = await processFITFiles(fitEntries, context: context)
+            state = .syncing(description: "Finalizing \(fitEntries.count) files...")
+            finalizeActiveSync()
+            let count = fitEntries.count
 
             state = .completed(fileCount: count)
             AppLogger.sync.info("Sync completed: \(count) files processed")
@@ -518,46 +558,45 @@ final class SyncCoordinator {
                 try? await Task.sleep(for: .seconds(5))
                 state = .idle
             }
+            // Always release the per-sync context reference, even on the error
+            // path: leaving it set would let the next sync's parse callback insert
+            // into a stale context owned by a since-dismissed view.
+            activeSyncContext = nil
+            ownsActiveSyncContext = false
         }
     }
 
-    @discardableResult
-    private func processFITFiles(
-        _ entries: [(url: URL, fileIndex: UInt16)],
-        context: ModelContext
-    ) async -> Int {
-        var savedEntries: [(url: URL, fileIndex: UInt16)] = []
-        for entry in entries {
-            if let saved = try? FITFileStore.shared.save(from: entry.url, fileIndex: entry.fileIndex) {
-                savedEntries.append((url: saved, fileIndex: entry.fileIndex))
-                AppLogger.sync.debug("Saved FIT file: \(saved.lastPathComponent)")
-            } else {
-                AppLogger.sync.warning("Failed to save FIT file: \(entry.url.lastPathComponent)")
-            }
+    /// Per-file callback used by `FileSyncSession`. Copies the temp file into the
+    /// FIT cache, parses it, and inserts rows into `activeSyncContext`. The watch's
+    /// archive command is issued by `FileSyncSession` itself when this returns
+    /// `true`, so it lands inside the sync session — the only place this firmware
+    /// actually honours it (see `docs/garmin/devices/instinct-solar-1g.md` §"File
+    /// flags and archive marking").
+    @MainActor
+    private func parseDuringActiveSync(url: URL, fileIndex: UInt16) async -> Bool {
+        guard let context = activeSyncContext else {
+            AppLogger.sync.warning("Parse callback fired with no activeSyncContext (fileIndex=\(fileIndex))")
+            return false
         }
-
-        await parseAndFinalize(savedEntries, archiveOnSuccess: true, context: context)
-        lastSyncDate = Date()
-        return savedEntries.count
+        guard let saved = try? FITFileStore.shared.save(from: url, fileIndex: fileIndex) else {
+            AppLogger.sync.warning("Failed to save FIT file: \(url.lastPathComponent)")
+            return false
+        }
+        AppLogger.sync.debug("Saved FIT file: \(saved.lastPathComponent)")
+        return await parseAndPersistFITFile(url: saved, fileIndex: fileIndex, context: context)
     }
 
-    /// Shared post-pass for every flow that turns FIT files into SwiftData rows:
-    /// parse each entry, run sleep-session cleanup over the full merged set, then
-    /// save. Centralising this means `sync` / `importFITFiles` / `reparseLocalFITFiles`
-    /// can never silently diverge on the post-parse steps (e.g. forgetting to call
-    /// `cleanupSleepSessions`, which re-validates merged sleep across midnight-split
-    /// halves and trims edge awake).
-    private func parseAndFinalize(
-        _ entries: [(url: URL, fileIndex: UInt16)],
-        archiveOnSuccess: Bool,
-        context: ModelContext
-    ) async {
-        for entry in entries {
-            await parseAndPersistFITFile(url: entry.url, fileIndex: entry.fileIndex,
-                                         archiveOnSuccess: archiveOnSuccess, context: context)
-        }
+    /// Finalize the in-flight sync after the per-file in-loop work is done. Runs
+    /// the sleep-session cleanup over the merged set (re-validates midnight-split
+    /// halves), flushes to disk, and clears the active context reference.
+    @MainActor
+    private func finalizeActiveSync() {
+        guard let context = activeSyncContext else { return }
         cleanupSleepSessions(context: context)
         try? context.save()
+        lastSyncDate = Date()
+        activeSyncContext = nil
+        ownsActiveSyncContext = false
     }
 
     /// Imports FIT files from external URLs (e.g. an archive of files previously
@@ -569,7 +608,7 @@ final class SyncCoordinator {
         let context = ModelContext(modelContainer)
         AppLogger.sync.info("Importing \(urls.count) external FIT file(s)")
 
-        var savedEntries: [(url: URL, fileIndex: UInt16)] = []
+        var savedCount = 0
         for url in urls {
             let securityScoped = url.startAccessingSecurityScopedResource()
             defer { if securityScoped { url.stopAccessingSecurityScopedResource() } }
@@ -579,12 +618,14 @@ final class SyncCoordinator {
                 continue
             }
             AppLogger.sync.debug("Copied imported file to: \(saved.lastPathComponent)")
-            savedEntries.append((url: saved, fileIndex: 0))
+            await parseAndPersistFITFile(url: saved, fileIndex: 0, context: context)
+            savedCount += 1
         }
 
-        await parseAndFinalize(savedEntries, archiveOnSuccess: false, context: context)
-        AppLogger.sync.info("Import complete (\(savedEntries.count)/\(urls.count) file(s))")
-        return savedEntries.count
+        cleanupSleepSessions(context: context)
+        try? context.save()
+        AppLogger.sync.info("Import complete (\(savedCount)/\(urls.count) file(s))")
+        return savedCount
     }
 
     /// Wipes every FIT-derived row from the local database and re-imports from the
@@ -614,29 +655,32 @@ final class SyncCoordinator {
         AppLogger.sync.info("Reparsing \(files.count) local FIT file(s)")
 
         // Pull a numeric suffix off each stored filename for logging only —
-        // `archiveOnSuccess` is false here so we never re-archive on the watch.
-        let entries: [(url: URL, fileIndex: UInt16)] = files.map { file in
+        // local reparse never archives anything on the watch.
+        for file in files {
             let suffix = file.name
                 .replacingOccurrences(of: ".fit", with: "")
                 .split(separator: "_").last
             let fileIndex = suffix.flatMap { UInt16($0) } ?? 0
-            return (url: file.url, fileIndex: fileIndex)
+            await parseAndPersistFITFile(url: file.url, fileIndex: fileIndex, context: context)
         }
-
-        await parseAndFinalize(entries, archiveOnSuccess: false, context: context)
+        cleanupSleepSessions(context: context)
+        try? context.save()
         AppLogger.sync.info("Reparse complete (\(files.count) file(s))")
         return files.count
     }
 
+    /// Parse a saved FIT file and insert its rows into `context`.
+    /// Returns `true` when at least one parser recognised the file and emitted
+    /// (or correctly skipped) rows — i.e. the file is safe to archive on the watch.
+    @discardableResult
     private func parseAndPersistFITFile(
         url: URL,
         fileIndex: UInt16,
-        archiveOnSuccess: Bool,
         context: ModelContext
-    ) async {
+    ) async -> Bool {
         guard let fileData = try? Data(contentsOf: url) else {
             AppLogger.sync.warning("Could not read FIT file at: \(url.lastPathComponent)")
-            return
+            return false
         }
         let filename = url.lastPathComponent.lowercased()
         AppLogger.sync.debug("Parsing file: \(filename) (\(fileData.count) bytes)")
@@ -890,16 +934,33 @@ final class SyncCoordinator {
             AppLogger.sync.warning("Unrecognized FIT filename pattern: \(filename)")
         }
 
-        if parsedOK && archiveOnSuccess {
-            await deviceManager.archiveFITFile(fileIndex: fileIndex)
-        }
+        return parsedOK
     }
 
+    /// Per-file parse callback for watch-initiated sync.
+    /// Lazily creates `activeSyncContext` so all files in the same sync share one
+    /// context that `processWatchInitiatedURLs` then finalizes and saves.
+    @MainActor
+    private func parseFromWatchInitiated(url: URL, fileIndex: UInt16) async -> Bool {
+        if activeSyncContext == nil {
+            activeSyncContext = ModelContext(modelContainer)
+            ownsActiveSyncContext = true
+            beginBackgroundTask()
+        }
+        return await parseDuringActiveSync(url: url, fileIndex: fileIndex)
+    }
+
+    /// Watch-initiated post-sync finalize. Parsing already happened in-loop via
+    /// `parseFromWatchInitiated`; this only runs the sleep-session cleanup and
+    /// flushes the shared context to disk.
     private func processWatchInitiatedURLs(_ entries: [(url: URL, fileIndex: UInt16)]) async {
-        beginBackgroundTask()
-        defer { endBackgroundTask() }
-        let context = ModelContext(modelContainer)
-        await processFITFiles(entries, context: context)
+        guard activeSyncContext != nil else {
+            AppLogger.sync.debug("Watch-initiated finalize: no rows to flush (entries=\(entries.count))")
+            return
+        }
+        let owned = ownsActiveSyncContext
+        finalizeActiveSync()
+        if owned { endBackgroundTask() }
     }
 
     func uploadCourse(fitURL: URL, fitSize: Int, course: Course) {

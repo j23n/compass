@@ -23,7 +23,9 @@ import os
 ///   watch → FileTransferData × N
 ///   phone → FileTransferDataACK per chunk
 ///   phone saves FIT bytes to temp file
-///   [archive flag sent by caller after successful parse]
+///   phone invokes `parseAndPersist` callback (if provided)
+///   phone → SetFileFlagsMessage (5008, ARCHIVE=0x10)  [only when callback returns true]
+///   watch → SetFileFlagsStatus ACK
 ///
 /// phone → SystemEvent(SYNC_COMPLETE)
 /// ```
@@ -46,18 +48,33 @@ actor FileSyncSession {
     // MARK: - Entry point
 
     /// Run a complete sync and return (tempFileURL, directoryEntry) pairs for each
-    /// downloaded FIT.  The caller is responsible for archiving each file on the watch
-    /// after successfully persisting its content.
+    /// downloaded FIT.
+    ///
+    /// When `parseAndPersist` is provided, it is invoked synchronously between each
+    /// download and the next.  If it returns `true`, the file is archived on the watch
+    /// (`SetFileFlagsMessage(ARCHIVE)`) **before** the next download and **before**
+    /// `SYNC_COMPLETE` — matching the protocol ordering the Instinct Solar firmware
+    /// expects.  Archiving outside the active sync session (after `SYNC_COMPLETE`) is
+    /// ACK'd by the watch but not actually honoured: on the next sync the files come
+    /// back as `[new]`.
+    ///
+    /// When `parseAndPersist` is `nil`, no archive is sent and the caller is
+    /// responsible for archiving each file after persisting it.  This path is retained
+    /// for callers that have not yet been wired up to the in-loop callback.
     ///
     /// - Parameters:
     ///   - directories: Which FIT directories to pull (activity / monitor / sleep / metrics).
     ///   - progress: Optional continuation for progress updates.
     ///   - watchInitiated: `true` when triggered by an incoming `SynchronizationMessage`;
     ///     the phone must send a `FilterMessage` handshake before requesting the directory.
+    ///   - parseAndPersist: Optional per-file callback invoked after each successful
+    ///     download. Returning `true` signals "FIT bytes are durably persisted; safe to
+    ///     archive on the watch."
     func run(
         directories: Set<FITDirectory>,
         progress: AsyncStream<SyncProgress>.Continuation?,
-        watchInitiated: Bool = false
+        watchInitiated: Bool = false,
+        parseAndPersist: (@Sendable (URL, UInt16) async -> Bool)? = nil
     ) async throws -> [(url: URL, entry: DirectoryEntry)] {
         let trigger = watchInitiated ? "watch-initiated" : "phone-initiated"
         let dirNames = directories.map(\.rawValue).sorted().joined(separator: ", ")
@@ -95,6 +112,17 @@ actor FileSyncSession {
             do {
                 let url = try await downloadFile(entry: entry, progress: progress)
                 downloadedPairs.append((url: url, entry: entry))
+
+                // Parse-and-archive in-loop, before SYNC_COMPLETE.  Skipping the
+                // archive when the callback returns false matches the WP-2 invariant
+                // ("parse failure leaves the file unarchived so it is re-pulled next
+                // sync") without leaving every monitor/sleep file unarchived forever.
+                if let parseAndPersist {
+                    let parsedOK = await parseAndPersist(url, entry.fileIndex)
+                    if parsedOK {
+                        await archiveFile(entry: entry)
+                    }
+                }
             } catch is CancellationError {
                 throw CancellationError()
             } catch SyncError.chunkTimeout, SyncError.streamEnded {
@@ -403,6 +431,35 @@ actor FileSyncSession {
                 .replacingOccurrences(of: "T", with: "-")
                 .replacingOccurrences(of: ":", with: "-")
             BLELogger.sync.info("Sync:   #\(entry.fileIndex) \(typeStr) \(entry.fileSize)B \(tsStr) \(entry.isArchived ? "[archived]" : "[new]")")
+        }
+    }
+
+    // MARK: - Archive flag
+
+    /// Send `SetFileFlagsMessage(ARCHIVE)` for one file and verify the ACK matches.
+    ///
+    /// Must be called from inside the per-file sync loop, before `SYNC_COMPLETE`:
+    /// the Instinct Solar ACKs `SetFileFlag` issued after `SYNC_COMPLETE` but does not
+    /// actually persist the flag, so rolling monitor/sleep files come back as `[new]`
+    /// on the next sync.
+    private func archiveFile(entry: DirectoryEntry) async {
+        let flagMsg = SetFileFlagsMessage(fileIndex: entry.fileIndex).toMessage()
+        do {
+            let response = try await client.sendAndWait(flagMsg, awaitType: .response, timeout: .seconds(5))
+            let decoded = try GFDIResponse.decode(from: response.payload)
+            if decoded.originalType != GFDIMessageType.setFileFlag.rawValue {
+                BLELogger.sync.warning(
+                    "Sync: archive fileIndex=\(entry.fileIndex) got mismatched response originalType=0x\(String(format: "%04X", decoded.originalType))"
+                )
+                return
+            }
+            if decoded.status == GFDIResponse.Status.ack.rawValue {
+                BLELogger.sync.info("Sync: archived fileIndex=\(entry.fileIndex)")
+            } else {
+                BLELogger.sync.warning("Sync: archive fileIndex=\(entry.fileIndex) NACK status=\(decoded.status)")
+            }
+        } catch {
+            BLELogger.sync.warning("Sync: archive fileIndex=\(entry.fileIndex) failed: \(error.localizedDescription)")
         }
     }
 

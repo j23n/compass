@@ -184,7 +184,8 @@ public actor MockGarminDevice: DeviceManagerProtocol {
 
     public func pullFITFiles(
         directories: Set<FITDirectory>,
-        progress: AsyncStream<SyncProgress>.Continuation?
+        progress: AsyncStream<SyncProgress>.Continuation?,
+        parseAndPersist: (@Sendable (URL, UInt16) async -> Bool)? = nil
     ) async throws -> [(url: URL, fileIndex: UInt16)] {
         BLELogger.sync.info("[Mock] Pulling FIT files from \(directories.count) directories")
 
@@ -246,6 +247,9 @@ public actor MockGarminDevice: DeviceManagerProtocol {
                 let fileURL = tempDir.appendingPathComponent(fileName)
                 try fitData.write(to: fileURL)
                 allPairs.append((url: fileURL, fileIndex: nextFileIndex))
+                if let parseAndPersist {
+                    _ = await parseAndPersist(fileURL, nextFileIndex)
+                }
                 nextFileIndex += 1
             }
         }

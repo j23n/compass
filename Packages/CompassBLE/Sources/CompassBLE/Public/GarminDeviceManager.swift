@@ -57,6 +57,11 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
     /// Called when a watch-initiated sync completes with (url, fileIndex) pairs.
     private var watchInitiatedSyncHandler: (@Sendable ([(url: URL, fileIndex: UInt16)]) async -> Void)?
 
+    /// In-loop parse-and-persist callback used by watch-initiated sync. Returning
+    /// `true` causes `FileSyncSession` to archive the file on the watch before
+    /// requesting the next download.
+    private var syncParseHandler: (@Sendable (URL, UInt16) async -> Bool)?
+
     /// Prevents overlapping WeatherKit fetches when the watch retransmits every 5 s.
     private var weatherRequestInFlight = false
 
@@ -88,6 +93,12 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
         _ handler: (@Sendable ([(url: URL, fileIndex: UInt16)]) async -> Void)?
     ) {
         watchInitiatedSyncHandler = handler
+    }
+
+    public func setSyncParseHandler(
+        _ handler: (@Sendable (URL, UInt16) async -> Bool)?
+    ) {
+        syncParseHandler = handler
     }
 
     /// Push one or more MUSIC_CONTROL_ENTITY_UPDATE messages to the watch.
@@ -390,13 +401,15 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
         // through. Each new watch-initiated sync emits its own start→completed
         // sequence onto the same stream.
         let progressContinuation = watchSyncProgressContinuation
+        let parseHandler = syncParseHandler
         let task = Task<[(url: URL, fileIndex: UInt16)], Error> {
             let session = FileSyncSession(client: client, maxPacketSize: pktSize)
             do {
                 let pairs = try await session.run(
                     directories: Set(FITDirectory.allCases),
                     progress: progressContinuation,
-                    watchInitiated: true
+                    watchInitiated: true,
+                    parseAndPersist: parseHandler
                 )
                 return pairs.map { (url: $0.url, fileIndex: $0.entry.fileIndex) }
             } catch {
@@ -628,7 +641,8 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
 
     public func pullFITFiles(
         directories: Set<FITDirectory>,
-        progress: AsyncStream<SyncProgress>.Continuation?
+        progress: AsyncStream<SyncProgress>.Continuation?,
+        parseAndPersist: (@Sendable (URL, UInt16) async -> Bool)?
     ) async throws -> [(url: URL, fileIndex: UInt16)] {
         guard _isConnected else {
             progress?.yield(.failed(SyncError.notConnected))
@@ -643,7 +657,12 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
         let pktSize = maxPacketSize
         let task = Task<[(url: URL, fileIndex: UInt16)], Error> {
             let session = FileSyncSession(client: client, maxPacketSize: pktSize)
-            let pairs = try await session.run(directories: directories, progress: progress, watchInitiated: false)
+            let pairs = try await session.run(
+                directories: directories,
+                progress: progress,
+                watchInitiated: false,
+                parseAndPersist: parseAndPersist
+            )
             return pairs.map { (url: $0.url, fileIndex: $0.entry.fileIndex) }
         }
         activeSyncTask = task

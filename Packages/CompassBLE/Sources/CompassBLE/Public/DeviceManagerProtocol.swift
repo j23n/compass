@@ -28,20 +28,39 @@ public protocol DeviceManagerProtocol: Sendable {
     func disconnect() async
 
     /// Pull FIT files from the specified directories on the connected device.
+    ///
+    /// When `parseAndPersist` is provided, it is invoked between each download and
+    /// the next.  Returning `true` from the callback causes the file to be archived
+    /// on the watch before the loop moves on — issuing the archive while the sync
+    /// session is still open, which is what the firmware honours.
+    ///
+    /// When `parseAndPersist` is `nil`, no in-loop archive happens and the caller is
+    /// responsible for calling `archiveFITFile(fileIndex:)` per entry. Note: archive
+    /// commands issued after the sync session closes are ACK'd but not honoured.
+    ///
     /// - Parameters:
     ///   - directories: The set of FIT directories to sync.
     ///   - progress: Optional continuation to receive progress updates.
+    ///   - parseAndPersist: Optional per-file callback; returns whether the file is
+    ///     durably persisted and safe to archive.
     /// - Returns: (tempFileURL, fileIndex) pairs for each downloaded FIT file.
-    ///   The caller must call `archiveFITFile(fileIndex:)` for each entry after
-    ///   successfully persisting its content.
     func pullFITFiles(
         directories: Set<FITDirectory>,
-        progress: AsyncStream<SyncProgress>.Continuation?
+        progress: AsyncStream<SyncProgress>.Continuation?,
+        parseAndPersist: (@Sendable (URL, UInt16) async -> Bool)?
     ) async throws -> [(url: URL, fileIndex: UInt16)]
 
-    /// Send the archive flag to the watch for one file after it has been
-    /// successfully parsed and persisted.  No-op when not connected.
+    /// Send the archive flag to the watch for one file. Used by manual "mark synced"
+    /// flows; the main sync path archives in-loop via `pullFITFiles(parseAndPersist:)`.
+    /// No-op when not connected.
     func archiveFITFile(fileIndex: UInt16) async
+
+    /// Register a parse callback used by watch-initiated sync (when the watch
+    /// triggers a sync via `SYNCHRONIZATION`).  The callback has the same contract as
+    /// `pullFITFiles(parseAndPersist:)`. Default: no-op.
+    func setSyncParseHandler(
+        _ handler: (@Sendable (URL, UInt16) async -> Bool)?
+    ) async
 
     /// Upload a course FIT file to the connected device.
     /// - Parameters:
@@ -94,6 +113,9 @@ public protocol DeviceManagerProtocol: Sendable {
 extension DeviceManagerProtocol {
     public func setWatchInitiatedSyncHandler(
         _ handler: (@Sendable ([(url: URL, fileIndex: UInt16)]) async -> Void)?
+    ) async {}
+    public func setSyncParseHandler(
+        _ handler: (@Sendable (URL, UInt16) async -> Bool)?
     ) async {}
     public func archiveFITFile(fileIndex: UInt16) async {}
     public func cancelSync() async {}
