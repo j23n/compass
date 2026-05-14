@@ -49,12 +49,14 @@ final class WeatherService {
         )
 
         // WeatherKit's hourly forecast starts at the top of the *current* hour
-        // (e.g. 12:00 even when now is 12:34). The watch filters out forecasts
-        // whose timestamp is in the past, so drop past hours first. Encoder
+        // (e.g. 12:00 even when now is 12:34). Keep the entry whose hour-long
+        // window contains "now" so the watch's hourly screen has a bucket for
+        // the current hour — without it the watch falls back to "waiting for
+        // data". Drop only entries whose window has fully elapsed. Encoder
         // caps at 12; respect the watch's requested horizon if it's smaller.
         let hourLimit = min(12, max(1, Int(request.hoursOfForecast)))
         let hourly: [GarminHourlyForecast] = weather.hourlyForecast.forecast
-            .filter { $0.date > now }
+            .filter { $0.date.addingTimeInterval(3600) > now }
             .prefix(hourLimit)
             .map { h in
                 GarminHourlyForecast(
@@ -116,20 +118,35 @@ final class WeatherService {
         return (lat, lon)
     }
 
+    /// Maps a WeatherKit `WeatherCondition` to Garmin's `weather_status` enum,
+    /// authoritative table at `rzfit_swift_map.swift:3840-3866`:
+    ///   0=clear, 1=partly_cloudy, 2=mostly_cloudy, 3=rain, 4=snow, 5=windy,
+    ///   6=thunderstorms, 7=wintry_mix, 8=fog, 11=hazy, 12=hail,
+    ///   13=scattered_showers, 14=scattered_thunderstorms, 15=unknown_precip,
+    ///   16=light_rain, 17=heavy_rain, 18=light_snow, 19=heavy_snow,
+    ///   20=light_rain_snow, 21=heavy_rain_snow, 22=cloudy.
     private func mapCondition(_ condition: WeatherCondition) -> UInt8 {
         switch condition {
-        case .clear, .mostlyClear, .hot, .frigid:                                    return 0
-        case .partlyCloudy, .sunShowers, .sunFlurries:                               return 1
-        case .mostlyCloudy:                                                          return 3
-        case .cloudy:                                                                return 13
-        case .drizzle, .freezingDrizzle, .rain, .heavyRain, .freezingRain:           return 5
-        case .snow, .heavySnow, .flurries, .blizzard, .blowingSnow, .sleet,
-             .wintryMix, .hail:                                                      return 6
-        case .thunderstorms, .scatteredThunderstorms, .isolatedThunderstorms,
-             .strongStorms, .tropicalStorm, .hurricane:                              return 15
-        case .foggy, .haze, .smoky, .blowingDust:                                    return 8
-        case .breezy, .windy:                                                        return 7
-        @unknown default:                                                            return 0
+        case .clear, .mostlyClear, .hot, .frigid:                       return 0
+        case .partlyCloudy:                                             return 1
+        case .mostlyCloudy:                                             return 2
+        case .cloudy:                                                   return 22
+        case .drizzle, .freezingDrizzle:                                return 16   // light_rain
+        case .rain, .freezingRain:                                      return 3    // rain
+        case .heavyRain:                                                return 17   // heavy_rain
+        case .sunShowers:                                               return 13   // scattered_showers
+        case .flurries:                                                 return 18   // light_snow
+        case .snow:                                                     return 4    // snow
+        case .heavySnow, .blizzard, .blowingSnow:                       return 19   // heavy_snow
+        case .sunFlurries:                                              return 18   // light_snow (best fit)
+        case .sleet, .wintryMix:                                        return 7    // wintry_mix
+        case .hail:                                                     return 12   // hail
+        case .isolatedThunderstorms, .scatteredThunderstorms:           return 14   // scattered_thunderstorms
+        case .thunderstorms, .strongStorms, .tropicalStorm, .hurricane: return 6    // thunderstorms
+        case .foggy:                                                    return 8    // fog
+        case .haze, .smoky, .blowingDust:                               return 11   // hazy
+        case .breezy, .windy:                                           return 5    // windy
+        @unknown default:                                               return 0
         }
     }
 

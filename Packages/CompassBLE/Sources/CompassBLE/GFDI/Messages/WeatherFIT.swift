@@ -202,7 +202,15 @@ public enum WeatherFITEncoder {
         (  8,  locationSize, string), // location
     ]
 
-    // HOURLY: [0, 253, 1, 2, 3, 4, 5, 6, 7, 15, 16, 17]
+    // HOURLY: [0, 253, 1, 2, 3, 4, 5, 6, 7]
+    //
+    // Fields 15/16/17 (dew_point / uv_index / air_quality) are Gadgetbridge
+    // extensions beyond Garmin's official `weather_conditions` profile (which
+    // only defines fields up to 14). The Instinct Solar firmware's hourly-
+    // forecast parser rejects records that carry those fields with the FIT
+    // invalid sentinels (0x7F / 0xFFFFFFFF NaN / 0xFF), leaving the hourly
+    // screen stuck on "waiting for data". Keep hourly to the spec-defined
+    // fields so every record is accepted.
     private static let fieldsHourly: [(UInt8, UInt8, UInt8)] = [
         (  0,  1,  enum_),   // weather_report
         (253,  4,  uint32),  // timestamp
@@ -213,12 +221,13 @@ public enum WeatherFITEncoder {
         (  5,  1,  uint8),   // precipitation_probability
         (  6,  1,  sint8),   // temperature_feels_like
         (  7,  1,  uint8),   // relative_humidity
-        ( 15,  1,  sint8),   // dew_point  (0x7F = invalid)
-        ( 16,  4,  float32), // uv_index   (0xFFFFFFFF = invalid)
-        ( 17,  1,  enum_),   // air_quality (0xFF = invalid)
     ]
 
-    // DAILY: [0, 253, 14, 13, 2, 5, 12, 17]
+    // DAILY: [0, 253, 14, 13, 2, 5, 12]
+    //
+    // Field 17 (air_quality) dropped for the same reason as the hourly set —
+    // it's a Gadgetbridge extension and the watch rejects records that carry
+    // it as an invalid sentinel.
     private static let fieldsDaily: [(UInt8, UInt8, UInt8)] = [
         (  0,  1,  enum_),   // weather_report
         (253,  4,  uint32),  // timestamp
@@ -227,7 +236,6 @@ public enum WeatherFITEncoder {
         (  2,  1,  enum_),   // condition
         (  5,  1,  uint8),   // precipitation_probability
         ( 12,  1,  enum_),   // day_of_week
-        ( 17,  1,  enum_),   // air_quality (0xFF = invalid)
     ]
 
     // MARK: - Public API
@@ -316,10 +324,6 @@ public enum WeatherFITEncoder {
         payload.append(h.precipitationProbability)
         payload.appendInt8(h.temperatureFeelsLike)
         payload.append(h.relativeHumidity)
-        payload.append(0x7F)                            // dew_point:  FIT invalid (SINT8)
-        payload.append(0xFF); payload.append(0xFF)      // uv_index:   FIT invalid (FLOAT32 hi)
-        payload.append(0xFF); payload.append(0xFF)      // uv_index:   FIT invalid (FLOAT32 lo)
-        payload.append(0xFF)                            // air_quality: FIT invalid (ENUM)
     }
 
     private static func appendDailyRecord(into payload: inout Data, d: GarminDailyForecast) {
@@ -331,6 +335,5 @@ public enum WeatherFITEncoder {
         payload.append(d.condition)
         payload.append(d.precipitationProbability)
         payload.append(d.dayOfWeek)
-        payload.append(0xFF)                            // air_quality: FIT invalid (ENUM)
     }
 }

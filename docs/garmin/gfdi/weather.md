@@ -131,7 +131,7 @@ Compass writes the FIT invalid sentinel `0xFF` for `air_quality` and `0x7F` for
 
 ### Local msg 9 — hourly forecast
 
-Field order matches `WeatherFIT.swift:206-219`.
+Field order matches `WeatherFIT.swift` `fieldsHourly`.
 
 | field_def_num | name                       | base type | size |
 |---------------|----------------------------|-----------|------|
@@ -144,16 +144,16 @@ Field order matches `WeatherFIT.swift:206-219`.
 | 5             | precipitation_probability  | uint8     | 1    |
 | 6             | temperature_feels_like     | sint8     | 1    |
 | 7             | relative_humidity          | uint8     | 1    |
-| 15            | dew_point                  | sint8     | 1    |
-| 16            | uv_index                   | float32   | 4    |
-| 17            | air_quality                | enum      | 1    |
 
-`uv_index` is filled with FLOAT32 invalid (`0xFFFFFFFF`) and the two enum
-fields with `0xFF` (`WeatherFIT.swift:319-322`).
+`dew_point` (15), `uv_index` (16) and `air_quality` (17) are Gadgetbridge
+extensions beyond Garmin's official `weather_conditions` profile. The Instinct
+Solar firmware's hourly-forecast parser rejects records that carry them as
+invalid sentinels — the hourly screen sits on "waiting for data" until they're
+removed. The hourly field set is now restricted to the official Garmin fields.
 
 ### Local msg 10 — daily forecast
 
-Field order matches `WeatherFIT.swift:222-231`.
+Field order matches `WeatherFIT.swift` `fieldsDaily`.
 
 | field_def_num | name                       | base type | size |
 |---------------|----------------------------|-----------|------|
@@ -164,7 +164,8 @@ Field order matches `WeatherFIT.swift:222-231`.
 | 2             | condition                  | enum      | 1    |
 | 5             | precipitation_probability  | uint8     | 1    |
 | 12            | day_of_week                | enum      | 1    |
-| 17            | air_quality                | enum      | 1    |
+
+`air_quality` (17) is dropped here for the same reason as the hourly set.
 
 `day_of_week` follows Garmin's convention: `0=Sun…6=Sat`. Compass derives it
 via `(Calendar.weekday − 1 + 7) % 7` so the Apple Sunday-first ordinal matches
