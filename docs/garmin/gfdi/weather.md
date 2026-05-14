@@ -131,27 +131,40 @@ Compass writes the FIT invalid sentinel `0xFF` for `air_quality` and `0x7F` for
 
 ### Local msg 9 — hourly forecast
 
-Field order matches `WeatherFIT.swift` `fieldsHourly`. The hourly field set
-**mirrors the daily-forecast set** — every other shape we tried (including the
-"obvious" one with field 1 + wind + feels-like + humidity, with or without the
-Gadgetbridge extensions 15/16/17) left the watch's hourly screen sitting on
-"waiting for data". Daily parses cleanly on the same firmware, so hourly now
-piggybacks on that schema:
+Field order matches Gadgetbridge's
+`PredefinedLocalMessage.HOURLY_WEATHER_FORECAST` exactly
+(`[0, 253, 1, 2, 3, 4, 5, 6, 7, 15, 16, 17]`):
 
 | field_def_num | name                       | base type | size |
 |---------------|----------------------------|-----------|------|
 | 0             | weather_report             | enum      | 1    |
 | 253           | timestamp                  | uint32    | 4    |
-| 14            | low_temperature            | sint8     | 1    |
-| 13            | high_temperature           | sint8     | 1    |
+| 1             | temperature                | sint8     | 1    |
 | 2             | condition                  | enum      | 1    |
+| 3             | wind_direction             | uint16    | 2    |
+| 4             | wind_speed (mm/s)          | uint16    | 2    |
 | 5             | precipitation_probability  | uint8     | 1    |
-| 12            | day_of_week                | enum      | 1    |
+| 6             | temperature_feels_like     | sint8     | 1    |
+| 7             | relative_humidity          | uint8     | 1    |
+| 15            | dew_point                  | sint8     | 1    |
+| 16            | uv_index                   | float32   | 4    |
+| 17            | air_quality                | enum      | 1    |
 
-`WeatherService` sets `low_temperature = high_temperature = hourly temp` so the
-hour-bucket carries a single, exact temperature rather than a range. The
-discarded fields (wind, feels-like, humidity) are not surfaced on the watch's
-hourly screen anyway — only temperature + condition icon + precip badge.
+**`uv_index` must be a real FLOAT32 value, not the FIT invalid sentinel
+(`0xFFFFFFFF` NaN).** The Instinct Solar firmware rejects the entire hourly
+record when `uv_index` is NaN, leaving the hourly screen stuck on "waiting
+for data". This matches Gadgetbridge's behaviour: their `sendWeatherConditions`
+sets `uv_index` to the hour's actual UV value via
+`setFieldByName("uv_index", hourly.uvIndex)`. `dew_point` (15) and
+`air_quality` (17) are left at the FIT invalid sentinel (`0x7F` / `0xFF`) —
+Gadgetbridge doesn't `setFieldByName` for those, which produces the same
+sentinel bytes.
+
+`temperature_feels_like` is set to the hour's `temperature`, matching
+Gadgetbridge — `setFieldByName("temperature_feels_like", hourly.temp)` rather
+than the actual apparent-temperature value. Whether this matters for the
+firmware's record acceptance is unknown; staying close to Gadgetbridge minimises
+the variables.
 
 ### Local msg 10 — daily forecast
 

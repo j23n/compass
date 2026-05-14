@@ -45,28 +45,38 @@ public struct GarminCurrentConditions: Sendable {
 
 /// One hourly forecast record — local FIT message type 9 (HOURLY_WEATHER_FORECAST).
 ///
-/// The on-wire field set mirrors `GarminDailyForecast` (the only forecast type
-/// the Instinct Solar reliably parses): low/high temperature, condition,
-/// precipitation, day-of-week. Wind / feels-like / humidity are dropped because
-/// every hourly field set we've tried that included them sits on "waiting for
-/// data". `lowTemperature` and `highTemperature` are both set to the hourly
-/// temperature by `WeatherService` so the watch sees a zero-range bucket.
+/// Field set matches Gadgetbridge's `PredefinedLocalMessage.HOURLY_WEATHER_FORECAST`
+/// exactly: `[0, 253, 1, 2, 3, 4, 5, 6, 7, 15, 16, 17]`. `dew_point` (15) and
+/// `air_quality` (17) are left at the FIT invalid sentinel (Gadgetbridge does the
+/// same — they only `setFieldByName` for the ones they have data for). `uv_index`
+/// **must be a real FLOAT32**, not NaN — the Instinct Solar firmware rejects the
+/// whole hourly record otherwise and the watch screen sits on "waiting for data".
 public struct GarminHourlyForecast: Sendable {
     public let timestamp: UInt32
     public let temperature: Int8
     public let condition: UInt8
+    public let windDirection: UInt16
+    public let windSpeed: UInt16
     public let precipitationProbability: UInt8
-    public let dayOfWeek: UInt8
+    public let temperatureFeelsLike: Int8
+    public let relativeHumidity: UInt8
+    public let uvIndex: Float
 
     public init(
         timestamp: UInt32, temperature: Int8, condition: UInt8,
-        precipitationProbability: UInt8, dayOfWeek: UInt8
+        windDirection: UInt16, windSpeed: UInt16,
+        precipitationProbability: UInt8, temperatureFeelsLike: Int8,
+        relativeHumidity: UInt8, uvIndex: Float
     ) {
         self.timestamp = timestamp
         self.temperature = temperature
         self.condition = condition
+        self.windDirection = windDirection
+        self.windSpeed = windSpeed
         self.precipitationProbability = precipitationProbability
-        self.dayOfWeek = dayOfWeek
+        self.temperatureFeelsLike = temperatureFeelsLike
+        self.relativeHumidity = relativeHumidity
+        self.uvIndex = uvIndex
     }
 }
 
@@ -202,23 +212,23 @@ public enum WeatherFITEncoder {
         (  8,  locationSize, string), // location
     ]
 
-    // HOURLY: mirrors DAILY exactly — [0, 253, 14, 13, 2, 5, 12]
-    //
-    // The Instinct Solar's hourly-forecast screen sits on "waiting for data"
-    // for every field set we've tried that uses field 1 (temperature) +
-    // wind / feels-like / humidity, even after dropping the Gadgetbridge
-    // extensions (15/16/17). The daily-forecast field set parses cleanly on
-    // the same firmware, so we now use the same shape for hourly records:
-    // low/high temperature (both set to the hourly temp value so the bucket
-    // is zero-range), condition, precipitation probability, and day-of-week.
+    // HOURLY: matches Gadgetbridge `PredefinedLocalMessage.HOURLY_WEATHER_FORECAST`
+    // exactly — [0, 253, 1, 2, 3, 4, 5, 6, 7, 15, 16, 17]. Verified against
+    // Gadgetbridge master, file
+    // `service/devices/garmin/fit/PredefinedLocalMessage.java`.
     private static let fieldsHourly: [(UInt8, UInt8, UInt8)] = [
         (  0,  1,  enum_),   // weather_report
         (253,  4,  uint32),  // timestamp
-        ( 14,  1,  sint8),   // low_temperature  (= hourly temp)
-        ( 13,  1,  sint8),   // high_temperature (= hourly temp)
+        (  1,  1,  sint8),   // temperature
         (  2,  1,  enum_),   // condition
+        (  3,  2,  uint16),  // wind_direction
+        (  4,  2,  uint16),  // wind_speed
         (  5,  1,  uint8),   // precipitation_probability
-        ( 12,  1,  enum_),   // day_of_week
+        (  6,  1,  sint8),   // temperature_feels_like
+        (  7,  1,  uint8),   // relative_humidity
+        ( 15,  1,  sint8),   // dew_point      (FIT invalid sentinel 0x7F)
+        ( 16,  4,  float32), // uv_index       (REAL value; NaN causes rejection)
+        ( 17,  1,  enum_),   // air_quality    (FIT invalid sentinel 0xFF)
     ]
 
     // DAILY: [0, 253, 14, 13, 2, 5, 12]
@@ -315,11 +325,20 @@ public enum WeatherFITEncoder {
         payload.append(localHourly)                     // FIT data record header (local msg 9)
         payload.append(1)                               // weather_report = 1 (hourly forecast)
         payload.appendUInt32LE(h.timestamp)
-        payload.appendInt8(h.temperature)               // low_temperature  = hourly temp
-        payload.appendInt8(h.temperature)               // high_temperature = hourly temp
+        payload.appendInt8(h.temperature)
         payload.append(h.condition)
+        payload.appendUInt16LE(h.windDirection)
+        payload.appendUInt16LE(h.windSpeed)
         payload.append(h.precipitationProbability)
-        payload.append(h.dayOfWeek)
+        payload.appendInt8(h.temperatureFeelsLike)
+        payload.append(h.relativeHumidity)
+        payload.append(0x7F)                            // dew_point: FIT invalid (SINT8)
+        // uv_index: real FLOAT32 LE. Gadgetbridge sets this to the hour's UV
+        // value (`hourly.uvIndex`); writing NaN here makes the Instinct's hourly
+        // parser reject the whole record.
+        var uvBits = h.uvIndex.bitPattern.littleEndian
+        withUnsafeBytes(of: &uvBits) { payload.append(contentsOf: $0) }
+        payload.append(0xFF)                            // air_quality: FIT invalid (ENUM)
     }
 
     private static func appendDailyRecord(into payload: inout Data, d: GarminDailyForecast) {

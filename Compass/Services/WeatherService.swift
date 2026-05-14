@@ -60,12 +60,21 @@ final class WeatherService {
             .filter { $0.date.addingTimeInterval(3600) > now }
             .prefix(hourLimit)
             .map { h in
-                GarminHourlyForecast(
+                let temp = celsiusInt8(h.temperature)
+                return GarminHourlyForecast(
                     timestamp: garminTimestamp(from: h.date),
-                    temperature: celsiusInt8(h.temperature),
+                    temperature: temp,
                     condition: mapCondition(h.condition),
+                    windDirection: degreesUInt16(h.wind.direction),
+                    windSpeed: windSpeedMillimetersPerSecond(h.wind.speed),
                     precipitationProbability: percentUInt8(h.precipitationChance),
-                    dayOfWeek: Self.dayOfWeek(for: h.date, in: calendar)
+                    // Gadgetbridge writes the hour's temperature into the
+                    // feels-like slot (`hourly.temp`); match that rather than
+                    // emitting `apparentTemperature`, which empirically produced
+                    // records the Instinct's hourly parser doesn't accept.
+                    temperatureFeelsLike: temp,
+                    relativeHumidity: percentUInt8(h.humidity),
+                    uvIndex: Float(h.uvIndex.value)
                 )
             }
 
@@ -124,9 +133,12 @@ final class WeatherService {
             for (i, h) in hourly.enumerated() {
                 lines.append(
                     String(format: "  [%2d] ", i)
-                  + "\(time(h.timestamp)) \(dayName(h.dayOfWeek)) "
+                  + "\(time(h.timestamp)) "
                   + "\(h.temperature)°C \(conditionName(h.condition))(\(h.condition)) "
-                  + "precip=\(h.precipitationProbability)%"
+                  + "wind=\(h.windDirection)°@\(windSpeedKmh(h.windSpeed)) "
+                  + "precip=\(h.precipitationProbability)% feels=\(h.temperatureFeelsLike) "
+                  + "humid=\(h.relativeHumidity)% "
+                  + String(format: "uv=%.1f", h.uvIndex)
                 )
             }
         }
