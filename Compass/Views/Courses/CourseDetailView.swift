@@ -13,6 +13,7 @@ struct CourseDetailView: View {
     @State private var uploadError: String?
     @State private var isEditing = false
     @State private var editingPOI: CoursePOI?
+    @State private var isTurnsExpanded = false
 
     init(course: Course) {
         self.course = course
@@ -32,13 +33,19 @@ struct CourseDetailView: View {
                         coordinates: course.waypoints
                             .sorted { $0.order < $1.order }
                             .map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) },
-                        pois: course.pointsOfInterest.map {
-                            MapPOI(
-                                coordinate: CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude),
-                                name: $0.name,
-                                coursePointType: $0.coursePointType
-                            )
-                        }
+                        // Suppress turn cues on the map — the polyline already
+                        // shows where the turns are, and the dozens of arrow
+                        // glyphs from auto-detected turns drown out actual POIs.
+                        // The watch still receives them via the FIT export.
+                        pois: course.pointsOfInterest
+                            .filter { !CoursePointType(fitCode: UInt8(clamping: $0.coursePointType)).isTurnCue }
+                            .map {
+                                MapPOI(
+                                    coordinate: CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude),
+                                    name: $0.name,
+                                    coursePointType: $0.coursePointType
+                                )
+                            }
                     )
                     .frame(height: 300)
                     .cornerRadius(12)
@@ -81,48 +88,81 @@ struct CourseDetailView: View {
     }
 
     private var poiSection: some View {
-        let sortedPOIs = course.pointsOfInterest.sorted { $0.distanceFromStart < $1.distanceFromStart }
-        return VStack(alignment: .leading, spacing: 8) {
-            Text("Points of Interest")
-                .font(.headline)
-            VStack(spacing: 0) {
-                ForEach(Array(sortedPOIs.enumerated()), id: \.element.persistentModelID) { index, poi in
+        let sorted = course.pointsOfInterest.sorted { $0.distanceFromStart < $1.distanceFromStart }
+        let regular = sorted.filter { !CoursePointType(fitCode: UInt8(clamping: $0.coursePointType)).isTurnCue }
+        let turns   = sorted.filter {  CoursePointType(fitCode: UInt8(clamping: $0.coursePointType)).isTurnCue }
+        return VStack(alignment: .leading, spacing: 16) {
+            if !regular.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Points of Interest")
+                        .font(.headline)
+                    poiList(regular)
+                }
+            }
+            if !turns.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
                     Button {
-                        editingPOI = poi
+                        withAnimation(.easeInOut(duration: 0.2)) { isTurnsExpanded.toggle() }
                     } label: {
-                        let type = CoursePointType(fitCode: UInt8(clamping: poi.coursePointType))
-                        HStack(spacing: 12) {
-                            Image(systemName: type.systemImage)
-                                .font(.body)
-                                .foregroundStyle(.blue)
-                                .frame(width: 24)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(poi.name)
-                                    .font(.subheadline)
-                                    .lineLimit(1)
-                                    .foregroundStyle(.primary)
-                                Text("\(String(format: "%.2f", poi.distanceFromStart / 1_000)) km · \(type.displayName)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
+                        HStack {
+                            Text("Turn-by-turn (\(turns.count))")
+                                .font(.headline)
+                                .foregroundStyle(.primary)
                             Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
+                            Image(systemName: isTurnsExpanded ? "chevron.up" : "chevron.down")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
                         }
-                        .padding(.vertical, 8)
-                        .padding(.horizontal, 12)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    if index < sortedPOIs.count - 1 {
-                        Divider().padding(.leading, 48)
+                    if isTurnsExpanded {
+                        poiList(turns)
                     }
                 }
             }
-            .background(Color(.systemGray6))
-            .cornerRadius(10)
         }
+    }
+
+    @ViewBuilder
+    private func poiList(_ pois: [CoursePOI]) -> some View {
+        VStack(spacing: 0) {
+            ForEach(Array(pois.enumerated()), id: \.element.persistentModelID) { index, poi in
+                Button {
+                    editingPOI = poi
+                } label: {
+                    let type = CoursePointType(fitCode: UInt8(clamping: poi.coursePointType))
+                    HStack(spacing: 12) {
+                        Image(systemName: type.systemImage)
+                            .font(.body)
+                            .foregroundStyle(.blue)
+                            .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(poi.name)
+                                .font(.subheadline)
+                                .lineLimit(1)
+                                .foregroundStyle(.primary)
+                            Text("\(String(format: "%.2f", poi.distanceFromStart / 1_000)) km · \(type.displayName)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 12)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                if index < pois.count - 1 {
+                    Divider().padding(.leading, 48)
+                }
+            }
+        }
+        .background(Color(.systemGray6))
+        .cornerRadius(10)
     }
 
     private var uploadSection: some View {
