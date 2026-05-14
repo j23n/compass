@@ -303,9 +303,16 @@ struct ActivityDetailView: View {
     }
 
     private var paceOverTime: [(timestamp: Date, secPerKm: Double)] {
-        sortedTrackPoints.compactMap { point in
-            guard let speed = point.speed, speed > 0.5 else { return nil }
-            return (timestamp: point.timestamp, secPerKm: 1000.0 / speed)
+        // 0.1 m/s ≈ 0.36 km/h: keeps walking and slow-jog samples (the
+        // previous 0.5 m/s threshold dropped anything slower than ~12 min/km
+        // and made the pace line look heavily redacted on hilly / mixed
+        // activities). Cap the resulting pace at 30 min/km so a single
+        // near-stationary sample doesn't blow up the y-axis.
+        let maxSecPerKm: Double = 30 * 60
+        return sortedTrackPoints.compactMap { point in
+            guard let speed = point.speed, speed > 0.1 else { return nil }
+            let pace = min(1000.0 / speed, maxSecPerKm)
+            return (timestamp: point.timestamp, secPerKm: pace)
         }
     }
 
@@ -353,6 +360,14 @@ struct ActivityDetailView: View {
     /// pause, etc.). Swift Charts uses the `series:` value on LineMark /
     /// AreaMark to decide which points to connect, so distinct segment IDs
     /// produce a visual break.
+    ///
+    /// Boundary handling: a sample exactly AT `p.start` is the last in-play
+    /// reading before the pause and stays in the previous segment; a sample
+    /// AT `p.end` is the first in-play reading after and joins the next
+    /// segment. This matters because the gap-detector creates pauses whose
+    /// edges coincide with surrounding sample timestamps — without strict
+    /// inequality both edge samples would land in the same segment and the
+    /// line wouldn't break.
     private func segmented(
         _ data: [(t: TimeInterval, v: Double)]
     ) -> [(seg: Int, t: TimeInterval, v: Double)] {
@@ -361,21 +376,14 @@ struct ActivityDetailView: View {
             return data.map { (0, $0.t, $0.v) }
         }
         return data.map { point in
-            // Segment index = number of pauses that have already ended at
-            // or before this sample's elapsed time. Points falling *inside*
-            // a pause (rare; FIT generally drops them) get the segment id
-            // of the next play interval, which keeps them visually separate
-            // from the previous segment.
             var seg = 0
             for p in pauses {
-                if p.end <= point.t {
-                    seg += 1
-                } else if p.start <= point.t {
-                    // Inside a pause — push to the next segment.
-                    seg += 1
-                    break
+                if point.t >= p.end {
+                    seg += 1            // pause fully passed
+                } else if point.t > p.start {
+                    seg += 1; break     // strictly inside the pause
                 } else {
-                    break
+                    break               // before / at this pause's start
                 }
             }
             return (seg, point.t, point.v)

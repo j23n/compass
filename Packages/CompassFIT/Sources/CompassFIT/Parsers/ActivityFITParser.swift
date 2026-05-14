@@ -79,9 +79,10 @@ public struct ActivityFITParser: Sendable {
     }
 
     /// Threshold (s) for treating a gap in the trackpoint stream as a pause.
-    /// 30 s ignores normal 1 Hz jitter / brief satellite re-locks but catches
-    /// water-bottle stops on devices that don't emit explicit pause events.
-    private static let gapPauseThreshold: TimeInterval = 30
+    /// 60 s ignores normal 1 Hz jitter, brief satellite re-locks, and short
+    /// stationary moments (traffic light, crossing) but catches longer
+    /// breaks on devices that don't emit explicit pause events.
+    private static let gapPauseThreshold: TimeInterval = 60
 
     /// Combine FIT timer events with trackpoint-gap detection. FIT events
     /// are authoritative when present; gap-detected pauses are added only
