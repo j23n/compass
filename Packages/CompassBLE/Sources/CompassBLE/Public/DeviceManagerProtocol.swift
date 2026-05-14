@@ -44,9 +44,14 @@ public protocol DeviceManagerProtocol: Sendable {
     func archiveFITFile(fileIndex: UInt16) async
 
     /// Upload a course FIT file to the connected device.
-    /// - Parameter url: Local URL of the FIT file to upload.
+    /// - Parameters:
+    ///   - url: Local URL of the FIT file to upload.
+    ///   - progress: Optional continuation to receive progress updates.
     /// - Returns: The file index the watch assigned; store it for later presence checks.
-    func uploadCourse(_ url: URL) async throws -> UInt16
+    func uploadCourse(
+        _ url: URL,
+        progress: AsyncStream<SyncProgress>.Continuation?
+    ) async throws -> UInt16
 
     /// Whether a device is currently connected and authenticated.
     var isConnected: Bool { get async }
@@ -54,6 +59,17 @@ public protocol DeviceManagerProtocol: Sendable {
     /// A stream that emits a new value whenever the connection state changes.
     /// Callers subscribe once and observe for the lifetime of the session.
     func connectionStateStream() -> AsyncStream<ConnectionState>
+
+    /// A stream of progress updates from watch-initiated syncs (5037 SYNCHRONIZATION).
+    /// Phone-initiated syncs surface progress through the continuation passed to
+    /// `pullFITFiles` instead; this stream exists so the UI can observe background
+    /// syncs that the app didn't explicitly start.
+    func watchSyncProgressStream() -> AsyncStream<SyncProgress>
+
+    /// A stream of short-lived watch interactions (weather requests, FMP triggers,
+    /// FIT-file archives, etc.). The UI uses this to show a "radio is busy"
+    /// indicator without inspecting every GFDI message.
+    func watchActivityStream() -> AsyncStream<WatchActivityEvent>
 
     /// Send an arbitrary GFDI message to the connected device.
     /// Throws if not connected or the BLE write fails.
@@ -83,4 +99,10 @@ extension DeviceManagerProtocol {
     public func cancelSync() async {}
     public func notifyBackground() async {}
     public func notifyForeground() async {}
+    public func watchSyncProgressStream() -> AsyncStream<SyncProgress> {
+        AsyncStream { _ in }
+    }
+    public func watchActivityStream() -> AsyncStream<WatchActivityEvent> {
+        AsyncStream { _ in }
+    }
 }

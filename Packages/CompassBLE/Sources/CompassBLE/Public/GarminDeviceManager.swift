@@ -26,6 +26,8 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
     private var _isConnected: Bool = false
     private var _connectedDevice: PairedDevice?
     private var connectionStateContinuation: AsyncStream<ConnectionState>.Continuation?
+    private var watchSyncProgressContinuation: AsyncStream<SyncProgress>.Continuation?
+    private var watchActivityContinuation: AsyncStream<WatchActivityEvent>.Continuation?
 
     /// Max GFDI payload size reported by the watch's DEVICE_INFORMATION message.
     /// Defaults to 375 (Instinct Solar 1G value per Gadgetbridge `FileTransferHandler.java:62`).
@@ -114,6 +116,46 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
 
     private func clearConnectionStateContinuation() {
         connectionStateContinuation = nil
+    }
+
+    // MARK: - Watch Sync Progress / Activity Streams
+
+    public nonisolated func watchSyncProgressStream() -> AsyncStream<SyncProgress> {
+        AsyncStream { continuation in
+            Task { await self.storeWatchSyncProgressContinuation(continuation) }
+            continuation.onTermination = { @Sendable _ in
+                Task { await self.clearWatchSyncProgressContinuation() }
+            }
+        }
+    }
+
+    private func storeWatchSyncProgressContinuation(_ cont: AsyncStream<SyncProgress>.Continuation) {
+        watchSyncProgressContinuation = cont
+    }
+
+    private func clearWatchSyncProgressContinuation() {
+        watchSyncProgressContinuation = nil
+    }
+
+    public nonisolated func watchActivityStream() -> AsyncStream<WatchActivityEvent> {
+        AsyncStream { continuation in
+            Task { await self.storeWatchActivityContinuation(continuation) }
+            continuation.onTermination = { @Sendable _ in
+                Task { await self.clearWatchActivityContinuation() }
+            }
+        }
+    }
+
+    private func storeWatchActivityContinuation(_ cont: AsyncStream<WatchActivityEvent>.Continuation) {
+        watchActivityContinuation = cont
+    }
+
+    private func clearWatchActivityContinuation() {
+        watchActivityContinuation = nil
+    }
+
+    private func emitActivity(_ kind: WatchActivityKind) {
+        watchActivityContinuation?.yield(WatchActivityEvent(kind: kind))
     }
 
     private func handleUnexpectedDisconnect(_ error: Error?) {
@@ -284,12 +326,14 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
             let ack = GFDIResponse(originalType: .findMyPhoneRequest, status: .ack)
             try? await client.send(message: ack.toMessage())
             findMyPhoneHandler?(.started)
+            emitActivity(.findMyPhone)
 
         case .findMyPhoneCancel:
             BLELogger.gfdi.info("FIND_MY_PHONE_CANCEL")
             let ack = GFDIResponse(originalType: .findMyPhoneCancel, status: .ack)
             try? await client.send(message: ack.toMessage())
             findMyPhoneHandler?(.cancelled)
+            emitActivity(.findMyPhone)
 
         case .synchronization:
             await handleSynchronizationMessage(msg)
@@ -341,14 +385,24 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
 
         let client = gfdiClient
         let pktSize = maxPacketSize
+        // The public progress stream is long-lived — yielding `.completed` /
+        // `.failed` doesn't finish it, so we can pass the continuation straight
+        // through. Each new watch-initiated sync emits its own start→completed
+        // sequence onto the same stream.
+        let progressContinuation = watchSyncProgressContinuation
         let task = Task<[(url: URL, fileIndex: UInt16)], Error> {
             let session = FileSyncSession(client: client, maxPacketSize: pktSize)
-            let pairs = try await session.run(
-                directories: Set(FITDirectory.allCases),
-                progress: nil,
-                watchInitiated: true
-            )
-            return pairs.map { (url: $0.url, fileIndex: $0.entry.fileIndex) }
+            do {
+                let pairs = try await session.run(
+                    directories: Set(FITDirectory.allCases),
+                    progress: progressContinuation,
+                    watchInitiated: true
+                )
+                return pairs.map { (url: $0.url, fileIndex: $0.entry.fileIndex) }
+            } catch {
+                progressContinuation?.yield(.failed(error))
+                throw error
+            }
         }
         activeSyncTask = task
         Task { [weak self] in
@@ -396,6 +450,7 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
 
         weatherRequestInFlight = true
         defer { weatherRequestInFlight = false }
+        emitActivity(.weather)
 
         do {
             let fitMessages = try await provider(request)
@@ -613,6 +668,7 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
             }
             if decoded.status == GFDIResponse.Status.ack.rawValue {
                 BLELogger.sync.info("Sync: archived fileIndex=\(fileIndex)")
+                emitActivity(.archive)
             } else {
                 BLELogger.sync.warning("Sync: archive fileIndex=\(fileIndex) NACK status=\(decoded.status)")
             }
@@ -636,10 +692,13 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
         try? await gfdiClient.send(message: SystemEventMessage(eventType: .hostDidEnterForeground).toMessage())
     }
 
-    public func uploadCourse(_ url: URL) async throws -> UInt16 {
+    public func uploadCourse(
+        _ url: URL,
+        progress: AsyncStream<SyncProgress>.Continuation?
+    ) async throws -> UInt16 {
         let data = try Data(contentsOf: url)
         let session = FileUploadSession(client: gfdiClient, maxPacketSize: maxPacketSize)
-        return try await session.upload(data: data, progress: nil)
+        return try await session.upload(data: data, progress: progress)
     }
 
     // MARK: - Properties
