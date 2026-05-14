@@ -44,29 +44,29 @@ public struct GarminCurrentConditions: Sendable {
 }
 
 /// One hourly forecast record — local FIT message type 9 (HOURLY_WEATHER_FORECAST).
+///
+/// The on-wire field set mirrors `GarminDailyForecast` (the only forecast type
+/// the Instinct Solar reliably parses): low/high temperature, condition,
+/// precipitation, day-of-week. Wind / feels-like / humidity are dropped because
+/// every hourly field set we've tried that included them sits on "waiting for
+/// data". `lowTemperature` and `highTemperature` are both set to the hourly
+/// temperature by `WeatherService` so the watch sees a zero-range bucket.
 public struct GarminHourlyForecast: Sendable {
     public let timestamp: UInt32
     public let temperature: Int8
     public let condition: UInt8
-    public let windDirection: UInt16
-    public let windSpeed: UInt16
     public let precipitationProbability: UInt8
-    public let temperatureFeelsLike: Int8
-    public let relativeHumidity: UInt8
+    public let dayOfWeek: UInt8
 
     public init(
         timestamp: UInt32, temperature: Int8, condition: UInt8,
-        windDirection: UInt16, windSpeed: UInt16,
-        precipitationProbability: UInt8, temperatureFeelsLike: Int8, relativeHumidity: UInt8
+        precipitationProbability: UInt8, dayOfWeek: UInt8
     ) {
         self.timestamp = timestamp
         self.temperature = temperature
         self.condition = condition
-        self.windDirection = windDirection
-        self.windSpeed = windSpeed
         self.precipitationProbability = precipitationProbability
-        self.temperatureFeelsLike = temperatureFeelsLike
-        self.relativeHumidity = relativeHumidity
+        self.dayOfWeek = dayOfWeek
     }
 }
 
@@ -202,25 +202,23 @@ public enum WeatherFITEncoder {
         (  8,  locationSize, string), // location
     ]
 
-    // HOURLY: [0, 253, 1, 2, 3, 4, 5, 6, 7]
+    // HOURLY: mirrors DAILY exactly — [0, 253, 14, 13, 2, 5, 12]
     //
-    // Fields 15/16/17 (dew_point / uv_index / air_quality) are Gadgetbridge
-    // extensions beyond Garmin's official `weather_conditions` profile (which
-    // only defines fields up to 14). The Instinct Solar firmware's hourly-
-    // forecast parser rejects records that carry those fields with the FIT
-    // invalid sentinels (0x7F / 0xFFFFFFFF NaN / 0xFF), leaving the hourly
-    // screen stuck on "waiting for data". Keep hourly to the spec-defined
-    // fields so every record is accepted.
+    // The Instinct Solar's hourly-forecast screen sits on "waiting for data"
+    // for every field set we've tried that uses field 1 (temperature) +
+    // wind / feels-like / humidity, even after dropping the Gadgetbridge
+    // extensions (15/16/17). The daily-forecast field set parses cleanly on
+    // the same firmware, so we now use the same shape for hourly records:
+    // low/high temperature (both set to the hourly temp value so the bucket
+    // is zero-range), condition, precipitation probability, and day-of-week.
     private static let fieldsHourly: [(UInt8, UInt8, UInt8)] = [
         (  0,  1,  enum_),   // weather_report
         (253,  4,  uint32),  // timestamp
-        (  1,  1,  sint8),   // temperature
+        ( 14,  1,  sint8),   // low_temperature  (= hourly temp)
+        ( 13,  1,  sint8),   // high_temperature (= hourly temp)
         (  2,  1,  enum_),   // condition
-        (  3,  2,  uint16),  // wind_direction
-        (  4,  2,  uint16),  // wind_speed
         (  5,  1,  uint8),   // precipitation_probability
-        (  6,  1,  sint8),   // temperature_feels_like
-        (  7,  1,  uint8),   // relative_humidity
+        ( 12,  1,  enum_),   // day_of_week
     ]
 
     // DAILY: [0, 253, 14, 13, 2, 5, 12]
@@ -317,13 +315,11 @@ public enum WeatherFITEncoder {
         payload.append(localHourly)                     // FIT data record header (local msg 9)
         payload.append(1)                               // weather_report = 1 (hourly forecast)
         payload.appendUInt32LE(h.timestamp)
-        payload.appendInt8(h.temperature)
+        payload.appendInt8(h.temperature)               // low_temperature  = hourly temp
+        payload.appendInt8(h.temperature)               // high_temperature = hourly temp
         payload.append(h.condition)
-        payload.appendUInt16LE(h.windDirection)
-        payload.appendUInt16LE(h.windSpeed)
         payload.append(h.precipitationProbability)
-        payload.appendInt8(h.temperatureFeelsLike)
-        payload.append(h.relativeHumidity)
+        payload.append(h.dayOfWeek)
     }
 
     private static func appendDailyRecord(into payload: inout Data, d: GarminDailyForecast) {

@@ -54,6 +54,7 @@ final class WeatherService {
         // the current hour — without it the watch falls back to "waiting for
         // data". Drop only entries whose window has fully elapsed. Encoder
         // caps at 12; respect the watch's requested horizon if it's smaller.
+        let calendar = Calendar.current
         let hourLimit = min(12, max(1, Int(request.hoursOfForecast)))
         let hourly: [GarminHourlyForecast] = weather.hourlyForecast.forecast
             .filter { $0.date.addingTimeInterval(3600) > now }
@@ -63,24 +64,19 @@ final class WeatherService {
                     timestamp: garminTimestamp(from: h.date),
                     temperature: celsiusInt8(h.temperature),
                     condition: mapCondition(h.condition),
-                    windDirection: degreesUInt16(h.wind.direction),
-                    windSpeed: windSpeedMillimetersPerSecond(h.wind.speed),
                     precipitationProbability: percentUInt8(h.precipitationChance),
-                    temperatureFeelsLike: celsiusInt8(h.apparentTemperature),
-                    relativeHumidity: percentUInt8(h.humidity)
+                    dayOfWeek: Self.dayOfWeek(for: h.date, in: calendar)
                 )
             }
 
-        let calendar = Calendar.current
         let daily: [GarminDailyForecast] = weather.dailyForecast.forecast.prefix(5).map { d in
-            let weekday = UInt8((calendar.component(.weekday, from: d.date) - 1 + 7) % 7)
-            return GarminDailyForecast(
+            GarminDailyForecast(
                 timestamp: garminTimestamp(from: d.date),
                 lowTemperature: celsiusInt8(d.lowTemperature),
                 highTemperature: celsiusInt8(d.highTemperature),
                 condition: mapCondition(d.condition),
                 precipitationProbability: percentUInt8(d.precipitationChance),
-                dayOfWeek: weekday
+                dayOfWeek: Self.dayOfWeek(for: d.date, in: calendar)
             )
         }
 
@@ -128,11 +124,9 @@ final class WeatherService {
             for (i, h) in hourly.enumerated() {
                 lines.append(
                     String(format: "  [%2d] ", i)
-                  + "\(time(h.timestamp)) "
+                  + "\(time(h.timestamp)) \(dayName(h.dayOfWeek)) "
                   + "\(h.temperature)°C \(conditionName(h.condition))(\(h.condition)) "
-                  + "wind=\(h.windDirection)°@\(windSpeedKmh(h.windSpeed)) "
-                  + "precip=\(h.precipitationProbability)% feels=\(h.temperatureFeelsLike) "
-                  + "humid=\(h.relativeHumidity)%"
+                  + "precip=\(h.precipitationProbability)%"
                 )
             }
         }
@@ -287,6 +281,13 @@ final class WeatherService {
         case .breezy, .windy:                                           return 5    // windy
         @unknown default:                                               return 0
         }
+    }
+
+    /// Garmin's `day_of_week` enum: 0=Sun…6=Sat. Apple's `Calendar.weekday`
+    /// is 1=Sun…7=Sat, so subtract one (the `+7 % 7` is a safety net for any
+    /// locale that ever flips the start of week).
+    private static func dayOfWeek(for date: Date, in calendar: Calendar) -> UInt8 {
+        UInt8((calendar.component(.weekday, from: date) - 1 + 7) % 7)
     }
 
     private func garminTimestamp(from date: Date) -> UInt32 {
