@@ -9,6 +9,7 @@ struct CoursesListView: View {
     private var courses: [Course]
 
     @State private var isImporting = false
+    @State private var navigationPath: [Course] = []
     @Environment(\.modelContext) private var modelContext
     @Environment(CourseImportCoordinator.self) private var importCoordinator
 
@@ -21,7 +22,7 @@ struct CoursesListView: View {
     ]
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             Group {
                 if courses.isEmpty {
                     emptyState
@@ -30,6 +31,9 @@ struct CoursesListView: View {
                 }
             }
             .navigationTitle("Courses")
+            .navigationDestination(for: Course.self) { course in
+                CourseDetailView(course: course)
+            }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button(action: { isImporting = true }) {
@@ -51,6 +55,25 @@ struct CoursesListView: View {
                 }
             )
         }
+        // Auto-push to the just-imported course's detail. Handled both via
+        // .onChange (covers imports while the tab is already mounted) and
+        // .onAppear (covers a share-sheet import that switches into this
+        // tab from cold — .onChange's initial value isn't delivered).
+        .onChange(of: importCoordinator.lastImportedCourse) { _, course in
+            pushImported(course)
+        }
+        .onAppear {
+            pushImported(importCoordinator.lastImportedCourse)
+        }
+    }
+
+    private func pushImported(_ course: Course?) {
+        guard let course else { return }
+        // Replace any existing stack with just the imported course so the
+        // user lands directly on its detail view rather than nested under
+        // whatever they were previously looking at.
+        navigationPath = [course]
+        importCoordinator.lastImportedCourse = nil
     }
 
     // MARK: - Views
@@ -66,7 +89,7 @@ struct CoursesListView: View {
     private var courseList: some View {
         List {
             ForEach(courses) { course in
-                NavigationLink(destination: CourseDetailView(course: course)) {
+                NavigationLink(value: course) {
                     CourseRowView(course: course)
                 }
                 .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))

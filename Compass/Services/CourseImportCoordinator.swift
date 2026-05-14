@@ -23,6 +23,12 @@ final class CourseImportCoordinator {
     /// Last user-visible error, surfaced as an alert.
     var lastError: String?
 
+    /// The course just inserted by a successful import. Drives auto-
+    /// navigation: ContentView switches to the Courses tab and
+    /// CoursesListView pushes the detail view. Consumers clear this back
+    /// to nil after handling the navigation.
+    var lastImportedCourse: Course?
+
     struct PendingImport: Identifiable {
         let id = UUID()
         let prepared: CourseImporter.PreparedImport
@@ -42,7 +48,8 @@ final class CourseImportCoordinator {
             if prepared.hasDuplicate {
                 pendingImport = PendingImport(prepared: prepared)
             } else {
-                _ = try CourseImporter.commit(prepared, resolution: .duplicate, context: context)
+                let course = try CourseImporter.commit(prepared, resolution: .duplicate, context: context)
+                lastImportedCourse = course
                 AppLogger.sync.info("Imported course: \(prepared.parsed.name)")
             }
         } catch {
@@ -57,7 +64,8 @@ final class CourseImportCoordinator {
         defer { pendingImport = nil }
         guard let pending = pendingImport, let resolution else { return }
         do {
-            _ = try CourseImporter.commit(pending.prepared, resolution: resolution, context: context)
+            let course = try CourseImporter.commit(pending.prepared, resolution: resolution, context: context)
+            lastImportedCourse = course
             AppLogger.sync.info("Imported course (\(String(describing: resolution))): \(pending.prepared.parsed.name)")
         } catch {
             lastError = error.localizedDescription
