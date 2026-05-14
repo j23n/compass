@@ -214,6 +214,7 @@ struct ActivityDetailView: View {
     @State private var highlightedCoordinate: CLLocationCoordinate2D? = nil
     @State private var shareItems: [Any] = []
     @State private var isSharePresented = false
+    @State private var isMapExpanded = false
     @State private var sortedTrackPoints: [TrackPoint] = []
     /// GPS-only elapsed/coord index, computed once on appear. Built per-render before
     /// caused the map dot to jump or stutter under continuous scrubbing.
@@ -464,17 +465,37 @@ struct ActivityDetailView: View {
     private var mapSection: some View {
         // Render size at 2x logical width for crispness on retina displays.
         // Cache key includes "_detail" so it doesn't collide with the row thumbnail.
-        MapSnapshotView(
-            trackPoints: sortedTrackPoints,
-            size: CGSize(width: 800, height: 440),
-            cacheKey: "activity_\(activity.id.uuidString)_detail",
-            highlightCoordinate: highlightedCoordinate
-        )
-        .frame(height: 220)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(.separator, lineWidth: 0.5)
+        Button {
+            isMapExpanded = true
+        } label: {
+            ZStack(alignment: .topTrailing) {
+                MapSnapshotView(
+                    trackPoints: sortedTrackPoints,
+                    size: CGSize(width: 800, height: 440),
+                    cacheKey: "activity_\(activity.id.uuidString)_detail",
+                    highlightCoordinate: highlightedCoordinate
+                )
+                .frame(height: 220)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(.separator, lineWidth: 0.5)
+                }
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(6)
+                    .background(.black.opacity(0.45), in: Circle())
+                    .padding(8)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(sortedTrackPoints.isEmpty)
+        .fullScreenCover(isPresented: $isMapExpanded) {
+            FullscreenMapView(
+                coordinates: cachedElapsedIndex.map(\.coord),
+                title: activity.sport.displayName
+            )
         }
     }
 

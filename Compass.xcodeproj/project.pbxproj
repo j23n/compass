@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		06AEE297E4A4DAE2FF74FE0E /* MapRouteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A06CAA6C9634DE5F69D540DE /* MapRouteView.swift */; };
+		E7F1A3D29C5B8064375A1F2E /* FullscreenMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9C28D40E1F37A625064AB7C /* FullscreenMapView.swift */; };
 		07B523E62E4F697A573506B6 /* ChartYDomain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3502B0EDE3324077F26D3EF8 /* ChartYDomain.swift */; };
 		08EF78B33E0BEC8567ABE14F /* FindMyPhoneService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F895C1DE3D221686BB2BFD7 /* FindMyPhoneService.swift */; };
 		12AF5059E4AEE5DC6D473933 /* MapSnapshotView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0F250C485A8D924F3DE3C50 /* MapSnapshotView.swift */; };
@@ -103,6 +104,7 @@
 		9D13A5908E2F7352848B4DA7 /* SleepNightCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepNightCard.swift; sourceTree = "<group>"; };
 		9D9133A7187508897F34DDF7 /* ActivityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityView.swift; sourceTree = "<group>"; };
 		A06CAA6C9634DE5F69D540DE /* MapRouteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MapRouteView.swift; sourceTree = "<group>"; };
+		B9C28D40E1F37A625064AB7C /* FullscreenMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FullscreenMapView.swift; sourceTree = "<group>"; };
 		A0F493523C31C25C4ADDED1A /* SparklineChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SparklineChart.swift; sourceTree = "<group>"; };
 		A675699E286A5D1EE4F96157 /* MusicService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MusicService.swift; sourceTree = "<group>"; };
 		B1F95D286265970F1341E5E1 /* ConnectionSyncStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionSyncStatusView.swift; sourceTree = "<group>"; };
@@ -287,6 +289,7 @@
 				B52DC488550FEC3D8883493F /* ActivityDetailView.swift */,
 				F99774EFF0EAC82BF2A0AF53 /* ActivityRowView.swift */,
 				A06CAA6C9634DE5F69D540DE /* MapRouteView.swift */,
+				B9C28D40E1F37A625064AB7C /* FullscreenMapView.swift */,
 				D0F250C485A8D924F3DE3C50 /* MapSnapshotView.swift */,
 				613CE3D8C070B65F4F40AE6E /* StatCell.swift */,
 			);
@@ -437,6 +440,7 @@
 				8E3B0A1D4F2C6B5A7D8E9C20 /* MapSnapshotCache.swift in Sources */,
 				E297034AD1CE858EC8614DDC /* LogsView.swift in Sources */,
 				06AEE297E4A4DAE2FF74FE0E /* MapRouteView.swift in Sources */,
+				E7F1A3D29C5B8064375A1F2E /* FullscreenMapView.swift in Sources */,
 				12AF5059E4AEE5DC6D473933 /* MapSnapshotView.swift in Sources */,
 				D2AAFA5DDAEF264231A1C688 /* MetricCard.swift in Sources */,
 				CA08357C40DF211C8AE2B097 /* MiniWindowChart.swift in Sources */,

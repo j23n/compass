@@ -13,13 +13,25 @@ struct MapPOI: Identifiable, Equatable {
     static func == (lhs: MapPOI, rhs: MapPOI) -> Bool { lhs.id == rhs.id }
 }
 
-/// Full-size interactive MapKit view showing a GPS route as a polyline.
+/// MapKit view showing a GPS route as a polyline.
+///
+/// Defaults to a static, non-interactive presentation (suitable for inline
+/// previews). Pass `interactive: true` to enable pan/zoom — used by the
+/// fullscreen expanded variant. Bumping `recenterToken` re-fits the camera
+/// to the route bounds (used by the "recenter" toolbar button).
 struct MapRouteView: UIViewRepresentable {
     let coordinates: [CLLocationCoordinate2D]
     let pois: [MapPOI]
     var highlightCoordinate: CLLocationCoordinate2D? = nil
+    var interactive: Bool = false
+    var recenterToken: Int = 0
 
-    init(trackPoints: [TrackPoint], highlightCoordinate: CLLocationCoordinate2D? = nil) {
+    init(
+        trackPoints: [TrackPoint],
+        highlightCoordinate: CLLocationCoordinate2D? = nil,
+        interactive: Bool = false,
+        recenterToken: Int = 0
+    ) {
         let sorted = trackPoints.sorted { $0.timestamp < $1.timestamp }
         self.coordinates = sorted.compactMap { point in
             guard point.latitude != 0 || point.longitude != 0 else { return nil }
@@ -27,21 +39,31 @@ struct MapRouteView: UIViewRepresentable {
         }
         self.pois = []
         self.highlightCoordinate = highlightCoordinate
+        self.interactive = interactive
+        self.recenterToken = recenterToken
     }
 
-    init(coordinates: [CLLocationCoordinate2D], pois: [MapPOI] = [], highlightCoordinate: CLLocationCoordinate2D? = nil) {
+    init(
+        coordinates: [CLLocationCoordinate2D],
+        pois: [MapPOI] = [],
+        highlightCoordinate: CLLocationCoordinate2D? = nil,
+        interactive: Bool = false,
+        recenterToken: Int = 0
+    ) {
         self.coordinates = coordinates
         self.pois = pois
         self.highlightCoordinate = highlightCoordinate
+        self.interactive = interactive
+        self.recenterToken = recenterToken
     }
 
     func makeUIView(context: Context) -> MKMapView {
         let map = MKMapView()
-        map.isScrollEnabled = false
-        map.isZoomEnabled = false
-        map.isRotateEnabled = false
-        map.isPitchEnabled = false
-        map.isUserInteractionEnabled = false
+        map.isScrollEnabled = interactive
+        map.isZoomEnabled = interactive
+        map.isRotateEnabled = interactive
+        map.isPitchEnabled = interactive
+        map.isUserInteractionEnabled = interactive
         map.showsUserLocation = false
         map.pointOfInterestFilter = .excludingAll
         map.delegate = context.coordinator
@@ -51,7 +73,7 @@ struct MapRouteView: UIViewRepresentable {
     func updateUIView(_ map: MKMapView, context: Context) {
         let coord = context.coordinator
 
-        // Only rebuild route when the coordinate set changes.
+        // Rebuild route when the coordinate set changes.
         if coord.lastCoordinateCount != coordinates.count {
             map.removeOverlays(map.overlays)
             let routeAnnotations = map.annotations.filter { !($0 is HighlightAnnotation) }
@@ -74,15 +96,14 @@ struct MapRouteView: UIViewRepresentable {
                 map.addAnnotations(pois.map { POIAnnotation(poi: $0) })
             }
 
-            let allCoords = coordinates + pois.map(\.coordinate)
-            let region = MKCoordinateRegion(routeCoordinates: allCoords, paddingFraction: 0.22)
-            if map.frame.isEmpty {
-                DispatchQueue.main.async { map.setRegion(region, animated: false) }
-            } else {
-                map.setRegion(region, animated: false)
-            }
-
+            applyInitialRegion(map: map)
             coord.lastCoordinateCount = coordinates.count
+            coord.lastRecenterToken = recenterToken
+        } else if coord.lastRecenterToken != recenterToken {
+            // Recenter request from the host (e.g., toolbar button) without a
+            // coordinate-set change — re-fit camera to the route bounds.
+            applyInitialRegion(map: map, animated: true)
+            coord.lastRecenterToken = recenterToken
         }
 
         // Update highlight annotation independently (fast path for chart scrubbing).
@@ -97,12 +118,24 @@ struct MapRouteView: UIViewRepresentable {
         }
     }
 
+    private func applyInitialRegion(map: MKMapView, animated: Bool = false) {
+        let allCoords = coordinates + pois.map(\.coordinate)
+        guard !allCoords.isEmpty else { return }
+        let region = MKCoordinateRegion(routeCoordinates: allCoords, paddingFraction: 0.22)
+        if map.frame.isEmpty {
+            DispatchQueue.main.async { map.setRegion(region, animated: animated) }
+        } else {
+            map.setRegion(region, animated: animated)
+        }
+    }
+
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     // MARK: - Coordinator
 
     final class Coordinator: NSObject, MKMapViewDelegate {
         var lastCoordinateCount = 0
+        var lastRecenterToken = 0
         var highlightAnnotation: HighlightAnnotation? = nil
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {

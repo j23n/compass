@@ -14,6 +14,7 @@ struct CourseDetailView: View {
     @State private var isEditing = false
     @State private var editingPOI: CoursePOI?
     @State private var isTurnsExpanded = false
+    @State private var isMapExpanded = false
 
     init(course: Course) {
         self.course = course
@@ -29,26 +30,24 @@ struct CourseDetailView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal)
 
-                    MapRouteView(
-                        coordinates: course.waypoints
-                            .sorted { $0.order < $1.order }
-                            .map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) },
-                        // Suppress turn cues on the map — the polyline already
-                        // shows where the turns are, and the dozens of arrow
-                        // glyphs from auto-detected turns drown out actual POIs.
-                        // The watch still receives them via the FIT export.
-                        pois: course.pointsOfInterest
-                            .filter { !CoursePointType(fitCode: UInt8(clamping: $0.coursePointType)).isTurnCue }
-                            .map {
-                                MapPOI(
-                                    coordinate: CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude),
-                                    name: $0.name,
-                                    coursePointType: $0.coursePointType
-                                )
-                            }
-                    )
-                    .frame(height: 300)
-                    .cornerRadius(12)
+                    Button {
+                        isMapExpanded = true
+                    } label: {
+                        ZStack(alignment: .topTrailing) {
+                            MapRouteView(coordinates: mapCoordinates, pois: mapPOIs)
+                                .frame(height: 300)
+                                .cornerRadius(12)
+                                .allowsHitTesting(false)
+                            // Affordance hint that the map opens fullscreen.
+                            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .padding(6)
+                                .background(.black.opacity(0.45), in: Circle())
+                                .padding(8)
+                        }
+                    }
+                    .buttonStyle(.plain)
                     .padding(.horizontal)
                 }
 
@@ -85,6 +84,31 @@ struct CourseDetailView: View {
         .sheet(item: $editingPOI) { poi in
             POIEditView(poi: poi)
         }
+        .fullScreenCover(isPresented: $isMapExpanded) {
+            FullscreenMapView(coordinates: mapCoordinates, pois: mapPOIs, title: course.name)
+        }
+    }
+
+    /// Track-point coordinates as a sorted CLLocationCoordinate2D array,
+    /// shared by the inline map and the fullscreen variant.
+    private var mapCoordinates: [CLLocationCoordinate2D] {
+        course.waypoints
+            .sorted { $0.order < $1.order }
+            .map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+    }
+
+    /// POIs to render on the map — turn cues are filtered out (still encoded
+    /// to FIT for the watch, but they crowd the polyline visually).
+    private var mapPOIs: [MapPOI] {
+        course.pointsOfInterest
+            .filter { !CoursePointType(fitCode: UInt8(clamping: $0.coursePointType)).isTurnCue }
+            .map {
+                MapPOI(
+                    coordinate: CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude),
+                    name: $0.name,
+                    coursePointType: $0.coursePointType
+                )
+            }
     }
 
     private var poiSection: some View {
