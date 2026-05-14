@@ -85,9 +85,148 @@ final class WeatherService {
         }
 
         AppLogger.services.info(
-            "Weather: \(current.temperature)°C cond=\(current.condition) + \(hourly.count)h \(daily.count)d"
+            "Weather: built — \(Self.summary(current: current, hourly: hourly, daily: daily, now: now))"
         )
+        for line in Self.detailedLines(current: current, hourly: hourly, daily: daily) {
+            AppLogger.services.info("Weather:   \(line)")
+        }
         return WeatherFITEncoder.encode(current: current, hourly: hourly, daily: daily)
+    }
+
+    // MARK: - Logging helpers
+
+    private static func summary(
+        current: GarminCurrentConditions,
+        hourly: [GarminHourlyForecast],
+        daily: [GarminDailyForecast],
+        now: Date
+    ) -> String {
+        let cond = Self.conditionName(current.condition)
+        return "now \(current.temperature)°C \(cond)(\(current.condition)) + \(hourly.count)h \(daily.count)d "
+             + "first-hourly=\(hourly.first.map { Self.relTime($0.timestamp, now: now) } ?? "—")"
+    }
+
+    private static func detailedLines(
+        current: GarminCurrentConditions,
+        hourly: [GarminHourlyForecast],
+        daily: [GarminDailyForecast]
+    ) -> [String] {
+        var lines: [String] = []
+        lines.append(
+            "current: ts=\(time(current.timestamp)) "
+          + "obs=\(time(current.observedAtTime)) "
+          + "\(current.temperature)°C lo=\(current.lowTemperature) hi=\(current.highTemperature) "
+          + "\(conditionName(current.condition))(\(current.condition)) "
+          + "wind=\(current.windDirection)°@\(windSpeedKmh(current.windSpeed)) "
+          + "precip=\(current.precipitationProbability)% feels=\(current.temperatureFeelsLike) "
+          + "humid=\(current.relativeHumidity)%"
+        )
+        if hourly.isEmpty {
+            lines.append("hourly: (none)")
+        } else {
+            lines.append("hourly[\(hourly.count)]:")
+            for (i, h) in hourly.enumerated() {
+                lines.append(
+                    String(format: "  [%2d] ", i)
+                  + "\(time(h.timestamp)) "
+                  + "\(h.temperature)°C \(conditionName(h.condition))(\(h.condition)) "
+                  + "wind=\(h.windDirection)°@\(windSpeedKmh(h.windSpeed)) "
+                  + "precip=\(h.precipitationProbability)% feels=\(h.temperatureFeelsLike) "
+                  + "humid=\(h.relativeHumidity)%"
+                )
+            }
+        }
+        if daily.isEmpty {
+            lines.append("daily: (none)")
+        } else {
+            lines.append("daily[\(daily.count)]:")
+            for (i, d) in daily.enumerated() {
+                lines.append(
+                    String(format: "  [%d] ", i)
+                  + "\(date(d.timestamp)) \(dayName(d.dayOfWeek)) "
+                  + "\(d.lowTemperature)–\(d.highTemperature)°C "
+                  + "\(conditionName(d.condition))(\(d.condition)) "
+                  + "precip=\(d.precipitationProbability)%"
+                )
+            }
+        }
+        return lines
+    }
+
+    private static let logTimeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        return f
+    }()
+
+    private static let logDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
+    private static func time(_ garmin: UInt32) -> String {
+        let d = Date(timeIntervalSince1970: TimeInterval(garmin) + garminEpochOffset)
+        return logTimeFormatter.string(from: d)
+    }
+
+    private static func date(_ garmin: UInt32) -> String {
+        let d = Date(timeIntervalSince1970: TimeInterval(garmin) + garminEpochOffset)
+        return logDateFormatter.string(from: d)
+    }
+
+    private static func relTime(_ garmin: UInt32, now: Date) -> String {
+        let d = Date(timeIntervalSince1970: TimeInterval(garmin) + garminEpochOffset)
+        let delta = Int(d.timeIntervalSince(now).rounded())
+        let sign = delta >= 0 ? "+" : "-"
+        let abs = Swift.abs(delta)
+        if abs < 60 { return "\(time(garmin)) (now\(sign)\(abs)s)" }
+        let m = abs / 60
+        return "\(time(garmin)) (now\(sign)\(m)m)"
+    }
+
+    private static func windSpeedKmh(_ mmPerSec: UInt16) -> String {
+        // Watch wants mm/s; logs read better in km/h.
+        let kmh = Double(mmPerSec) * 3.6 / 1000
+        return String(format: "%.1fkm/h", kmh)
+    }
+
+    private static func dayName(_ dow: UInt8) -> String {
+        switch dow {
+        case 0: return "Sun"; case 1: return "Mon"; case 2: return "Tue"
+        case 3: return "Wed"; case 4: return "Thu"; case 5: return "Fri"
+        case 6: return "Sat"
+        default: return "?\(dow)"
+        }
+    }
+
+    /// Names mirror Garmin's `weather_status` enum
+    /// (`rzfit_swift_map.swift:3840-3866`). Stays in sync with `mapCondition`.
+    private static func conditionName(_ code: UInt8) -> String {
+        switch code {
+        case 0:  return "clear"
+        case 1:  return "partly_cloudy"
+        case 2:  return "mostly_cloudy"
+        case 3:  return "rain"
+        case 4:  return "snow"
+        case 5:  return "windy"
+        case 6:  return "thunderstorms"
+        case 7:  return "wintry_mix"
+        case 8:  return "fog"
+        case 11: return "hazy"
+        case 12: return "hail"
+        case 13: return "scattered_showers"
+        case 14: return "scattered_thunderstorms"
+        case 15: return "unknown_precipitation"
+        case 16: return "light_rain"
+        case 17: return "heavy_rain"
+        case 18: return "light_snow"
+        case 19: return "heavy_snow"
+        case 20: return "light_rain_snow"
+        case 21: return "heavy_rain_snow"
+        case 22: return "cloudy"
+        default: return "?\(code)"
+        }
     }
 
     // MARK: - Conversions

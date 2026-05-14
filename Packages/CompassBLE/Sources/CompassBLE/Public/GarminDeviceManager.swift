@@ -455,14 +455,31 @@ public actor GarminDeviceManager: DeviceManagerProtocol {
         do {
             let fitMessages = try await provider(request)
             for fitMsg in fitMessages {
+                let kind = Self.fitMessageKind(fitMsg.type)
+                BLELogger.gfdi.info(
+                    "WEATHER FIT \(kind) (type=0x\(String(format: "%04X", fitMsg.type.rawValue)), \(fitMsg.payload.count)B)"
+                )
+                // Hex dump stays at .debug so it doesn't drown the structured
+                // per-record log emitted by WeatherService at .info.
                 let hex = fitMsg.payload.map { String(format: "%02X", $0) }.joined(separator: " ")
-                BLELogger.gfdi.debug("WEATHER FIT type=0x\(String(format: "%04X", fitMsg.type.rawValue)) payload[\(fitMsg.payload.count)]: \(hex)")
+                BLELogger.gfdi.debug("WEATHER FIT payload hex: \(hex)")
                 try await gfdiClient.send(message: fitMsg)
             }
-            BLELogger.gfdi.info("WEATHER_REQUEST: pushed \(fitMessages.count) FIT messages")
+            let totalBytes = fitMessages.reduce(0) { $0 + $1.payload.count }
+            BLELogger.gfdi.info("WEATHER_REQUEST: pushed \(fitMessages.count) FIT messages (\(totalBytes)B total)")
         } catch {
             BLELogger.gfdi.error("WEATHER_REQUEST: provider error — \(error)")
             // Silence: the watch will retry in ~5 s.
+        }
+    }
+
+    /// Friendly label for the two inline-FIT message types Compass emits in
+    /// response to WEATHER_REQUEST. Anything else falls back to the hex type.
+    private static func fitMessageKind(_ type: GFDIMessageType) -> String {
+        switch type {
+        case .fitDefinition: return "FIT_DEFINITION"
+        case .fitData:       return "FIT_DATA"
+        default:             return String(format: "0x%04X", type.rawValue)
         }
     }
 
