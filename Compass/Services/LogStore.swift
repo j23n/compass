@@ -2,7 +2,7 @@ import Foundation
 
 @Observable
 final class LogStore: @unchecked Sendable {
-    nonisolated(unsafe) static let shared = LogStore()
+    static let shared = LogStore()
 
     struct Entry: Identifiable {
         let id: UUID = UUID()

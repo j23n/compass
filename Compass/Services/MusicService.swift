@@ -72,8 +72,14 @@ final class MusicService {
             .MPMusicPlayerControllerPlaybackStateDidChange,
         ]
         for name in names {
+            // `queue: .main` guarantees the block runs on the main thread,
+            // but strict concurrency doesn't infer that — assertIsolated
+            // promotes the closure into the @MainActor context that
+            // `pushCurrentState()` requires.
             let token = nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                self?.pushCurrentState()
+                MainActor.assumeIsolated {
+                    self?.pushCurrentState()
+                }
             }
             observers.append(token)
         }

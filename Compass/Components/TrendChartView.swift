@@ -192,7 +192,8 @@ struct TrendChartView: View {
                     .gesture(
                         DragGesture(minimumDistance: 0)
                             .onChanged { drag in
-                                let x = drag.location.x - geo[proxy.plotAreaFrame].origin.x
+                                guard let plotFrame = proxy.plotFrame else { return }
+                                let x = drag.location.x - geo[plotFrame].origin.x
                                 guard let date: Date = proxy.value(atX: x) else { return }
                                 selectedDataPoint = data.min(by: {
                                     abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date))

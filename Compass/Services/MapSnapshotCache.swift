@@ -8,7 +8,11 @@ import UIKit
 final class MapSnapshotCache: @unchecked Sendable {
     static let shared = MapSnapshotCache()
 
-    private let memCache: NSCache<NSString, UIImage>
+    // NSCache is documented as thread-safe (Apple guarantees lock-free
+    // get/set across threads), but it isn't Sendable. The `unsafe` attribute
+    // tells Swift's strict concurrency to trust the documented contract so
+    // the cache can be captured into background ioQueue blocks.
+    nonisolated(unsafe) private let memCache: NSCache<NSString, UIImage>
     private let diskDir: URL
     private let ioQueue = DispatchQueue(label: "MapSnapshotCache.io", qos: .utility)
 

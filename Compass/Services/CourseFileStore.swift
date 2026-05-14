@@ -6,7 +6,7 @@ import Foundation
 /// and run through external FIT validators when the watch silently rejects
 /// a course post-upload.
 final class CourseFileStore: @unchecked Sendable {
-    nonisolated(unsafe) static let shared = CourseFileStore()
+    static let shared = CourseFileStore()
 
     struct StoredFile: Identifiable {
         let id: UUID

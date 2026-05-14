@@ -677,7 +677,6 @@ final class SyncCoordinator {
                             context.insert(SpO2Sample(timestamp: sample.timestamp, percent: sample.percent))
                         }
                     }
-                    let calendar = Calendar.current
 
                     // Per-interval step deltas: the parser skips the first cumulative
                     // reading per file (a snapshot, not a true delta), so summing these

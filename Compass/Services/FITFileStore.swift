@@ -1,7 +1,7 @@
 import Foundation
 
 final class FITFileStore: @unchecked Sendable {
-    nonisolated(unsafe) static let shared = FITFileStore()
+    static let shared = FITFileStore()
 
     struct StoredFile: Identifiable {
         let id: UUID

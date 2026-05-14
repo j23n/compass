@@ -289,7 +289,7 @@ struct TodayView: View {
             .padding()
         }
         .refreshable {
-            await syncCoordinator.sync(context: modelContext)
+            syncCoordinator.sync(context: modelContext)
         }
     }
 

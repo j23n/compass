@@ -461,7 +461,8 @@ struct HealthDetailView: View {
                 Rectangle().fill(.clear).contentShape(Rectangle())
                     .gesture(DragGesture(minimumDistance: 0)
                         .onChanged { drag in
-                            let x = drag.location.x - geo[proxy.plotAreaFrame].origin.x
+                            guard let plotFrame = proxy.plotFrame else { return }
+                            let x = drag.location.x - geo[plotFrame].origin.x
                             guard let date: Date = proxy.value(atX: x) else { return }
                             selectedBucket = data.min(by: {
                                 abs(bucketCenterDate($0.date).timeIntervalSince(date)) <
@@ -551,7 +552,8 @@ struct HealthDetailView: View {
                 Rectangle().fill(.clear).contentShape(Rectangle())
                     .gesture(DragGesture(minimumDistance: 0)
                         .onChanged { drag in
-                            let x = drag.location.x - geo[proxy.plotAreaFrame].origin.x
+                            guard let plotFrame = proxy.plotFrame else { return }
+                            let x = drag.location.x - geo[plotFrame].origin.x
                             guard let date: Date = proxy.value(atX: x) else { return }
                             selectedSleepBucket = buckets.min(by: {
                                 abs(sleepBucketCenter($0.date).timeIntervalSince(date)) <
