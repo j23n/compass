@@ -263,10 +263,15 @@ public actor MockGarminDevice: DeviceManagerProtocol {
         BLELogger.sync.debug("[Mock] archiveFITFile fileIndex=\(fileIndex)")
     }
 
-    public func uploadCourse(_ url: URL) async throws -> UInt16 {
+    public func uploadCourse(
+        _ url: URL,
+        progress: AsyncStream<SyncProgress>.Continuation?
+    ) async throws -> UInt16 {
         BLELogger.sync.info("[Mock] Uploading course: \(url.lastPathComponent)")
         guard _isConnected else { throw PairingError.bluetoothUnavailable }
+        progress?.yield(.starting)
         try await Task.sleep(for: .seconds(2))
+        progress?.yield(.completed(fileCount: 1))
         BLELogger.sync.info("[Mock] Upload complete")
         return 1
     }

@@ -52,6 +52,19 @@ final class SyncCoordinator {
     var progress: Double = 0
     var transferBytes: (received: Int, total: Int?)? = nil
 
+    // MARK: - Watch Activity (lightweight, non-sync interactions)
+
+    /// The most recent short-lived watch interaction (weather request, FMP,
+    /// archive, etc.). The UI animates a pulse on the connection dot whenever
+    /// this changes — the count is what triggers the animation, the kind drives
+    /// the optional label.
+    var lastWatchActivity: WatchActivityEvent?
+
+    /// Monotonic counter incremented on every watch-activity event. Views use
+    /// this as the `trigger` for a `.task(id:)` modifier so each event produces
+    /// exactly one pulse animation, even when several events fire in a row.
+    var watchActivityPulseCount: Int = 0
+
     let deviceManager: any DeviceManagerProtocol
     private let modelContainer: ModelContainer
 
@@ -67,6 +80,8 @@ final class SyncCoordinator {
 
     private var discoveryTask: Task<Void, Never>?
     private var connectionMonitorTask: Task<Void, Never>?
+    private var watchSyncProgressTask: Task<Void, Never>?
+    private var watchActivityTask: Task<Void, Never>?
     private var reconnectRetryTask: Task<Void, Never>?
     private var syncTask: Task<Void, Never>?
     private var bgTaskID: UIBackgroundTaskIdentifier = .invalid
@@ -95,6 +110,67 @@ final class SyncCoordinator {
                 if case .disconnected = state {
                     tearDownDeviceCallbacks()
                     startAutoReconnect()
+                }
+            }
+        }
+
+        watchSyncProgressTask = Task { [self] in
+            for await event in deviceManager.watchSyncProgressStream() {
+                applyWatchSyncProgress(event)
+            }
+        }
+
+        watchActivityTask = Task { [self] in
+            for await event in deviceManager.watchActivityStream() {
+                lastWatchActivity = event
+                watchActivityPulseCount &+= 1
+            }
+        }
+    }
+
+    /// Updates `state` / `progress` for syncs that the watch initiated (5037
+    /// SYNCHRONIZATION). Mirrors the switch in `sync(context:)`. Phone-initiated
+    /// syncs use a local stream inside that method, so this only runs for
+    /// background syncs — keeping the status pill honest when files arrive
+    /// without the user tapping anything.
+    private func applyWatchSyncProgress(_ event: SyncProgress) {
+        AppLogger.sync.debug("Watch-initiated progress: \(event.description)")
+        switch event {
+        case .starting:
+            state = .syncing(description: "Watch syncing...")
+        case .listing(let dir):
+            state = .syncing(description: "Listing \(dir.rawValue) files...")
+        case .downloading(let file, let received, let total):
+            let totalStr = total.map { " / \($0)" } ?? ""
+            state = .syncing(description: "Downloading \(file): \(received)\(totalStr) bytes")
+            if let total, total > 0 {
+                progress = Double(received) / Double(total)
+            }
+            transferBytes = (received, total)
+        case .parsing:
+            state = .syncing(description: "Parsing data...")
+            transferBytes = nil
+        case .completed(let count):
+            state = .completed(fileCount: count)
+            transferBytes = nil
+            progress = 0
+            lastSyncDate = Date()
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(3))
+                await MainActor.run {
+                    guard let self else { return }
+                    if case .completed = self.state { self.state = .idle }
+                }
+            }
+        case .failed(let error):
+            state = .failed(error.localizedDescription)
+            transferBytes = nil
+            progress = 0
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(5))
+                await MainActor.run {
+                    guard let self else { return }
+                    if case .failed = self.state { self.state = .idle }
                 }
             }
         }
@@ -320,15 +396,17 @@ final class SyncCoordinator {
             }
         }
 
-        musicService.startObserving { [weak gm] messages in
-            Task { [weak gm] in
+        musicService.startObserving { [weak gm, weak self] messages in
+            Task { [weak gm, weak self] in
                 await gm?.sendMusicEntityUpdate(messages)
+                await self?.recordWatchActivity(.music)
             }
         }
         musicService.pushCurrentState()
 
-        phoneLocationService.sendMessage = { [weak gm] msg in
+        phoneLocationService.sendMessage = { [weak gm, weak self] msg in
             try? await gm?.sendRaw(message: msg)
+            await self?.recordWatchActivity(.location)
         }
         weatherService.locationProvider = { [weak phoneLocationService] in
             phoneLocationService?.latestLocation
@@ -341,6 +419,15 @@ final class SyncCoordinator {
         }
 
         AppLogger.sync.info("Watch services wired: weather, find-my-phone, music, phone-location")
+    }
+
+    /// Bumps the watch-activity pulse for outbound interactions that we trigger
+    /// (music push, location push, course upload). Inbound interactions
+    /// (weather request, FMP, archive ACK) come through `watchActivityStream`
+    /// inside the device manager — no need to call this for those.
+    private func recordWatchActivity(_ kind: WatchActivityKind) {
+        lastWatchActivity = WatchActivityEvent(kind: kind)
+        watchActivityPulseCount &+= 1
     }
 
     private func tearDownDeviceCallbacks() {
@@ -824,6 +911,7 @@ final class SyncCoordinator {
 
         AppLogger.sync.info("Starting course upload")
         state = .syncing(description: "Uploading course...")
+        progress = 0
 
         do {
             let staged = try CourseFileStore.shared.save(from: fitURL)
@@ -833,13 +921,37 @@ final class SyncCoordinator {
         }
 
         syncTask = Task {
+            let (stream, continuation) = AsyncStream<SyncProgress>.makeStream()
+            let progressTask = Task {
+                for await event in stream {
+                    await MainActor.run {
+                        switch event {
+                        case .downloading(_, let sent, let total):
+                            let totalStr = total.map { " / \($0)" } ?? ""
+                            self.state = .syncing(description: "Uploading course: \(sent)\(totalStr) bytes")
+                            if let total, total > 0 {
+                                self.progress = Double(sent) / Double(total)
+                            }
+                            self.transferBytes = (sent, total)
+                        default:
+                            break
+                        }
+                    }
+                }
+            }
+            defer {
+                continuation.finish()
+                progressTask.cancel()
+            }
             do {
-                let fileIndex = try await deviceManager.uploadCourse(fitURL)
+                let fileIndex = try await deviceManager.uploadCourse(fitURL, progress: continuation)
                 AppLogger.sync.info("Course uploaded successfully (fileIndex=\(fileIndex), size=\(fitSize)B)")
                 course.uploadedToWatch = true
                 course.lastUploadDate = Date()
                 course.watchFITSize = fitSize
                 state = .completed(fileCount: 1)
+                transferBytes = nil
+                progress = 0
 
                 try? await Task.sleep(for: .seconds(3))
                 state = .idle
@@ -847,6 +959,8 @@ final class SyncCoordinator {
             } catch {
                 AppLogger.sync.error("Upload failed: \(error.localizedDescription)")
                 state = .failed(error.localizedDescription)
+                transferBytes = nil
+                progress = 0
                 try? await Task.sleep(for: .seconds(5))
                 state = .idle
             }

@@ -265,7 +265,7 @@ struct MockDeviceIntegrationTests {
             .appendingPathComponent("test_course_\(UUID().uuidString).fit")
         try Data([0x0E, 0x20]).write(to: tempURL)
 
-        _ = try await mock.uploadCourse(tempURL)
+        _ = try await mock.uploadCourse(tempURL, progress: nil)
         // Should complete without error
 
         try? FileManager.default.removeItem(at: tempURL)
@@ -279,7 +279,7 @@ struct MockDeviceIntegrationTests {
             .appendingPathComponent("test_course_\(UUID().uuidString).fit")
 
         do {
-            _ = try await mock.uploadCourse(tempURL)
+            _ = try await mock.uploadCourse(tempURL, progress: nil)
             Issue.record("Should have thrown")
         } catch let error as PairingError {
             if case .bluetoothUnavailable = error {

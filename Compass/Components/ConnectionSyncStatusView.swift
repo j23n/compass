@@ -8,10 +8,16 @@ import CompassData
 struct ConnectionSyncStatusView: View {
     @Environment(SyncCoordinator.self) private var sync
 
+    /// Drives the pulse animation. We don't read time directly — the
+    /// `.task(id:)` modifier kicks this on every `watchActivityPulseCount`
+    /// increment and SwiftUI re-evaluates the body.
+    @State private var pulseScale: CGFloat = 1.0
+    @State private var pulseOpacity: Double = 0.0
+
     var body: some View {
         VStack(spacing: 2) {
             HStack(spacing: 6) {
-                Circle().fill(connectionDotColor).frame(width: 9, height: 9)
+                connectionDot
                 Text(deviceLabel)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.primary)
@@ -26,6 +32,38 @@ struct ConnectionSyncStatusView: View {
         .frame(maxWidth: 320)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityDescription)
+    }
+
+    /// Connection-state dot with a single-shot scale+fade ring on each watch
+    /// activity event. The ring is invisible at rest (opacity 0), so the dot
+    /// looks identical to a plain circle when nothing is happening.
+    private var connectionDot: some View {
+        ZStack {
+            Circle()
+                .stroke(connectionDotColor, lineWidth: 1.5)
+                .scaleEffect(pulseScale)
+                .opacity(pulseOpacity)
+                .frame(width: 9, height: 9)
+            Circle()
+                .fill(connectionDotColor)
+                .frame(width: 9, height: 9)
+        }
+        .frame(width: 9, height: 9)
+        .task(id: sync.watchActivityPulseCount) {
+            guard sync.watchActivityPulseCount > 0 else { return }
+            // Reset without animation so the next withAnimation block has a
+            // clean starting state — otherwise SwiftUI coalesces the reset and
+            // the target into one transaction and the ring "appears" already
+            // half-faded.
+            withTransaction(Transaction(animation: nil)) {
+                pulseScale = 1.0
+                pulseOpacity = 0.7
+            }
+            withAnimation(.easeOut(duration: 0.7)) {
+                pulseScale = 3.0
+                pulseOpacity = 0.0
+            }
+        }
     }
 
     @ViewBuilder
