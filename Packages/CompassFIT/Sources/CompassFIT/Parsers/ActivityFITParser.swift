@@ -163,6 +163,11 @@ public struct ActivityFITParser: Sendable {
         )
     }
 
+    /// RDP epsilon for the persisted activity-list thumbnail polyline.
+    /// 8 m keeps shape recognisable for a 60×60 thumbnail while typically
+    /// dropping a 5000-point ride to ~150 vertices.
+    private static let thumbnailSimplifyEpsilon: Double = 8
+
     private func buildActivity(
         from session: FitMessage,
         trackPoints: [TrackPoint],
@@ -181,6 +186,23 @@ public struct ActivityFITParser: Sendable {
         let ascent = doubleValue(session, key: "total_ascent")
         let descent = doubleValue(session, key: "total_descent")
 
+        // Pre-compute a simplified polyline for the activities-list
+        // thumbnail. Filtering out (0, 0) sentinel points first avoids RDP
+        // pulling the centre of the Atlantic into the route when indoor
+        // segments are mixed with outdoor ones.
+        let gpsCoords = trackPoints
+            .sorted { $0.timestamp < $1.timestamp }
+            .compactMap { tp -> (lat: Double, lon: Double)? in
+                guard tp.latitude != 0 || tp.longitude != 0 else { return nil }
+                return (tp.latitude, tp.longitude)
+            }
+        let keepIdx = PathSimplification.simplify(
+            points: gpsCoords,
+            epsilon: Self.thumbnailSimplifyEpsilon
+        )
+        let simplifiedLat = keepIdx.map { gpsCoords[$0].lat }
+        let simplifiedLon = keepIdx.map { gpsCoords[$0].lon }
+
         return Activity(
             startDate: startDate,
             endDate: endDate,
@@ -194,6 +216,8 @@ public struct ActivityFITParser: Sendable {
             totalDescent: descent,
             pauseStarts: pauses.map(\.start),
             pauseEnds: pauses.map(\.end),
+            simplifiedLat: simplifiedLat,
+            simplifiedLon: simplifiedLon,
             trackPoints: trackPoints
         )
     }

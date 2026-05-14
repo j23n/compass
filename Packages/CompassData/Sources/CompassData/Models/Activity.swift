@@ -28,6 +28,15 @@ public final class Activity {
     public var pauseStarts: [Date] = []
     public var pauseEnds: [Date] = []
 
+    /// Pre-computed simplified polyline for thumbnail rendering. Same
+    /// length, alternating lat/lon would also work but two parallel arrays
+    /// are friendlier with SwiftData queries / migration. Populated by
+    /// `ActivityFITParser` (RDP at 8 m epsilon) so the activities list
+    /// renders without faulting in the full `trackPoints` relationship.
+    /// Empty for older activities — the views fall back to `trackPoints`.
+    public var simplifiedLat: [Double] = []
+    public var simplifiedLon: [Double] = []
+
     @Relationship(deleteRule: .cascade, inverse: \TrackPoint.activity)
     public var trackPoints: [TrackPoint]
 
@@ -56,6 +65,8 @@ public final class Activity {
         sourceFileName: String? = nil,
         pauseStarts: [Date] = [],
         pauseEnds: [Date] = [],
+        simplifiedLat: [Double] = [],
+        simplifiedLon: [Double] = [],
         trackPoints: [TrackPoint] = []
     ) {
         self.id = id
@@ -72,6 +83,8 @@ public final class Activity {
         self.sourceFileName = sourceFileName
         self.pauseStarts = pauseStarts
         self.pauseEnds = pauseEnds
+        self.simplifiedLat = simplifiedLat
+        self.simplifiedLon = simplifiedLon
         self.trackPoints = trackPoints
     }
 }

@@ -1,4 +1,5 @@
 import SwiftUI
+import CoreLocation
 import CompassData
 
 /// A single row in the Activities list — sport icon, metadata, and map thumbnail.
@@ -54,17 +55,39 @@ struct ActivityRowView: View {
         }
     }
 
+    @ViewBuilder
     private var mapThumbnail: some View {
-        MapSnapshotView(
-            trackPoints: activity.trackPoints,
-            cacheKey: "activity_\(activity.id.uuidString)_thumb"
-        )
+        // Render from the pre-simplified polyline when available so we
+        // don't fault the full `trackPoints` relationship during scroll.
+        // Older activities (parsed before this field existed) fall back
+        // to the full relationship — slow but correct.
+        let thumbView = thumbnailFromSimplified() ?? thumbnailFromTrackPoints()
+        thumbView
             .frame(width: 60, height: 60)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .strokeBorder(Color(.separator), lineWidth: 0.5)
             }
+    }
+
+    private func thumbnailFromSimplified() -> MapSnapshotView? {
+        guard activity.simplifiedLat.count == activity.simplifiedLon.count,
+              !activity.simplifiedLat.isEmpty else { return nil }
+        let coords = zip(activity.simplifiedLat, activity.simplifiedLon).map {
+            CLLocationCoordinate2D(latitude: $0.0, longitude: $0.1)
+        }
+        return MapSnapshotView(
+            coordinates: coords,
+            cacheKey: "activity_\(activity.id.uuidString)_thumb"
+        )
+    }
+
+    private func thumbnailFromTrackPoints() -> MapSnapshotView {
+        MapSnapshotView(
+            trackPoints: activity.trackPoints,
+            cacheKey: "activity_\(activity.id.uuidString)_thumb"
+        )
     }
 
     private var separator: some View {
