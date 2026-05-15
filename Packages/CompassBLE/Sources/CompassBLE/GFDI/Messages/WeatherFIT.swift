@@ -53,11 +53,13 @@ public struct GarminHourlyForecast: Sendable {
     public let precipitationProbability: UInt8
     public let temperatureFeelsLike: Int8
     public let relativeHumidity: UInt8
+    public let uvIndex: Float
 
     public init(
         timestamp: UInt32, temperature: Int8, condition: UInt8,
         windDirection: UInt16, windSpeed: UInt16,
-        precipitationProbability: UInt8, temperatureFeelsLike: Int8, relativeHumidity: UInt8
+        precipitationProbability: UInt8, temperatureFeelsLike: Int8, relativeHumidity: UInt8,
+        uvIndex: Float = 0
     ) {
         self.timestamp = timestamp
         self.temperature = temperature
@@ -67,6 +69,7 @@ public struct GarminHourlyForecast: Sendable {
         self.precipitationProbability = precipitationProbability
         self.temperatureFeelsLike = temperatureFeelsLike
         self.relativeHumidity = relativeHumidity
+        self.uvIndex = uvIndex
     }
 }
 
@@ -346,8 +349,16 @@ public enum WeatherFITEncoder {
         payload.appendInt8(h.temperatureFeelsLike)
         payload.append(h.relativeHumidity)
         payload.append(0x7F)                            // dew_point:  FIT invalid (SINT8)
-        payload.append(0xFF); payload.append(0xFF)      // uv_index:   FIT invalid (FLOAT32 hi)
-        payload.append(0xFF); payload.append(0xFF)      // uv_index:   FIT invalid (FLOAT32 lo)
+        // uv_index FLOAT32 LE. The watch's hourly widget sat on
+        // "waiting for data" when this was the FIT invalid sentinel
+        // (0xFFFFFFFF = NaN); some firmware silently drops records whose
+        // float fields aren't finite. Write a real value from the
+        // forecast (0 when unknown) rather than the sentinel.
+        let uvBits = h.uvIndex.bitPattern
+        payload.append(UInt8(uvBits        & 0xFF))
+        payload.append(UInt8((uvBits >>  8) & 0xFF))
+        payload.append(UInt8((uvBits >> 16) & 0xFF))
+        payload.append(UInt8((uvBits >> 24) & 0xFF))
         payload.append(0xFF)                            // air_quality: FIT invalid (ENUM)
     }
 

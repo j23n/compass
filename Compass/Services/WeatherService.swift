@@ -84,7 +84,8 @@ final class WeatherService {
                     windSpeed: windSpeedMillimetersPerSecond(h.wind.speed),
                     precipitationProbability: percentUInt8(h.precipitationChance),
                     temperatureFeelsLike: celsiusInt8(h.apparentTemperature),
-                    relativeHumidity: percentUInt8(h.humidity)
+                    relativeHumidity: percentUInt8(h.humidity),
+                    uvIndex: Float(max(0, h.uvIndex.value))
                 )
             }
 
