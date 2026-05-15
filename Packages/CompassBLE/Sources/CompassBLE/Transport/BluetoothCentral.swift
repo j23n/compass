@@ -454,7 +454,7 @@ public actor BluetoothCentral {
 
         guard let id = peripheralIDs.first,
               let peripheral = centralManager?.retrievePeripherals(withIdentifiers: [id]).first else {
-            BLELogger.transport.warning("State restoration: peripheral not retrievable")
+            BLELogger.transport.warning("State restoration: peripheral not retrievable — falling back to reconnect")
             disconnectHandler?(nil)
             return
         }
@@ -474,8 +474,25 @@ public actor BluetoothCentral {
             "Restored characteristics — write: \(writeCharacteristic != nil), notify: \(notifyCharacteristic != nil)"
         )
 
-        // Fire the disconnect handler so GarminDeviceManager re-runs the handshake.
-        disconnectHandler?(nil)
+        // Only trigger a full reconnect if the restoration is incomplete (one
+        // of the characteristics didn't come back). On a successful restore we
+        // keep the existing peripheral and let the BLE pump pick up whatever
+        // notification iOS woke us for — tearing the GFDI session down and
+        // re-running the auth/MLR handshake doesn't finish within the brief
+        // background wake window, which is what caused phone-finder and
+        // watch-initiated sync to silently fail in background.
+        //
+        // Note: this fix alone isn't sufficient for full background BLE — we
+        // also need to ensure the CBCentralManager is created early enough at
+        // app launch for iOS to deliver `willRestoreState` (currently it's
+        // created lazily on first connect, after the UI is up). See
+        // docs/issues/background_ble_restoration.md.
+        guard writeCharacteristic != nil, notifyCharacteristic != nil else {
+            BLELogger.transport.warning("State restoration: missing characteristic, falling back to reconnect")
+            disconnectHandler?(nil)
+            return
+        }
+        BLELogger.transport.info("State restoration: full restore, keeping session live")
     }
 
     func didUpdateState(_ state: CBManagerState) {
