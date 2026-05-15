@@ -357,7 +357,14 @@ public enum WeatherFITEncoder {
         payload.appendUInt16LE(h.windDirection)
         payload.appendUInt16LE(h.windSpeed)
         payload.append(h.precipitationProbability)
-        payload.appendInt8(h.temperatureFeelsLike)
+        // temperature_feels_like: write `temperature` (not the actual feels-like
+        // value) to match Gadgetbridge's `setFieldByName("temperature_feels_like",
+        // hourly.temp)`. Their WeatherSpec.Hourly has no separate feels-like
+        // field so they use temp; we've been sending WeatherKit's apparent
+        // temperature which usually differs by 1-3°. Rule out the possibility
+        // that the watch's hourly widget rejects records whose feels-like
+        // diverges noticeably from temperature.
+        payload.appendInt8(h.temperature)
         payload.append(h.relativeHumidity)
     }
 
