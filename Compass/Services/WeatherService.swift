@@ -20,6 +20,13 @@ final class WeatherService {
     private static let garminEpochOffset: TimeInterval = 631_065_600
 
     func buildFITMessages(for request: WeatherRequest) async throws -> [GFDIMessage] {
+        let buildVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let buildNumber  = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
+        AppLogger.services.info(
+            "WeatherService.buildFITMessages: build=\(buildVersion)(\(buildNumber)) "
+          + "request=hours\(request.hoursOfForecast) lat=\(String(format: "%.4f", request.latitude)) "
+          + "lon=\(String(format: "%.4f", request.longitude))"
+        )
         guard let phoneLocation = locationProvider() else {
             AppLogger.services.info("Weather: skipping — no phone location yet")
             throw WeatherServiceError.noPhoneLocation
@@ -53,8 +60,16 @@ final class WeatherService {
         // whose timestamp is in the past, so drop past hours first. Encoder
         // caps at 12; respect the watch's requested horizon if it's smaller.
         let hourLimit = min(12, max(1, Int(request.hoursOfForecast)))
-        let hourly: [GarminHourlyForecast] = weather.hourlyForecast.forecast
-            .filter { $0.date > now }
+        let rawForecasts = weather.hourlyForecast.forecast
+        let futureForecasts = rawForecasts.filter { $0.date > now }
+        let firstRawDate = rawForecasts.first?.date.formatted(date: .omitted, time: .shortened) ?? "n/a"
+        let firstFutureDate = futureForecasts.first?.date.formatted(date: .omitted, time: .shortened) ?? "n/a"
+        AppLogger.services.info(
+            "Weather: hourly filter — raw=\(rawForecasts.count) firstRaw=\(firstRawDate) "
+          + "future=\(futureForecasts.count) firstFuture=\(firstFutureDate) "
+          + "limit=\(hourLimit) now=\(now.formatted(date: .omitted, time: .shortened))"
+        )
+        let hourly: [GarminHourlyForecast] = futureForecasts
             .prefix(hourLimit)
             .map { h in
                 GarminHourlyForecast(

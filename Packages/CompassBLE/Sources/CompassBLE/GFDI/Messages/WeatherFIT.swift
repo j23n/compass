@@ -232,13 +232,42 @@ public enum WeatherFITEncoder {
 
     // MARK: - Public API
 
+    /// One-shot fingerprint log so we can prove which encoder is compiled
+    /// in. If this prints field counts that don't match the source arrays
+    /// (today=17, hourly=12, daily=8), the binary was built from different
+    /// source than what's in this file — local edits, stale derived data,
+    /// wrong worktree, etc. Lazy static init is thread-safe in Swift, so
+    /// this fires exactly once per process the first time it's referenced.
+    private static let fingerprintToken: Void = {
+        BLELogger.gfdi.info(
+            "WeatherFITEncoder fingerprint: today=\(fieldsToday.count) "
+          + "hourly=\(fieldsHourly.count) daily=\(fieldsDaily.count) "
+          + "(expected today=17 hourly=12 daily=8)"
+        )
+        let hourlyNums = fieldsHourly.map { String($0.0) }.joined(separator: ",")
+        let dailyNums  = fieldsDaily.map  { String($0.0) }.joined(separator: ",")
+        BLELogger.gfdi.info("WeatherFITEncoder hourly field nums=[\(hourlyNums)]")
+        BLELogger.gfdi.info("WeatherFITEncoder daily  field nums=[\(dailyNums)]")
+    }()
+
     /// Returns `[FIT_DEFINITION, FIT_DATA]` ready to send over GFDI.
     public static func encode(
         current: GarminCurrentConditions,
         hourly: [GarminHourlyForecast],
         daily: [GarminDailyForecast]
     ) -> [GFDIMessage] {
-        [buildDefinitionMessage(), buildDataMessage(current: current, hourly: hourly, daily: daily)]
+        _ = fingerprintToken
+        let messages = [
+            buildDefinitionMessage(),
+            buildDataMessage(current: current, hourly: hourly, daily: daily),
+        ]
+        let defLen = messages[0].payload.count
+        let dataLen = messages[1].payload.count
+        BLELogger.gfdi.info(
+            "WeatherFITEncoder.encode: def_payload=\(defLen)B data_payload=\(dataLen)B "
+          + "(records: 1 today + \(hourly.count) hourly + \(daily.count) daily)"
+        )
+        return messages
     }
 
     // MARK: - FIT_DEFINITION
