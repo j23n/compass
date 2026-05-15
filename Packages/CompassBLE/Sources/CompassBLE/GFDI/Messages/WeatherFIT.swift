@@ -206,6 +206,18 @@ public enum WeatherFITEncoder {
     ]
 
     // HOURLY: [0, 253, 1, 2, 3, 4, 5, 6, 7, 15, 16, 17]
+    // HOURLY: trimmed to the older Garmin base profile, dropping the
+    // modern extension fields (15 dew_point, 16 uv_index, 17 air_quality)
+    // that don't appear in FitFileParser's reference mesg_def for
+    // weather_conditions. The Instinct Solar (fw 1910, ~2020) sat on
+    // "waiting for data" with all 12 fields in the definition even though
+    // every record was structurally valid and ACKed — hypothesis is that
+    // older firmware rejects records whose definition includes fields it
+    // doesn't recognise in the hourly context. TODAY uses fields {15,17}
+    // too and works, so those alone aren't the trigger; FLOAT32 uv_index
+    // (16) is the most distinctive item and the most likely culprit. If
+    // hourly displays after this, we can re-add 15/17 one at a time to
+    // narrow it down, then leave 16 off.
     private static let fieldsHourly: [(UInt8, UInt8, UInt8)] = [
         (  0,  1,  enum_),   // weather_report
         (253,  4,  uint32),  // timestamp
@@ -216,9 +228,6 @@ public enum WeatherFITEncoder {
         (  5,  1,  uint8),   // precipitation_probability
         (  6,  1,  sint8),   // temperature_feels_like
         (  7,  1,  uint8),   // relative_humidity
-        ( 15,  1,  sint8),   // dew_point  (0x7F = invalid)
-        ( 16,  4,  float32), // uv_index   (0xFFFFFFFF = invalid)
-        ( 17,  1,  enum_),   // air_quality (0xFF = invalid)
     ]
 
     // DAILY: [0, 253, 14, 13, 2, 5, 12, 17]
@@ -245,7 +254,7 @@ public enum WeatherFITEncoder {
         BLELogger.gfdi.info(
             "WeatherFITEncoder fingerprint: today=\(fieldsToday.count) "
           + "hourly=\(fieldsHourly.count) daily=\(fieldsDaily.count) "
-          + "(expected today=17 hourly=12 daily=8)"
+          + "(expected today=17 hourly=9 daily=8 — hourly trimmed to base profile)"
         )
         let hourlyNums = fieldsHourly.map { String($0.0) }.joined(separator: ",")
         let dailyNums  = fieldsDaily.map  { String($0.0) }.joined(separator: ",")
@@ -338,6 +347,8 @@ public enum WeatherFITEncoder {
     }
 
     private static func appendHourlyRecord(into payload: inout Data, h: GarminHourlyForecast) {
+        // Field order matches `fieldsHourly` (which drops 15/16/17 — see the
+        // rationale on that definition).
         payload.append(localHourly)                     // FIT data record header (local msg 9)
         payload.append(1)                               // weather_report = 1 (hourly forecast)
         payload.appendUInt32LE(h.timestamp)
@@ -348,18 +359,6 @@ public enum WeatherFITEncoder {
         payload.append(h.precipitationProbability)
         payload.appendInt8(h.temperatureFeelsLike)
         payload.append(h.relativeHumidity)
-        payload.append(0x7F)                            // dew_point:  FIT invalid (SINT8)
-        // uv_index FLOAT32 LE. The watch's hourly widget sat on
-        // "waiting for data" when this was the FIT invalid sentinel
-        // (0xFFFFFFFF = NaN); some firmware silently drops records whose
-        // float fields aren't finite. Write a real value from the
-        // forecast (0 when unknown) rather than the sentinel.
-        let uvBits = h.uvIndex.bitPattern
-        payload.append(UInt8(uvBits        & 0xFF))
-        payload.append(UInt8((uvBits >>  8) & 0xFF))
-        payload.append(UInt8((uvBits >> 16) & 0xFF))
-        payload.append(UInt8((uvBits >> 24) & 0xFF))
-        payload.append(0xFF)                            // air_quality: FIT invalid (ENUM)
     }
 
     private static func appendDailyRecord(into payload: inout Data, d: GarminDailyForecast) {
