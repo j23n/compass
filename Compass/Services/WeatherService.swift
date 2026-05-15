@@ -56,20 +56,24 @@ final class WeatherService {
         )
 
         // WeatherKit's hourly forecast starts at the top of the *current* hour
-        // (e.g. 12:00 even when now is 12:34). The watch filters out forecasts
-        // whose timestamp is in the past, so drop past hours first. Encoder
+        // (e.g. 12:00 even when now is 12:34). Keep entries whose hour-bucket
+        // hasn't ended yet — i.e. include the current hour as the anchor the
+        // watch's hourly widget aligns its strip to. Earlier we filtered strictly
+        // `> now`, leaving only future hours; the widget then sat on
+        // "waiting for data" because it lacked a current-hour record. Encoder
         // caps at 12; respect the watch's requested horizon if it's smaller.
         let hourLimit = min(12, max(1, Int(request.hoursOfForecast)))
         let rawForecasts = weather.hourlyForecast.forecast
-        let futureForecasts = rawForecasts.filter { $0.date > now }
+        let currentHourCutoff = now.addingTimeInterval(-3600)
+        let usableForecasts = rawForecasts.filter { $0.date > currentHourCutoff }
         let firstRawDate = rawForecasts.first?.date.formatted(date: .omitted, time: .shortened) ?? "n/a"
-        let firstFutureDate = futureForecasts.first?.date.formatted(date: .omitted, time: .shortened) ?? "n/a"
+        let firstUsableDate = usableForecasts.first?.date.formatted(date: .omitted, time: .shortened) ?? "n/a"
         AppLogger.services.info(
             "Weather: hourly filter — raw=\(rawForecasts.count) firstRaw=\(firstRawDate) "
-          + "future=\(futureForecasts.count) firstFuture=\(firstFutureDate) "
+          + "usable=\(usableForecasts.count) firstUsable=\(firstUsableDate) "
           + "limit=\(hourLimit) now=\(now.formatted(date: .omitted, time: .shortened))"
         )
-        let hourly: [GarminHourlyForecast] = futureForecasts
+        let hourly: [GarminHourlyForecast] = usableForecasts
             .prefix(hourLimit)
             .map { h in
                 GarminHourlyForecast(
