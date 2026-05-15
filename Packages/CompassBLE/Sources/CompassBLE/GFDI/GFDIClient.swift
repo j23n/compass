@@ -20,6 +20,17 @@ public actor GFDIClient {
     /// One-shot pending continuations: fulfilled once then removed.
     private var pendingContinuations: [UInt16: AsyncStream<GFDIMessage>.Continuation] = [:]
 
+    /// One-shot waits specifically for `RESPONSE` (0x1388) messages, keyed by
+    /// the response's `originalType` (the request that's being ACKed). The
+    /// generic `pendingContinuations[0x1388]` would happily route any response
+    /// to any waiter — that race meant a concurrent weather `FIT_DEFINITION`
+    /// ACK (originalType=0x1393) could satisfy a pending `DownloadRequest`
+    /// (expecting originalType=0x138A) and the download handler would
+    /// mis-decode the wrong payload. Keying on originalType lets multiple
+    /// in-flight requests await their specific ACKs without stealing each
+    /// other's. See `docs/issues/sync_errors.md`.
+    private var pendingResponses: [UInt16: AsyncStream<GFDIMessage>.Continuation] = [:]
+
     /// Persistent subscriptions: all messages of the subscribed type are yielded
     /// until `unsubscribe(from:)` is called.  Used for streaming chunk loops.
     private var subscriptions: [UInt16: AsyncStream<GFDIMessage>.Continuation] = [:]
@@ -48,6 +59,8 @@ public actor GFDIClient {
         receiveTask = nil
         for (_, cont) in pendingContinuations { cont.finish() }
         pendingContinuations.removeAll()
+        for (_, cont) in pendingResponses { cont.finish() }
+        pendingResponses.removeAll()
         for (_, cont) in subscriptions { cont.finish() }
         subscriptions.removeAll()
     }
@@ -82,14 +95,29 @@ public actor GFDIClient {
         if let cont = subscriptions[typeCode] {
             BLELogger.gfdi.debug("← routed to subscription type=0x\(String(format: "%04X", typeCode))")
             cont.yield(message)
-        } else if let cont = pendingContinuations.removeValue(forKey: typeCode) {
+            return
+        }
+        // RESPONSEs (0x1388) carry the originalType in payload[0..<2] LE. Try
+        // to match an originalType-specific waiter first so concurrent in-flight
+        // requests don't steal each other's ACKs.
+        if message.type == .response, message.payload.count >= 2 {
+            let originalType = UInt16(message.payload[message.payload.startIndex]) |
+                              (UInt16(message.payload[message.payload.startIndex + 1]) << 8)
+            if let cont = pendingResponses.removeValue(forKey: originalType) {
+                BLELogger.gfdi.debug("← routed to pending response originalType=0x\(String(format: "%04X", originalType))")
+                cont.yield(message)
+                cont.finish()
+                return
+            }
+        }
+        if let cont = pendingContinuations.removeValue(forKey: typeCode) {
             BLELogger.gfdi.debug("← routed to pending wait type=0x\(String(format: "%04X", typeCode))")
             cont.yield(message)
             cont.finish()
-        } else {
-            BLELogger.gfdi.debug("← routed to unsolicited handler type=0x\(String(format: "%04X", typeCode))")
-            unsolicitedHandler?(message)
+            return
         }
+        BLELogger.gfdi.debug("← routed to unsolicited handler type=0x\(String(format: "%04X", typeCode))")
+        unsolicitedHandler?(message)
     }
 
     // MARK: - Wait for response
@@ -128,6 +156,35 @@ public actor GFDIClient {
         }
     }
 
+    /// Wait for a `RESPONSE` (0x1388) whose `originalType` matches
+    /// `originalType`. Distinct from `awaitResponse(forType:)` so two callers
+    /// awaiting different request ACKs concurrently don't collide.
+    private func awaitResponseTo(
+        originalType: UInt16,
+        timeout: Duration,
+        beforeWait: @Sendable () async throws -> Void
+    ) async throws -> GFDIMessage {
+        let (stream, continuation) = AsyncStream<GFDIMessage>.makeStream()
+        pendingResponses[originalType] = continuation
+
+        try await beforeWait()
+
+        return try await withThrowingTaskGroup(of: GFDIMessage.self) { group in
+            group.addTask {
+                for await msg in stream { return msg }
+                throw PairingError.connectionTimeout
+            }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                throw PairingError.connectionTimeout
+            }
+            guard let result = try await group.next() else { throw PairingError.connectionTimeout }
+            group.cancelAll()
+            self.pendingResponses.removeValue(forKey: originalType)
+            return result
+        }
+    }
+
     // MARK: - Send-and-wait (atomic, avoids TOCTOU race)
 
     /// Send `message` and wait for the first inbound message of `awaitType`.
@@ -135,16 +192,30 @@ public actor GFDIClient {
     /// The response continuation is registered **before** the outbound message
     /// is written to the wire, so a very-fast response cannot slip into the
     /// unsolicited handler between `send` and `waitForMessage`.
+    ///
+    /// When `awaitType == .response`, the wait additionally filters by the
+    /// outgoing message's `type.rawValue` as the expected `originalType` —
+    /// every caller of `sendAndWait(.response)` is asking for the ACK of the
+    /// request they just sent, so this is what they want, and it prevents an
+    /// unrelated 0x1388 ACK (for a concurrent send) from satisfying the wait.
     public func sendAndWait(
         _ message: GFDIMessage,
         awaitType: GFDIMessageType,
         timeout: Duration = .seconds(10)
     ) async throws -> GFDIMessage {
-        return try await awaitResponse(forType: awaitType.rawValue, timeout: timeout) {
+        let send: @Sendable () async throws -> Void = {
             let wire = message.encode()
             BLELogger.gfdi.debug("→ GFDI type=0x\(String(format: "%04X", message.type.rawValue)) wireLen=\(wire.count)")
             try await self.transport.sendGFDI(wire)
         }
+        if awaitType == .response {
+            return try await awaitResponseTo(
+                originalType: message.type.rawValue,
+                timeout: timeout,
+                beforeWait: send
+            )
+        }
+        return try await awaitResponse(forType: awaitType.rawValue, timeout: timeout, beforeWait: send)
     }
 
     // MARK: - Persistent subscriptions (for streaming chunk loops)

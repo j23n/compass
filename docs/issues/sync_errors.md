@@ -81,40 +81,45 @@ This race surfaces when sync runs concurrently with a watch-initiated
 weather exchange, because both flows pump 0x1388 traffic on the same
 link.
 
-## Proposed fix
+## Status
 
-Two parts, both small:
+**Part 2 fixed** in `GFDIClient` — `sendAndWait(awaitType: .response)`
+now derives the expected `originalType` from the outgoing message's
+`type.rawValue` and registers in a separate `pendingResponses` dict
+keyed by originalType. `routeMessage` peeks `payload[0..<2]` of every
+incoming RESPONSE and prefers an originalType-specific waiter over
+the generic `pendingContinuations[0x1388]` slot. Concurrent in-flight
+requests no longer steal each other's ACKs, and the
+`insufficientData` cascade on `file[155]` / `file[156]` from the
+adjacent weather exchange is closed.
 
-1. **Tighten the gate in `FileSyncSession.swift:238`.** Only proceed when
-   `downloadStatus ∈ {ok, noSpaceLeft}` (the latter for the Solar
-   workaround), and skip the file otherwise:
+**Part 1 still open** — the `downloadStatus` gate in
+`FileSyncSession.swift:238` still treats every non-zero outer status
+as the only failure case, so an `indexNotReadable` reply with
+`maxFileSize=0` will still take us into the chunk loop with nothing
+to read. Filed as a separate piece of work.
 
-   ```swift
-   switch status.downloadStatus {
-   case .ok, .noSpaceLeft:
-       break  // proceed
-   default:
-       throw SyncError.downloadFailed(
-           fileIndex: fileIndex,
-           reason: "download refused: \(status.downloadStatus)"
-       )
-   }
-   ```
+## Proposed fix for Part 1
 
-   This converts the silent corruption into a clean per-file skip, the
-   same way `insufficientData` already does today. The directory walk
-   moves on to the next entry without contaminating the chunk stream.
+Tighten the gate in `FileSyncSession.swift:238`. Only proceed when
+`downloadStatus ∈ {ok, noSpaceLeft}` (the latter for the Solar
+workaround), and skip the file otherwise:
 
-2. **Tighten `sendAndWait` to filter by `originalType`** when waiting on a
-   `RESPONSE`. The natural shape is to pass the expected
-   `originalType` alongside `awaitType: .response` and have the GFDI
-   client only resume the continuation when `payload[0..<2]` matches.
-   Out-of-band ACKs (e.g. for a concurrent weather send) then route to
-   the unsolicited handler as they should.
+```swift
+switch status.downloadStatus {
+case .ok, .noSpaceLeft:
+    break  // proceed
+default:
+    throw SyncError.downloadFailed(
+        fileIndex: fileIndex,
+        reason: "download refused: \(status.downloadStatus)"
+    )
+}
+```
 
-Either fix alone would have prevented the `file[136]` failure in the
-log; both together close the corresponding race for `file[155]` /
-`file[156]`.
+This converts the silent corruption into a clean per-file skip, the
+same way `insufficientData` already does today. The directory walk
+moves on to the next entry without contaminating the chunk stream.
 
 ## References
 
