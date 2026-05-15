@@ -145,7 +145,7 @@ public enum WeatherRequestParser {
 ///  1  temperature            SINT8   1 B
 ///  2  condition              ENUM    1 B
 ///  3  wind_direction         UINT16  2 B
-///  4  wind_speed             UINT16  2 B   mm/s
+///  4  wind_speed             UINT16  2 B   km/h    
 ///  5  precipitation_prob     UINT8   1 B
 ///  6  temperature_feels_like SINT8   1 B
 ///  7  relative_humidity      UINT8   1 B

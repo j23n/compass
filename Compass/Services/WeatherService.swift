@@ -47,7 +47,7 @@ final class WeatherService {
             condition: mapCondition(weather.currentWeather.condition),
             windDirection: degreesUInt16(weather.currentWeather.wind.direction),
             precipitationProbability: percentUInt8(today?.precipitationChance ?? 0),
-            windSpeed: windSpeedMillimetersPerSecond(weather.currentWeather.wind.speed),
+            windSpeed: windSpeedKmPerHour(weather.currentWeather.wind.speed),
             temperatureFeelsLike: celsiusInt8(weather.currentWeather.apparentTemperature),
             relativeHumidity: percentUInt8(weather.currentWeather.humidity),
             observedLocationLat: lat,
@@ -81,7 +81,7 @@ final class WeatherService {
                     temperature: celsiusInt8(h.temperature),
                     condition: mapCondition(h.condition),
                     windDirection: degreesUInt16(h.wind.direction),
-                    windSpeed: windSpeedMillimetersPerSecond(h.wind.speed),
+                    windSpeed: windSpeedKmPerHour(h.wind.speed),
                     precipitationProbability: percentUInt8(h.precipitationChance),
                     temperatureFeelsLike: celsiusInt8(h.apparentTemperature),
                     relativeHumidity: percentUInt8(h.humidity),
@@ -119,9 +119,17 @@ final class WeatherService {
         return UInt16(max(0, min(359, degrees)))
     }
 
-    private func windSpeedMillimetersPerSecond(_ measurement: Measurement<UnitSpeed>) -> UInt16 {
-        let mmPerSec = measurement.converted(to: .metersPerSecond).value * 1000
-        return UInt16(max(0, min(Double(UInt16.max), mmPerSec.rounded())))
+    private func windSpeedKmPerHour(_ measurement: Measurement<UnitSpeed>) -> UInt16 {
+        // The FIT SDK profile says wind_speed is mm/s, but Garmin firmware
+        // actually interprets the field as km/h — Gadgetbridge had the same
+        // bug (fixed in 0.81 "Fix weather temperature and speed units",
+        // issue #3836: values were being sent as m/s but the watch was
+        // interpreting them as km/h, so wind speeds came out 3.6x high).
+        // Sending mm/s here meant our values were ~3600x what the watch
+        // expected, which is plausibly why the hourly widget rejected the
+        // records and sat on "waiting for data".
+        let kmPerHour = measurement.converted(to: .kilometersPerHour).value
+        return UInt16(max(0, min(Double(UInt16.max), kmPerHour.rounded())))
     }
 
     private func percentUInt8(_ fraction: Double) -> UInt8 {

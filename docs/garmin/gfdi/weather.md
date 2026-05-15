@@ -117,7 +117,7 @@ Field order matches `WeatherFIT.swift:185-203`.
 | 2             | condition                  | enum      | 1    |
 | 3             | wind_direction             | uint16    | 2    |
 | 5             | precipitation_probability  | uint8     | 1    |
-| 4             | wind_speed (mm/s)          | uint16    | 2    |
+| 4             | wind_speed (km/h)          | uint16    | 2    |
 | 6             | temperature_feels_like     | sint8     | 1    |
 | 7             | relative_humidity          | uint8     | 1    |
 | 10            | observed_location_lat      | sint32    | 4    |
@@ -140,7 +140,7 @@ Field order matches `WeatherFIT.swift:206-219`.
 | 1             | temperature                | sint8     | 1    |
 | 2             | condition                  | enum      | 1    |
 | 3             | wind_direction             | uint16    | 2    |
-| 4             | wind_speed (mm/s)          | uint16    | 2    |
+| 4             | wind_speed (km/h)          | uint16    | 2    |
 | 5             | precipitation_probability  | uint8     | 1    |
 | 6             | temperature_feels_like     | sint8     | 1    |
 | 7             | relative_humidity          | uint8     | 1    |
