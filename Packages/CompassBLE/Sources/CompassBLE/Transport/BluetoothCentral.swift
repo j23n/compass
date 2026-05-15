@@ -81,7 +81,13 @@ public actor BluetoothCentral {
     private var scanContinuation: AsyncStream<DiscoveredDevice>.Continuation?
 
     /// Notification data continuation — yields raw BLE notification bytes.
-    private var notificationContinuation: AsyncStream<Data>.Continuation?
+    /// Held on the delegate adapter so `didUpdateValueFor` can yield
+    /// synchronously and preserve CoreBluetooth's wire order. See the
+    /// adapter for the full rationale.
+    private var notificationContinuation: AsyncStream<Data>.Continuation? {
+        get { delegateAdapter?.notificationContinuation }
+        set { delegateAdapter?.notificationContinuation = newValue }
+    }
 
     /// Connection continuation — resumed when BLE connect succeeds or fails.
     private var connectionContinuation: CheckedContinuation<Void, Error>?
@@ -552,16 +558,6 @@ public actor BluetoothCentral {
         discoveryCharacteristicContinuation = nil
     }
 
-    func didReceiveNotification(data: Data) {
-        if data.count <= 32 {
-            BLELogger.transport.debug("Notification (\(data.count)B): \(data.map { String(format: "%02X", $0) }.joined())")
-        } else {
-            let prefix = data.prefix(32).map { String(format: "%02X", $0) }.joined()
-            BLELogger.transport.debug("Notification (\(data.count)B): \(prefix)...")
-        }
-        notificationContinuation?.yield(data)
-    }
-
     func didReadRSSI(error: Error?) {
         if let error {
             BLELogger.transport.info("RSSI read failed — treating as disconnect: \(error.localizedDescription)")
@@ -578,6 +574,34 @@ public actor BluetoothCentral {
 private final class CentralManagerDelegateAdapter: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, @unchecked Sendable {
 
     private weak var central: BluetoothCentral?
+
+    /// Held here, not on the actor, so `didUpdateValueFor` can yield
+    /// synchronously from CoreBluetooth's serial delegate queue.
+    ///
+    /// Why this matters: under bursty arrival (e.g. 25+ fragments of a
+    /// multi-fragment GFDI/COBS message in <50 ms during a file download),
+    /// wrapping each notification in `Task { await actor.method(...) }`
+    /// lets Swift's scheduler reorder the Tasks at the actor mailbox. The
+    /// COBS decoder then reads "code" bytes from positions that hold raw
+    /// data, producing garbage and downstream CRC mismatches. Yielding
+    /// directly from the delegate keeps fragments in wire order;
+    /// `AsyncStream.Continuation.yield` is safe to call from any context
+    /// and preserves order when called from a single producer.
+    private let notificationLock = NSLock()
+    private var _notificationContinuation: AsyncStream<Data>.Continuation?
+
+    var notificationContinuation: AsyncStream<Data>.Continuation? {
+        get {
+            notificationLock.lock()
+            defer { notificationLock.unlock() }
+            return _notificationContinuation
+        }
+        set {
+            notificationLock.lock()
+            _notificationContinuation = newValue
+            notificationLock.unlock()
+        }
+    }
 
     init(central: BluetoothCentral) {
         self.central = central
@@ -632,7 +656,16 @@ private final class CentralManagerDelegateAdapter: NSObject, CBCentralManagerDel
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: (any Error)?) {
         guard let data = characteristic.value else { return }
-        Task { await self.central?.didReceiveNotification(data: data) }
+        if data.count <= 32 {
+            BLELogger.transport.debug("Notification (\(data.count)B): \(data.map { String(format: "%02X", $0) }.joined())")
+        } else {
+            let prefix = data.prefix(32).map { String(format: "%02X", $0) }.joined()
+            BLELogger.transport.debug("Notification (\(data.count)B): \(prefix)...")
+        }
+        notificationLock.lock()
+        let cont = _notificationContinuation
+        notificationLock.unlock()
+        cont?.yield(data)
     }
 
     func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
