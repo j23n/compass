@@ -566,7 +566,9 @@ final class SyncCoordinator {
     /// dedup checks used during sync.
     @discardableResult
     func importFITFiles(urls: [URL]) async -> Int {
-        let context = ModelContext(modelContainer)
+        // Same rationale as `processWatchInitiatedURLs` — write through the
+        // SwiftUI environment context so @Query observers refresh.
+        let context = modelContainer.mainContext
         AppLogger.sync.info("Importing \(urls.count) external FIT file(s)")
 
         var savedEntries: [(url: URL, fileIndex: UInt16)] = []
@@ -592,7 +594,9 @@ final class SyncCoordinator {
     /// come from FIT files). Used as a developer reset after parser changes.
     @discardableResult
     func reparseLocalFITFiles() async -> Int {
-        let context = ModelContext(modelContainer)
+        // Same rationale as `processWatchInitiatedURLs` — write through the
+        // SwiftUI environment context so @Query observers refresh.
+        let context = modelContainer.mainContext
 
         AppLogger.sync.info("Wiping FIT-derived data before reparse")
         try? context.delete(model: Activity.self)
@@ -898,8 +902,16 @@ final class SyncCoordinator {
     private func processWatchInitiatedURLs(_ entries: [(url: URL, fileIndex: UInt16)]) async {
         beginBackgroundTask()
         defer { endBackgroundTask() }
-        let context = ModelContext(modelContainer)
-        await processFITFiles(entries, context: context)
+        // Use the container's main-actor context (the same one SwiftUI's
+        // `@Environment(\.modelContext)` exposes, which every view-tree `@Query`
+        // observes) rather than a detached `ModelContext(modelContainer)`. With
+        // a detached context, saves write to the store but the UI's @Query
+        // doesn't pick them up until something else triggers a re-fetch — so
+        // watch-initiated syncs would land in the database but stay invisible
+        // until the user hit manual Sync, which writes through the UI context
+        // directly. SyncCoordinator is `@MainActor`-isolated, so accessing
+        // `mainContext` is straight-line. See `docs/issues/background_sync_ui_refresh.md`.
+        await processFITFiles(entries, context: modelContainer.mainContext)
     }
 
     func uploadCourse(fitURL: URL, fitSize: Int, course: Course) {

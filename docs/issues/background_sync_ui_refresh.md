@@ -7,7 +7,11 @@ health/activity rows show up in the UI. Hitting the manual "Sync" button
 afterwards immediately surfaces them — even though the parser code,
 de-dup logic, and SwiftData models are identical between the two paths.
 
-Pre-existing — not introduced or fixed by this branch.
+**Status: fixed.** `processWatchInitiatedURLs`, `importFITFiles`, and
+`reparseLocalFITFiles` now write through `modelContainer.mainContext`
+instead of constructing a detached `ModelContext(modelContainer)`. All
+three were on the main actor already (SyncCoordinator is `@MainActor`),
+so the change is straight-line.
 
 ## Symptom
 
