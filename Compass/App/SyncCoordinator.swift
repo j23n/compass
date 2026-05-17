@@ -68,6 +68,12 @@ final class SyncCoordinator {
     let deviceManager: any DeviceManagerProtocol
     private let modelContainer: ModelContainer
 
+    /// Set at app launch in `CompassApp.init`. Optional because the
+    /// coordinator is constructed before the service so it can hold the
+    /// service in its initializer chain — and because tests build a
+    /// coordinator without HealthKit.
+    weak var healthSync: HealthKitSyncService?
+
     /// The last device we successfully connected to, kept for auto-reconnect.
     private var lastConnectedDevice: PairedDevice?
 
@@ -550,7 +556,8 @@ final class SyncCoordinator {
     private func parseAndFinalize(
         _ entries: [(url: URL, fileIndex: UInt16)],
         archiveOnSuccess: Bool,
-        context: ModelContext
+        context: ModelContext,
+        triggerHealthExport: HealthExportTrigger = .incremental
     ) async {
         for entry in entries {
             await parseAndPersistFITFile(url: entry.url, fileIndex: entry.fileIndex,
@@ -558,6 +565,18 @@ final class SyncCoordinator {
         }
         cleanupSleepSessions(context: context)
         try? context.save()
+
+        switch triggerHealthExport {
+        case .incremental: healthSync?.runIncrementalExport()
+        case .fullReconcile: healthSync?.runFullReconcile()
+        case .none: break
+        }
+    }
+
+    enum HealthExportTrigger {
+        case incremental
+        case fullReconcile
+        case none
     }
 
     /// Imports FIT files from external URLs (e.g. an archive of files previously
@@ -623,7 +642,10 @@ final class SyncCoordinator {
             return (url: file.url, fileIndex: fileIndex)
         }
 
-        await parseAndFinalize(entries, archiveOnSuccess: false, context: context)
+        // Reparse invalidates natural keys in HealthKit — request the
+        // full wipe-and-rewrite path rather than a normal incremental.
+        await parseAndFinalize(entries, archiveOnSuccess: false, context: context,
+                               triggerHealthExport: .fullReconcile)
         AppLogger.sync.info("Reparse complete (\(files.count) file(s))")
         return files.count
     }

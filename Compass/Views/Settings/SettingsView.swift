@@ -93,6 +93,8 @@ struct SettingsView: View {
 
                 syncSection
 
+                HealthSyncSettingsView()
+
                 if device != nil {
                     warningSection
                 }

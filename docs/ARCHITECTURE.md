@@ -13,13 +13,15 @@ Compass (app target — iOS 18+, SwiftUI)
 ├── CompassData   — SwiftData models and repository layer
 ├── CompassFIT    — FIT parser (via FitFileParser), GPX parser, FIT encoder
 ├── FitFileParser — Vendored FIT profile library (Garmin SDK + augmented fields)
-└── CompassBLE    — CoreBluetooth wrapper, Garmin ML v2 / GFDI protocol
+├── CompassBLE    — CoreBluetooth wrapper, Garmin ML v2 / GFDI protocol
+└── CompassHealth — Apple HealthKit one-way exporter
 ```
 
 **Dependency rules:**
-- `Compass` imports all three packages.
+- `Compass` imports all four packages.
 - `CompassBLE` has no compile-time dependency on `CompassData` or `CompassFIT`. It produces raw FIT bytes that the app routes to `CompassFIT`.
 - `CompassFIT` has no dependency on `CompassBLE`. It depends on `CompassData` (for model types) and `FitFileParser` (vendored, for binary FIT decoding). It is a pure parsing/encoding library.
+- `CompassHealth` depends only on `CompassData`. It is a pure projection layer from SwiftData rows to `HKSample`s, with no BLE/FIT dependency.
 - `CompassData` has no dependency on the other packages. It is a pure persistence layer.
 
 `SyncCoordinator` in the app target is the runtime orchestrator that wires all three packages together.
@@ -55,10 +57,11 @@ Compass/
 │   │   ├── CourseDetailView.swift    Map + metadata + upload/delete controls
 │   │   └── CourseRowView.swift       List row component
 │   └── Settings/
-│       ├── SettingsView.swift        Device mgmt, sync controls, logs, about
-│       ├── FITFilesView.swift        Browse downloaded FIT files
-│       ├── CourseFilesView.swift     Manage course FIT files
-│       └── LogsView.swift            In-app debug log viewer with filter
+│       ├── SettingsView.swift             Device mgmt, sync controls, logs, about
+│       ├── HealthSyncSettingsView.swift   Apple Health toggle + Resync All + status
+│       ├── FITFilesView.swift             Browse downloaded FIT files
+│       ├── CourseFilesView.swift          Manage course FIT files
+│       └── LogsView.swift                 In-app debug log viewer with filter
 ├── ViewModels/
 │   └── TodayViewModel.swift          @Observable; today metrics from repositories
 ├── Components/
@@ -74,6 +77,7 @@ Compass/
 │   ├── PhoneLocationService.swift    CoreLocation observer → sends GPS to watch
 │   ├── FITFileStore.swift            Persists downloaded FIT files to Documents/
 │   ├── CourseFileStore.swift         Persists course FIT files for upload
+│   ├── HealthKitSyncService.swift    Glue: SyncCoordinator → CompassHealth exporter; toggle + cursor
 │   └── LogStore.swift                In-memory rotating log buffer for LogsView
 └── Extensions/
     ├── Sport+UI.swift                Display names and SF Symbols for Sport enum
@@ -119,6 +123,23 @@ Packages/
 │   │       ├── PathSimplification.swift  Douglas-Peucker GPS track simplification
 │   │       └── ActivityGPXExporter.swift Activity → GPX for share sheet
 │   └── Tests/CompassFITTests/
+
+├── CompassHealth/
+│   ├── Sources/CompassHealth/
+│   │   ├── HealthKitExporter.swift           actor; main API (iOS) + macOS stub
+│   │   ├── HealthKitExporterStub.swift       no-op build on platforms without HealthKit
+│   │   ├── HealthKitExporterProtocol.swift   Sendable interface for tests
+│   │   ├── HealthKitAuthorization.swift      auth result enum + write-types catalogue
+│   │   ├── HealthDataSnapshot.swift          Sendable value-type snapshot
+│   │   ├── SnapshotBuilder.swift             @MainActor projection from SwiftData → snapshot
+│   │   ├── SyncIdentifier.swift              stable HKMetadataKeySyncIdentifier helpers
+│   │   └── Mapping/
+│   │       ├── Sport+HKActivityType.swift    Sport → HKWorkoutActivityType + distance type
+│   │       └── SleepStage+HKCategory.swift   SleepStageType → HKCategoryValueSleepAnalysis
+│   └── Tests/CompassHealthTests/
+│       ├── SyncIdentifierTests.swift
+│       ├── MappingTests.swift                (iOS-only — requires HealthKit)
+│       └── SnapshotTests.swift
 
 └── CompassBLE/
     ├── Sources/CompassBLE/
@@ -375,7 +396,7 @@ Two logger families funnel into the same `LogStore`:
 
 | Logger | Package | Categories |
 |---|---|---|
-| `AppLogger` | Compass app | app, pairing, sync, ui, services |
+| `AppLogger` | Compass app | app, pairing, sync, ui, services, location, health |
 | `BLELogger` | CompassBLE | ble, transport, gfdi, fileSync, auth |
 
 `LogStore` maintains an in-memory rotating buffer. `LogsView` shows it with time, category, and level filters. Logs can be shared as a `.txt` file via the system share sheet.
@@ -388,6 +409,7 @@ Two logger families funnel into the same `LogStore`:
 |---|---|---|
 | `CompassDataTests` | `Packages/CompassData/Tests/` | In-memory ModelContainer |
 | `CompassFITTests` | `Packages/CompassFIT/Tests/` | Tests use actual .fit files against FitFileParser |
+| `CompassHealthTests` | `Packages/CompassHealth/Tests/` | Sync-identifier stability, type mapping, snapshot counts |
 | `CompassBLETests` | `Packages/CompassBLE/Tests/CompassBLETests/` | ByteReader, CRC16, GFDI, FrameAssembler |
 | `CompassBLEIntegrationTests` | `Packages/CompassBLE/Tests/CompassBLEIntegrationTests/` | Requires physical Garmin device; not run in CI |
 

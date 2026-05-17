@@ -23,6 +23,9 @@ enum AppLogger {
 
     /// Phone location pushes to the watch.
     static let location = AppLoggerCategory(category: "location")
+
+    /// Apple Health export pipeline.
+    static let health   = AppLoggerCategory(category: "health")
 }
 
 /// Thin wrapper over `os.Logger` that prepends a wall-clock timestamp to

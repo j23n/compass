@@ -2,11 +2,13 @@ import SwiftUI
 import SwiftData
 import CompassData
 import CompassBLE
+import CompassHealth
 
 @main
 struct CompassApp: App {
     let container: ModelContainer
     @State private var syncCoordinator: SyncCoordinator
+    @State private var healthSync: HealthKitSyncService
     @State private var importCoordinator = CourseImportCoordinator()
     @Environment(\.scenePhase) private var scenePhase
 
@@ -52,7 +54,15 @@ struct CompassApp: App {
         let deviceManager: any DeviceManagerProtocol = GarminDeviceManager()
         AppLogger.app.debug("Using GarminDeviceManager")
 
-        _syncCoordinator = State(initialValue: SyncCoordinator(deviceManager: deviceManager, modelContainer: container))
+        let exporter: any HealthKitExporterProtocol = HealthKitExporter { message in
+            AppLogger.health.debug(message)
+        }
+        let healthSyncService = HealthKitSyncService(exporter: exporter, modelContainer: container)
+        _healthSync = State(initialValue: healthSyncService)
+
+        let coordinator = SyncCoordinator(deviceManager: deviceManager, modelContainer: container)
+        coordinator.healthSync = healthSyncService
+        _syncCoordinator = State(initialValue: coordinator)
         AppLogger.app.info("CompassApp initialization complete")
     }
 
@@ -60,8 +70,15 @@ struct CompassApp: App {
         WindowGroup {
             ContentView()
                 .environment(syncCoordinator)
+                .environment(healthSync)
                 .environment(importCoordinator)
                 .modifier(CourseImportRouting(coordinator: importCoordinator))
+                .task {
+                    // If schema version bumped between launches, reconcile.
+                    if healthSync.isEnabled {
+                        healthSync.runIncrementalExport()
+                    }
+                }
         }
         .modelContainer(container)
         .onChange(of: scenePhase) { _, newPhase in
