@@ -20,10 +20,6 @@
 	<string>1</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Compass uses your location to fetch the local weather forecast that gets sent to your watch.</string>
-	<key>NSHealthUpdateUsageDescription</key>
-	<string>Compass writes your Garmin watch's workouts, sleep, heart rate, respiration, blood oxygen, and step data into Apple Health so it appears alongside data from other devices.</string>
-	<key>NSHealthShareUsageDescription</key>
-	<string>Compass does not read data from Apple Health.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>bluetooth-central</string>

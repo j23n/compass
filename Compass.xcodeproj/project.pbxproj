@@ -7,9 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		6EB9CAF2F0EE315A95B1562B /* CompassHealth in Frameworks */ = {isa = PBXBuildFile; productRef = 33C58AAAE959E5A2BAB8207D /* CompassHealth */; };
-		5FE375FA70A6F917D26AB3C9 /* HealthKitSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF41F5BD98CD5A293B8AAFA4 /* HealthKitSyncService.swift */; };
-		6CFADCD3B2324C292D949389 /* HealthSyncSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEE93DDA675A2C6D19BEB766 /* HealthSyncSettingsView.swift */; };
 		06AEE297E4A4DAE2FF74FE0E /* MapRouteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A06CAA6C9634DE5F69D540DE /* MapRouteView.swift */; };
 		E7F1A3D29C5B8064375A1F2E /* FullscreenMapView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9C28D40E1F37A625064AB7C /* FullscreenMapView.swift */; };
 		07B523E62E4F697A573506B6 /* ChartYDomain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3502B0EDE3324077F26D3EF8 /* ChartYDomain.swift */; };
@@ -68,9 +65,6 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		EF41F5BD98CD5A293B8AAFA4 /* HealthKitSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthKitSyncService.swift; sourceTree = "<group>"; };
-		EEE93DDA675A2C6D19BEB766 /* HealthSyncSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthSyncSettingsView.swift; sourceTree = "<group>"; };
-		CD5C6987D3109E885F38B1F9 /* CompassHealth */ = {isa = PBXFileReference; lastKnownFileType = folder; name = CompassHealth; path = Packages/CompassHealth; sourceTree = SOURCE_ROOT; };
 		054458D3773E3474BBDAAD23 /* TrendChartView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrendChartView.swift; sourceTree = "<group>"; };
 		0DB74BA52726F9C5ECBDF01D /* DependencyContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DependencyContainer.swift; sourceTree = "<group>"; };
 		1367C853B9217F54A818D824 /* CourseFilesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CourseFilesView.swift; sourceTree = "<group>"; };
@@ -139,7 +133,6 @@
 				C50098134F965E6A549044FE /* CompassData in Frameworks */,
 				61F53E6DCCDA62783431CF91 /* CompassFIT in Frameworks */,
 				D9D8815C4107DF4474DC2FD4 /* CompassBLE in Frameworks */,
-				6EB9CAF2F0EE315A95B1562B /* CompassHealth in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -215,7 +208,6 @@
 			children = (
 				1367C853B9217F54A818D824 /* CourseFilesView.swift */,
 				6A6BD4BAA140A129B9819801 /* FITFilesView.swift */,
-				EEE93DDA675A2C6D19BEB766 /* HealthSyncSettingsView.swift */,
 				814FB2742A1BD39FE781D673 /* LogsView.swift */,
 				35A2BA7F0CFC5430A008040A /* SettingsView.swift */,
 			);
@@ -272,7 +264,6 @@
 				F8B30A2C1D5E947A6F1B3C95 /* CourseImportCoordinator.swift */,
 				3F895C1DE3D221686BB2BFD7 /* FindMyPhoneService.swift */,
 				81F4753EEB4B8FFB778FBCFA /* FITFileStore.swift */,
-				EF41F5BD98CD5A293B8AAFA4 /* HealthKitSyncService.swift */,
 				18F573121C079EF19C621678 /* LogStore.swift */,
 				4D9C7B2E5F1A8E3D2C0B6F90 /* MapSnapshotCache.swift */,
 				A675699E286A5D1EE4F96157 /* MusicService.swift */,
@@ -328,7 +319,6 @@
 				EDE0F0D06A2C4BAA19A4E830 /* CompassBLE */,
 				D4A60816094EBB3079061BCC /* CompassData */,
 				97BAF900BBD17FE3F207727E /* CompassFIT */,
-				CD5C6987D3109E885F38B1F9 /* CompassHealth */,
 			);
 			path = Packages;
 			sourceTree = "<group>";
@@ -361,7 +351,6 @@
 				9049E5DD8AE098DC4CB2913F /* CompassData */,
 				33C7E21056FE1E458979A9F9 /* CompassFIT */,
 				90472CD940C8E4FF9965B26F /* CompassBLE */,
-				33C58AAAE959E5A2BAB8207D /* CompassHealth */,
 			);
 			productName = Compass;
 			productReference = 1BF57BA01F2477CA55BC7407 /* Compass.app */;
@@ -394,7 +383,6 @@
 				BA4E47DA80F640975AE997D4 /* XCLocalSwiftPackageReference "Packages/CompassBLE" */,
 				91F06E0D11AEA28514EABB76 /* XCLocalSwiftPackageReference "Packages/CompassData" */,
 				E462AF2864ECD67AEE9D98D3 /* XCLocalSwiftPackageReference "Packages/CompassFIT" */,
-				1DEEC88555A2A3D0DE913316 /* XCLocalSwiftPackageReference "Packages/CompassHealth" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = FB16DD71CBDF85F8C3F2A524 /* Products */;
@@ -444,8 +432,6 @@
 				B7C4F0E821D5A93F6E4B8D71 /* SleepSession+Trimmed.swift in Sources */,
 				EB1A9E08AF60C4721170D17A /* DependencyContainer.swift in Sources */,
 				7F66ADDB18893B509DF51C3D /* FITFileStore.swift in Sources */,
-				5FE375FA70A6F917D26AB3C9 /* HealthKitSyncService.swift in Sources */,
-				6CFADCD3B2324C292D949389 /* HealthSyncSettingsView.swift in Sources */,
 				E3B7168B2C526978D1F13B4F /* FITFilesView.swift in Sources */,
 				5C4CAC0CA52B67717CA79508 /* FileArchive.swift in Sources */,
 				08EF78B33E0BEC8567ABE14F /* FindMyPhoneService.swift in Sources */,
@@ -705,10 +691,6 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/CompassFIT;
 		};
-		1DEEC88555A2A3D0DE913316 /* XCLocalSwiftPackageReference "Packages/CompassHealth" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = Packages/CompassHealth;
-		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -723,10 +705,6 @@
 		9049E5DD8AE098DC4CB2913F /* CompassData */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = CompassData;
-		};
-		33C58AAAE959E5A2BAB8207D /* CompassHealth */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = CompassHealth;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

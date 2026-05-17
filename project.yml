@@ -18,6 +18,8 @@ packages:
         path: Packages/CompassFIT
     CompassBLE:
         path: Packages/CompassBLE
+    CompassHealth:
+        path: Packages/CompassHealth
 
 targets:
     Compass:
@@ -77,6 +79,8 @@ targets:
                 INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: "Compass connects to your fitness watch to sync activity and health data."
                 INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "Compass sends your location to the watch for sunrise/sunset and timezone."
                 INFOPLIST_KEY_NSAppleMusicUsageDescription: "Compass shows now-playing info on your Garmin watch."
+                INFOPLIST_KEY_NSHealthUpdateUsageDescription: "Compass writes your Garmin watch's workouts, sleep, heart rate, respiration, blood oxygen, and step data into Apple Health so it appears alongside data from other devices."
+                INFOPLIST_KEY_NSHealthShareUsageDescription: "Compass does not read data from Apple Health."
                 INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
                 INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
                 INFOPLIST_KEY_UILaunchScreen_Generation: YES
@@ -103,3 +107,4 @@ targets:
             - package: CompassData
             - package: CompassFIT
             - package: CompassBLE
+            - package: CompassHealth
